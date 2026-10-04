@@ -16,7 +16,7 @@ export type SavedMessage = {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const docsDir = process.env.DOCS_DIR ?? path.join(here, "../../website/src/content/docs");
 // Railway sets the second one when the service has a volume.
-const dataDir = process.env.DATA_DIR ?? process.env.RAILWAY_VOLUME_MOUNT_PATH ?? path.join(here, "../data");
+export const dataDir = process.env.DATA_DIR ?? process.env.RAILWAY_VOLUME_MOUNT_PATH ?? path.join(here, "../data");
 const file = path.join(dataDir, "context.json");
 
 // The docs pages as the site shows them: links point at the site, and images are left out.
