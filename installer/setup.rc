@@ -3,6 +3,7 @@
 1 ICON "../assets/Unishade.ico"
 // Found through the include path, which CMake points at the host's build folder.
 IDR_HOST RCDATA "Unishade.exe"
+IDR_UI RCDATA "UnishadeUi.dll"
 IDR_LICENSE RCDATA "../LICENSE"
 IDR_CREDITS RCDATA "CREDITS.txt"
 IDR_LOGO RCDATA "../assets/Unishade.png"

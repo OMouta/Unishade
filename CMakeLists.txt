@@ -147,7 +147,7 @@ add_executable(installer WIN32 EXCLUDE_FROM_ALL
     installer/install.cpp
     src/net.cpp
     installer/setup.rc)
-# setup.rc embeds Unishade.exe, found through the include path.
+# setup.rc embeds Unishade.exe and UnishadeUi.dll, found through the include path.
 target_include_directories(installer PRIVATE "$<TARGET_FILE_DIR:Unishade>")
 target_compile_definitions(installer PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_definitions(installer PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
@@ -160,7 +160,7 @@ target_link_libraries(installer PRIVATE setup_libraries d3d11 dxgi d3dcompiler d
 # that are not KnownDLLs are delay-loaded, so they load after wWinMain has limited the search to System32.
 target_link_options(installer PRIVATE /DEPENDENTLOADFLAG:0x800 /DELAYLOAD:d3d11.dll /DELAYLOAD:d3dcompiler_47.dll
     /DELAYLOAD:dwmapi.dll /DELAYLOAD:winhttp.dll /DELAYLOAD:bcrypt.dll)
-add_dependencies(installer Unishade)
+add_dependencies(installer Unishade UnishadeUi)
 # The generator expression keeps multi-config generators from adding a Release folder.
 set_target_properties(installer PROPERTIES
     OUTPUT_NAME "Unishade-Setup-${PROJECT_VERSION}"

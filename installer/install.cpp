@@ -1044,6 +1044,7 @@ bool Install(const InstallOptions& options, const ReShadeRelease& release, Progr
         throw std::runtime_error("Could not prepare " + PathText(work) + ": " + SystemError(error.value()) + ".");
 
     WriteFile(files / L"Unishade.exe", Resource(IDR_HOST));
+    WriteFile(files / L"UnishadeUi.dll", Resource(IDR_UI));
     WriteFile(files / L"LICENSE", Resource(IDR_LICENSE));
     WriteFile(files / L"CREDITS.txt", Resource(IDR_CREDITS));
     bool complete = true;

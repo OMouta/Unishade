@@ -46,6 +46,7 @@ jobs:
           name: Unishade-windows-x64
           path: |
             build/Release/Unishade.exe
+            build/Release/UnishadeUi.dll
             build/installer/Unishade-Setup-*.exe
             LICENSE
           if-no-files-found: error
@@ -188,7 +189,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           mkdir upload
-          cp release/build/Release/Unishade.exe "release/build/installer/Unishade-Setup-${RELEASE_TAG#v}.exe" release/LICENSE \
+          cp release/build/Release/Unishade.exe release/build/Release/UnishadeUi.dll "release/build/installer/Unishade-Setup-${RELEASE_TAG#v}.exe" release/LICENSE \
             release/Unishade-linux-x64.tar.gz release/Unishade-macOS.zip upload/
           # The SHA-256 of every file, in the format sha256sum -c reads.
           (cd upload && sha256sum -- * > ../SHA256SUMS.txt)
