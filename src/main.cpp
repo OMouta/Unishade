@@ -420,9 +420,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     const HANDLE instance = CreateMutexW(nullptr, TRUE, L"Local\\RobloxShadeHost");
     if (GetLastError() == ERROR_ALREADY_EXISTS)
     {
+        // From the taskbar, or from the notification area, where it waits as it was, maximized or not.
         if (const HWND other = FindWindowW(kLauncherClass, nullptr))
         {
-            ShowWindow(other, SW_RESTORE);
+            ShowWindow(other, IsIconic(other) ? SW_RESTORE : SW_SHOW);
             SetForegroundWindow(other);
         }
         return 0;

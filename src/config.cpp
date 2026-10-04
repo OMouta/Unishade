@@ -477,6 +477,26 @@ void RemoveGamePreset(const std::wstring& game)
     WritePrivateProfileStringW(L"GamePresets", game.c_str(), nullptr, IniPath().c_str());
 }
 
+std::optional<LauncherPlace> LoadLauncherPlace()
+{
+    wchar_t value[128]{};
+    GetPrivateProfileStringW(L"Launcher", L"Place", L"", value, static_cast<DWORD>(std::size(value)), IniPath().c_str());
+    LauncherPlace place;
+    int maximized = 0;
+    if (swscanf_s(value, L"%ld,%ld,%ld,%ld,%d", &place.rect.left, &place.rect.top, &place.rect.right, &place.rect.bottom, &maximized) != 5 ||
+        place.rect.right <= place.rect.left || place.rect.bottom <= place.rect.top)
+        return std::nullopt;
+    place.maximized = maximized != 0;
+    return place;
+}
+
+void SaveLauncherPlace(const LauncherPlace& place)
+{
+    wchar_t value[128]{};
+    swprintf_s(value, L"%ld,%ld,%ld,%ld,%d", place.rect.left, place.rect.top, place.rect.right, place.rect.bottom, place.maximized ? 1 : 0);
+    WritePrivateProfileStringW(L"Launcher", L"Place", value, IniPath().c_str());
+}
+
 std::wstring ChangeHotkeys(const InputHotkeys& hotkeys)
 {
     if (const auto clash = FindShortcutClash(hotkeys))

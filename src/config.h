@@ -177,5 +177,15 @@ void SetGamePreset(const std::wstring& game, const std::wstring& preset);
 // Forgets the game's preset, such as when the game is removed or renamed.
 void RemoveGamePreset(const std::wstring& game);
 
+// Where the launcher's window was when Unishade last closed, from RobloxShadeHost.ini, so it opens there again. Empty
+// until it closed once.
+struct LauncherPlace
+{
+    RECT rect; // not maximized, as GetWindowPlacement gives it
+    bool maximized = false;
+};
+std::optional<LauncherPlace> LoadLauncherPlace();
+void SaveLauncherPlace(const LauncherPlace& place);
+
 // Folder of Unishade.exe, with a trailing backslash.
 std::wstring ExeDirectory();
