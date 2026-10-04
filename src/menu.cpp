@@ -230,6 +230,8 @@ struct Menu
     ULONGLONG lastScreenshot = 0;
     int presetStep = 0;
     ULONGLONG presetStepAt = 0;
+    // A preset the launcher picked for the game being played.
+    fs::path launcherPreset;
     // The key that keeps effects off, while the compare shortcut is held.
     UINT compareKey = 0;
 
@@ -3627,6 +3629,16 @@ void CarryOutRequests()
             case SwitchResult::Failed: ShowToast("ReShade could not load " + name); break;
             }
     }
+    // The launcher is not over the game, so what goes wrong is also reported there.
+    if (const fs::path target = std::exchange(m.launcherPreset, {}); !target.empty() && !SamePath(target, m.current))
+        switch (SwitchNow(target))
+        {
+        case SwitchResult::Switched: ShowToast(Utf8(target.stem().wstring())); break;
+        case SwitchResult::Unsaved:
+            Report(LogLevel::Warning, L"Save or discard the changes to %ls in the menu to switch to %ls.", m.current.stem().c_str(), target.stem().c_str());
+            break;
+        case SwitchResult::Failed: Report(LogLevel::Warning, L"ReShade could not load %ls.", target.stem().c_str()); break;
+        }
 }
 
 // ReShade calls the menu from its own DLL, which nothing may be thrown into. An error is logged once, and the frame
@@ -3963,4 +3975,38 @@ void FlushPresets(bool saveUnsaved)
     {
         Log(LogLevel::Error, L"Could not write %ls: %hs", m.current.filename().c_str(), e.what());
     }
+}
+
+GamePresetList GamePresets(const std::wstring& game)
+{
+    GamePresetList list;
+    {
+        std::lock_guard lock(scanner.mutex);
+        for (const ScannedFolder& folder : scanner.folders)
+            if (SamePath(folder.path, PresetsRoot()))
+                list.shared = folder.presets;
+            else if (!game.empty() && SamePath(folder.path, PresetsRoot() / game))
+                list.own = folder.presets;
+    }
+    list.inUse = !game.empty() && SamePath(m.game, game) && m.runtime ? m.current : RememberedPreset(game);
+    return list;
+}
+
+unsigned PresetScanVersion()
+{
+    std::lock_guard lock(scanner.mutex);
+    return scanner.version;
+}
+
+void RequestPresetScan()
+{
+    RequestScan();
+}
+
+void UseGamePreset(const std::wstring& game, const fs::path& preset)
+{
+    if (m.runtime && !m.game.empty() && SamePath(m.game, game))
+        m.launcherPreset = preset;
+    else if (const std::wstring relative = LibraryPath(preset); !relative.empty())
+        SetGamePreset(game, relative);
 }
