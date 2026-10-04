@@ -13,6 +13,7 @@
 #include "names.h"
 #include "reshade_imgui.h"
 #include "resource.h"
+#include "sharing.h"
 #include "shell.h"
 #include "state.h"
 #include "text.h"
@@ -20,6 +21,7 @@
 #include "update.h"
 
 #include <shlobj.h>
+#include <shlwapi.h>
 #include <shobjidl.h>
 #include <wincodec.h>
 
@@ -27,11 +29,14 @@
 #include <atomic>
 #include <cctype>
 #include <cfloat>
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
+#include <deque>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -81,9 +86,24 @@ constexpr ULONGLONG kToastDuration = 3000;
 constexpr wchar_t kDlssModule[] = L"renodx-dlss.addon64";
 constexpr char kDlssWindow[] = "RenoDX DLSS";
 
+// RenoDX's DLSS5 add-on keeps the settings that change its look in this section of ReShade.ini, and reads them when it
+// loads. Its other settings are about how it runs on that PC, so shared presets only carry these.
+constexpr char kDlss5Section[] = "RENODX-DLSS-preset1";
+constexpr const char* kDlss5Keys[] = {
+    "DirectNeuralRenderingStyle",
+    "DirectNeuralRenderingIntensity",
+    "DirectNeuralRenderingLocalToneStrength",
+    "DirectNeuralRenderingLocalStructureStrength",
+    "DirectNeuralRenderingSkinStructureStrength",
+    "DirectNeuralRenderingGlobalToneStrength",
+    "DirectNeuralRenderingAutoMask",
+    "DirectNeuralRenderingPassCount",
+};
+
 enum class Tab
 {
     Presets,
+    Browse,
     Effects,
     Settings,
     Status,
@@ -195,6 +215,113 @@ enum class Confirmation
 {
     ResetEffect,
     ResetShortcuts,
+    DeleteShared,
+};
+
+// A screenshot of a shared preset, decoded at the size the menu shows it.
+struct SharedPicture
+{
+    bool requested = false;
+    // RGBA, one level. Empty until it downloaded, and when it could not be.
+    Pixels pixels;
+    UINT width = 0;
+    UINT height = 0;
+    Texture texture;
+};
+
+// The back buffer as Unishade's swap chain holds it: BGRA rows.
+struct Frame
+{
+    uint32_t width = 0;
+    uint32_t height = 0;
+    std::vector<uint8_t> pixels;
+};
+
+enum class BrowseView
+{
+    List,
+    Preset,
+    Own,
+};
+
+// Publishing takes the picture before the effects, then the one after them, in the same frame.
+enum class Capture
+{
+    None,
+    Before,
+    After,
+};
+
+// The Browse tab: presets others shared for the game being played.
+struct Browse
+{
+    BrowseView view = BrowseView::List;
+
+    // The game being played as the presets API knows it. Looked up again when the tab shows after a while, since
+    // Roblox can move to another experience without the game changing.
+    DWORD resolvedProcess = 0;
+    ULONGLONG resolvedAt = 0;
+    bool resolving = false;
+    bool resolved = false;
+    std::optional<sharing::Game> game;
+    std::optional<sharing::Game> experience;
+    // The Roblox place the experience came from, which publishing for the experience sends.
+    std::optional<int64_t> place;
+    bool allOfRoblox = false;
+    bool newest = false;
+    std::string effect;
+
+    // The presets listed. Answers to requests made before the game, sorting or filter changed are dropped.
+    unsigned generation = 0;
+    std::vector<sharing::Preset> presets;
+    std::optional<int64_t> next;
+    bool loading = false;
+    std::string error;
+    // By "<id>/<kind>".
+    std::map<std::string, SharedPicture> pictures;
+    // Textures of pictures dropped this frame, which ImGui may still draw. Destroyed at the start of the next one.
+    std::vector<Texture> retired;
+
+    // The preset opened from the list, empty while it loads.
+    int64_t openId = 0;
+    std::optional<sharing::Preset> open;
+    bool showBefore = false;
+    bool useDlss5 = true;
+    // A preset being tried, from a file outside the presets folder.
+    int64_t tryingId = 0;
+    fs::path tryingPath;
+
+    std::vector<sharing::OwnPreset> own;
+    bool ownLoading = false;
+
+    bool accountRead = false;
+    std::string token;
+    std::string account;
+    bool signingIn = false;
+    // Discord's sign-in page, to open again when the browser tab was closed.
+    std::string signInUrl;
+
+    bool openPublishPopup = false;
+    bool publishDialogOpen = false;
+    bool published = false;
+    char publishName[64]{};
+    char publishDescription[512]{};
+    bool publishForExperience = true;
+    bool publishNeedsDepth = false;
+    std::string publishError;
+    bool publishing = false;
+    std::string publishIni;
+    Capture capture = Capture::None;
+    ULONGLONG captureAt = 0;
+    Frame before;
+
+    bool openReportPopup = false;
+    int64_t reportId = 0;
+    std::string reportName;
+    char reportReason[300]{};
+
+    int64_t deleteId = 0;
+    std::string deleteName;
 };
 
 // What to do with unsaved changes before switching presets.
@@ -345,6 +472,8 @@ struct Menu
     Texture logo;
     // By folder.
     std::map<std::wstring, Texture> folderLogos;
+
+    Browse browse;
 };
 Menu m;
 
@@ -526,12 +655,31 @@ void CreateTexture(Texture& texture, const Pixels& pixels, UINT size)
                                        &texture.view);
 }
 
+// A picture of any size with one level, such as a shared preset's screenshot.
+void CreatePictureTexture(Texture& texture, const Pixels& pixels, UINT width, UINT height)
+{
+    DestroyTexture(texture);
+    texture.source = pixels;
+    if (!m.device || !pixels || pixels->size() != static_cast<size_t>(width) * height * 4)
+        return;
+    const subresource_data data{ pixels->data(), width * 4, width * height * 4 };
+    const resource_desc desc(width, height, 1, 1, format::r8g8b8a8_unorm, 1, memory_heap::default_, resource_usage::shader_resource);
+    if (m.device->create_resource(desc, &data, resource_usage::shader_resource, &texture.image))
+        m.device->create_resource_view(texture.image, resource_usage::shader_resource, resource_view_desc(format::r8g8b8a8_unorm, 0, 1, 0, 1),
+                                       &texture.view);
+}
+
 void DestroyTextures()
 {
     DestroyTexture(m.logo);
     for (auto& [folder, texture] : m.folderLogos)
         DestroyTexture(texture);
     m.folderLogos.clear();
+    for (auto& [key, picture] : m.browse.pictures)
+        DestroyTexture(picture.texture);
+    for (Texture& texture : m.browse.retired)
+        DestroyTexture(texture);
+    m.browse.retired.clear();
 }
 
 uint64_t HeaderLogo()
@@ -2973,6 +3121,8 @@ void SettingsTab()
 }
 
 // Asks before resetting what cannot be got back, such as an effect's settings with auto-save on.
+void DeleteShared();
+
 void ConfirmDialog()
 {
     if (!BeginDialog("##confirm", m.openConfirmPopup, 380))
@@ -2980,13 +3130,17 @@ void ConfirmDialog()
     if (m.confirm == Confirmation::ResetEffect)
         DialogText("Reset every setting of " + m.confirmEffect + "?",
                    AutoSavePresets() ? "They go back to their defaults and the preset is saved." : "They go back to their defaults.");
+    else if (m.confirm == Confirmation::DeleteShared)
+        DialogText("Delete " + m.browse.deleteName + "?", "It leaves Browse for everyone, and its saves are gone.");
     else
         DialogText("Reset every shortcut?", "They go back to the keys Unishade starts with.");
-    const int clicked = DialogButtons({ "Cancel", "Reset" });
+    const int clicked = DialogButtons({ "Cancel", m.confirm == Confirmation::DeleteShared ? "Delete" : "Reset" });
     if (clicked == 1)
     {
         if (m.confirm == Confirmation::ResetEffect)
             ResetEffect(m.confirmEffect);
+        else if (m.confirm == Confirmation::DeleteShared)
+            DeleteShared();
         else
             m.shortcutError = ChangeHotkeys(DefaultHotkeys());
     }
@@ -3108,6 +3262,1230 @@ void StatusTab()
     Text("Unishade " UNISHADE_VERSION ". Effects run on ReShade by crosire.", kDim, 12.5f);
 }
 
+// Browse
+
+// The game is looked up again when the tab shows after this long, since Roblox moves between experiences.
+constexpr ULONGLONG kResolveInterval = 30000;
+// Screenshots are decoded at most this wide, about twice what the menu shows them at.
+constexpr UINT kThumbnailWidth = 480;
+constexpr UINT kScreenshotWidth = 960;
+// ReShade only takes the picture before the effects while they are on, so publishing waits this long for it.
+constexpr ULONGLONG kCaptureWait = 1000;
+
+// Calls to the presets API and screenshot downloads run one after another on a thread of their own, so the frame
+// never waits for the server. A job returns what to do with its answer, which runs on the menu's thread before the
+// next frame. Never destroyed, since a call may still be waiting for the server when the host exits.
+struct SharingQueue
+{
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::deque<std::function<std::function<void()>()>> jobs;
+    std::vector<std::function<void()>> answers;
+    bool started = false;
+    // Never set. Calls give up on their own after the server's timeouts.
+    std::atomic<bool> cancel = false;
+};
+SharingQueue& sharingQueue = *new SharingQueue;
+
+void Answer(std::function<void()> answer)
+{
+    std::lock_guard lock(sharingQueue.mutex);
+    sharingQueue.answers.push_back(std::move(answer));
+}
+
+void SharingThread()
+{
+    // WIC decodes the screenshots shown and encodes the ones published.
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    for (;;)
+    {
+        std::function<std::function<void()>()> job;
+        {
+            std::unique_lock lock(sharingQueue.mutex);
+            sharingQueue.wake.wait(lock, [] { return !sharingQueue.jobs.empty(); });
+            job = std::move(sharingQueue.jobs.front());
+            sharingQueue.jobs.pop_front();
+        }
+        std::function<void()> answer;
+        try
+        {
+            answer = job();
+        }
+        catch (const std::exception& e)
+        {
+            answer = [message = std::string(e.what())] { ShowToast(message); };
+        }
+        if (answer)
+            Answer(std::move(answer));
+    }
+}
+
+void Share(std::function<std::function<void()>()> job)
+{
+    {
+        std::lock_guard lock(sharingQueue.mutex);
+        sharingQueue.jobs.push_back(std::move(job));
+        if (!std::exchange(sharingQueue.started, true))
+            std::thread(SharingThread).detach();
+    }
+    sharingQueue.wake.notify_one();
+}
+
+void TakeSharingAnswers()
+{
+    for (Texture& texture : m.browse.retired)
+        DestroyTexture(texture);
+    m.browse.retired.clear();
+    std::vector<std::function<void()>> answers;
+    {
+        std::lock_guard lock(sharingQueue.mutex);
+        answers.swap(sharingQueue.answers);
+    }
+    for (const std::function<void()>& answer : answers)
+        answer();
+}
+
+// What went wrong in a call, and whether the server no longer knows the sign-in.
+struct Failure
+{
+    std::string message;
+    bool signedOut = false;
+};
+
+template <typename F>
+Failure Attempt(F&& call)
+{
+    try
+    {
+        call();
+        return {};
+    }
+    catch (const sharing::Refused& refused)
+    {
+        return { refused.what(), refused.status == 401 };
+    }
+    catch (const std::exception& e)
+    {
+        return { e.what() };
+    }
+}
+
+void ForgetToken()
+{
+    m.browse.token.clear();
+    m.browse.account.clear();
+    SetSharingToken({});
+}
+
+std::string ConfigValue(const char* section, const char* key)
+{
+    char value[256] = "";
+    size_t size = sizeof(value);
+    return reshade::get_config_value(m.runtime, section, key, value, &size) ? value : std::string();
+}
+
+// Whether the DLSS5 add-on is loaded and not turned off with its hook point.
+bool Dlss5On()
+{
+    return GetModuleHandleW(kDlssModule) && ConfigValue("RENODX-DLSS", "DirectNeuralRenderingHookPoint") != "0";
+}
+
+// The DLSS5 settings to share with a preset, or none when DLSS5 is off.
+sharing::Settings Dlss5Settings()
+{
+    sharing::Settings settings;
+    if (!Dlss5On())
+        return settings;
+    for (const char* key : kDlss5Keys)
+        if (std::string value = ConfigValue(kDlss5Section, key); !value.empty())
+            settings.emplace_back(key, std::move(value));
+    return settings;
+}
+
+// The file name of the game being played, which the presets API knows games by. Empty when it has exited.
+std::wstring GameExecutable()
+{
+    try
+    {
+        return m.gameProcess ? ProcessExecutable(m.gameProcess).filename().wstring() : std::wstring();
+    }
+    catch (const std::system_error&)
+    {
+        return {};
+    }
+}
+
+// What Unishade calls the game being played: its saved name, or its window's.
+std::string GameName()
+{
+    if (!m.game.empty())
+        return Utf8(m.game);
+    return g.activeGame ? Utf8(g.activeGame->name) : std::string();
+}
+
+std::optional<int64_t> ListedGame()
+{
+    const Browse& b = m.browse;
+    if (b.experience && !b.allOfRoblox)
+        return b.experience->id;
+    if (b.game)
+        return b.game->id;
+    return std::nullopt;
+}
+
+std::string Saves(int64_t saves)
+{
+    return saves == 1 ? "1 save" : std::to_string(saves) + " saves";
+}
+
+// An effect file's name without .fx.
+std::string EffectName(const std::string& file)
+{
+    return file.size() > 3 && Lower(file.substr(file.size() - 3)) == ".fx" ? file.substr(0, file.size() - 3) : file;
+}
+
+// Text cut between characters to at most length bytes, with an ellipsis when it was cut.
+std::string Shortened(const std::string& text, size_t length)
+{
+    if (text.size() <= length)
+        return text;
+    while (length > 0 && (static_cast<unsigned char>(text[length]) & 0xC0) == 0x80)
+        --length;
+    return text.substr(0, length) + "...";
+}
+
+std::string Trimmed(const char* text)
+{
+    std::string trimmed = text;
+    trimmed.erase(0, trimmed.find_first_not_of(" \t\r\n"));
+    trimmed.erase(trimmed.find_last_not_of(" \t\r\n") + 1);
+    return trimmed;
+}
+
+// Pictures
+
+struct Decoded
+{
+    Pixels pixels;
+    UINT width = 0;
+    UINT height = 0;
+};
+
+// Decodes a screenshot at most maxWidth wide, as RGBA. Empty when it is not a picture WIC can read.
+Decoded DecodePicture(const std::string& data, UINT maxWidth)
+{
+    winrt::com_ptr<IWICImagingFactory> factory;
+    winrt::com_ptr<IWICStream> stream;
+    winrt::com_ptr<IWICBitmapDecoder> decoder;
+    winrt::com_ptr<IWICBitmapFrameDecode> frame;
+    winrt::com_ptr<IWICBitmapScaler> scaler;
+    winrt::com_ptr<IWICFormatConverter> converter;
+    UINT width = 0;
+    UINT height = 0;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(factory.put()))) ||
+        FAILED(factory->CreateStream(stream.put())) ||
+        FAILED(stream->InitializeFromMemory(reinterpret_cast<BYTE*>(const_cast<char*>(data.data())), static_cast<DWORD>(data.size()))) ||
+        FAILED(factory->CreateDecoderFromStream(stream.get(), nullptr, WICDecodeMetadataCacheOnLoad, decoder.put())) ||
+        FAILED(decoder->GetFrame(0, frame.put())) || FAILED(frame->GetSize(&width, &height)) || !width || !height)
+        return {};
+    const UINT targetWidth = std::min(width, maxWidth);
+    const UINT targetHeight = std::max(1u, static_cast<UINT>(static_cast<uint64_t>(height) * targetWidth / width));
+    auto pixels = std::make_shared<std::vector<BYTE>>(static_cast<size_t>(targetWidth) * targetHeight * 4);
+    if (FAILED(factory->CreateBitmapScaler(scaler.put())) ||
+        FAILED(scaler->Initialize(frame.get(), targetWidth, targetHeight, WICBitmapInterpolationModeHighQualityCubic)) ||
+        FAILED(factory->CreateFormatConverter(converter.put())) ||
+        FAILED(converter->Initialize(scaler.get(), GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom)) ||
+        FAILED(converter->CopyPixels(nullptr, targetWidth * 4, static_cast<UINT>(pixels->size()), pixels->data())))
+        return {};
+    return { pixels, targetWidth, targetHeight };
+}
+
+// A frame as a JPEG to publish. The swap chain's alpha means nothing, so it is left out.
+std::string EncodeJpeg(const Frame& frame)
+{
+    winrt::com_ptr<IWICImagingFactory> factory;
+    winrt::com_ptr<IWICBitmap> bitmap;
+    winrt::com_ptr<IWICFormatConverter> converter;
+    winrt::com_ptr<IStream> stream;
+    winrt::com_ptr<IWICBitmapEncoder> encoder;
+    winrt::com_ptr<IWICBitmapFrameEncode> target;
+    winrt::com_ptr<IPropertyBag2> options;
+    stream.attach(SHCreateMemStream(nullptr, 0));
+    PROPBAG2 quality{};
+    quality.pstrName = const_cast<LPOLESTR>(L"ImageQuality");
+    VARIANT value{};
+    value.vt = VT_R4;
+    value.fltVal = 0.92f;
+    WICPixelFormatGUID format = GUID_WICPixelFormat24bppBGR;
+    if (!stream || FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(factory.put()))) ||
+        FAILED(factory->CreateBitmapFromMemory(frame.width, frame.height, GUID_WICPixelFormat32bppBGRA, frame.width * 4,
+                                               static_cast<UINT>(frame.pixels.size()), const_cast<BYTE*>(frame.pixels.data()), bitmap.put())) ||
+        FAILED(factory->CreateFormatConverter(converter.put())) ||
+        FAILED(converter->Initialize(bitmap.get(), GUID_WICPixelFormat24bppBGR, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom)) ||
+        FAILED(factory->CreateEncoder(GUID_ContainerFormatJpeg, nullptr, encoder.put())) ||
+        FAILED(encoder->Initialize(stream.get(), WICBitmapEncoderNoCache)) || FAILED(encoder->CreateNewFrame(target.put(), options.put())) ||
+        FAILED(options->Write(1, &quality, &value)) || FAILED(target->Initialize(options.get())) ||
+        FAILED(target->SetSize(frame.width, frame.height)) || FAILED(target->SetPixelFormat(&format)) || format != GUID_WICPixelFormat24bppBGR ||
+        FAILED(target->WriteSource(converter.get(), nullptr)) || FAILED(target->Commit()) || FAILED(encoder->Commit()))
+        throw std::runtime_error("Unishade could not save the screenshots.");
+    STATSTG stat{};
+    const LARGE_INTEGER start{};
+    std::string data;
+    ULONG read = 0;
+    if (FAILED(stream->Stat(&stat, STATFLAG_NONAME)) || FAILED(stream->Seek(start, STREAM_SEEK_SET, nullptr)))
+        throw std::runtime_error("Unishade could not save the screenshots.");
+    data.resize(static_cast<size_t>(stat.cbSize.QuadPart));
+    if (FAILED(stream->Read(data.data(), static_cast<ULONG>(data.size()), &read)) || read != data.size())
+        throw std::runtime_error("Unishade could not save the screenshots.");
+    return data;
+}
+
+// The back buffer as BGRA rows. Unishade's swap chain is BGRA, and ReShade hands its pixels over as they are.
+Frame CaptureFrame(effect_runtime* runtime)
+{
+    Frame frame;
+    const resource_desc desc = runtime->get_device()->get_resource_desc(runtime->get_current_back_buffer());
+    if (format_to_default_typed(desc.texture.format, 0) != format::b8g8r8a8_unorm)
+        return frame;
+    runtime->get_screenshot_width_and_height(&frame.width, &frame.height);
+    frame.pixels.resize(static_cast<size_t>(frame.width) * frame.height * 4);
+    if (!runtime->capture_screenshot(frame.pixels.data()))
+        frame.pixels.clear();
+    return frame;
+}
+
+void ForgetPictures(const std::function<bool(const std::string&)>& which)
+{
+    for (auto picture = m.browse.pictures.begin(); picture != m.browse.pictures.end();)
+        if (which(picture->first))
+        {
+            m.browse.retired.push_back(picture->second.texture);
+            picture = m.browse.pictures.erase(picture);
+        }
+        else
+            ++picture;
+}
+
+// A shared preset's screenshot, downloaded the first time it is asked for. Its texture stays empty until it arrives.
+const SharedPicture& Picture(int64_t id, const char* kind, const std::string& url, UINT maxWidth)
+{
+    const std::string key = std::to_string(id) + "/" + kind;
+    SharedPicture& picture = m.browse.pictures[key];
+    if (!picture.requested && !url.empty())
+    {
+        picture.requested = true;
+        Share([key, url, maxWidth] {
+            Decoded decoded;
+            try
+            {
+                decoded = DecodePicture(sharing::Image(url, sharingQueue.cancel), maxWidth);
+            }
+            catch (const std::exception& e)
+            {
+                Log(LogLevel::Info, L"Could not download a shared preset's screenshot: %hs", e.what());
+            }
+            return std::function<void()>([key, decoded] {
+                // Gone when the list changed meanwhile.
+                if (const auto found = m.browse.pictures.find(key); found != m.browse.pictures.end())
+                {
+                    found->second.pixels = decoded.pixels;
+                    found->second.width = decoded.width;
+                    found->second.height = decoded.height;
+                }
+            });
+        });
+    }
+    if (picture.pixels && picture.texture.source != picture.pixels)
+        CreatePictureTexture(picture.texture, picture.pixels, picture.width, picture.height);
+    return picture;
+}
+
+// Fills min to max with a picture, cutting its sides or its top and bottom to keep its shape, or with a dark box
+// until it arrives.
+void DrawPicture(ImDrawList* draw, const SharedPicture& picture, ImVec2 min, ImVec2 max, ImDrawFlags corners)
+{
+    if (!picture.texture.view.handle || !picture.width || !picture.height)
+    {
+        draw->AddRectFilled(min, max, kInset, S(8), corners);
+        return;
+    }
+    const float box = (max.x - min.x) / std::max(max.y - min.y, 1.0f);
+    const float shape = static_cast<float>(picture.width) / static_cast<float>(picture.height);
+    ImVec2 uv0(0, 0);
+    ImVec2 uv1(1, 1);
+    if (shape > box)
+    {
+        uv0.x = (1 - box / shape) / 2;
+        uv1.x = 1 - uv0.x;
+    }
+    else
+    {
+        uv0.y = (1 - shape / box) / 2;
+        uv1.y = 1 - uv0.y;
+    }
+    draw->AddImageRounded(ImTextureRef(picture.texture.view.handle), min, max, uv0, uv1, IM_COL32_WHITE, S(8), corners);
+}
+
+// Requests
+
+void LoadPresets(bool more)
+{
+    Browse& b = m.browse;
+    if (!more)
+    {
+        ++b.generation;
+        b.presets.clear();
+        b.next.reset();
+        ForgetPictures([](const std::string& key) { return key.ends_with("/thumbnail"); });
+    }
+    b.error.clear();
+    const std::optional<int64_t> game = ListedGame();
+    b.loading = game.has_value();
+    if (!game)
+        return;
+    const int64_t offset = more && b.next ? *b.next : 0;
+    Share([game = *game, effect = b.effect, newest = b.newest, offset, generation = b.generation] {
+        sharing::Page page;
+        const Failure failure = Attempt([&] { page = sharing::List(game, effect, newest, offset, sharingQueue.cancel); });
+        return std::function<void()>([page, failure, generation] {
+            Browse& b = m.browse;
+            if (generation != b.generation)
+                return;
+            b.loading = false;
+            b.error = failure.message;
+            b.presets.insert(b.presets.end(), page.presets.begin(), page.presets.end());
+            b.next = page.next;
+        });
+    });
+}
+
+// Looks up the game being played, and the Roblox experience in it, when the tab shows for a new game or after a while.
+void ResolveGame()
+{
+    Browse& b = m.browse;
+    const ULONGLONG now = GetTickCount64();
+    if (b.resolving || (b.resolved && b.resolvedProcess == m.gameProcess && now - b.resolvedAt < kResolveInterval))
+        return;
+    const std::wstring executable = GameExecutable();
+    if (executable.empty())
+    {
+        b.resolved = true;
+        b.resolvedAt = now;
+        b.resolvedProcess = m.gameProcess;
+        b.error = "Unishade can't tell which game this is.";
+        return;
+    }
+    b.resolving = true;
+    Share([executable, process = m.gameProcess] {
+        // Only Roblox's Windows client writes the logs the place comes from.
+        const std::optional<int64_t> place = _wcsicmp(executable.c_str(), L"RobloxPlayerBeta.exe") == 0 ? sharing::RobloxPlace() : std::nullopt;
+        sharing::Place found;
+        const Failure failure = Attempt([&] { found = sharing::Resolve(executable, place, sharingQueue.cancel); });
+        return std::function<void()>([process, place, found, failure] {
+            Browse& b = m.browse;
+            const auto id = [](const std::optional<sharing::Game>& game) { return game ? game->id : 0; };
+            const bool changed = !b.resolved || b.resolvedProcess != process || id(b.game) != id(found.game) || id(b.experience) != id(found.experience);
+            const bool failedBefore = !b.error.empty();
+            b.resolving = false;
+            b.resolved = true;
+            b.resolvedAt = GetTickCount64();
+            b.resolvedProcess = process;
+            if (!failure.message.empty())
+            {
+                b.error = failure.message;
+                return;
+            }
+            b.game = found.game;
+            b.experience = found.experience;
+            b.place = found.experience ? place : std::nullopt;
+            if (!changed && !failedBefore)
+                return;
+            b.allOfRoblox = false;
+            b.effect.clear();
+            if (b.view == BrowseView::Preset)
+                b.view = BrowseView::List;
+            LoadPresets(false);
+        });
+    });
+}
+
+void ClosePreset()
+{
+    Browse& b = m.browse;
+    const std::string prefix = std::to_string(b.openId) + "/";
+    ForgetPictures([&](const std::string& key) { return key.starts_with(prefix) && !key.ends_with("/thumbnail"); });
+    b.open.reset();
+    b.openId = 0;
+    b.view = BrowseView::List;
+}
+
+void OpenPreset(int64_t id)
+{
+    Browse& b = m.browse;
+    b.view = BrowseView::Preset;
+    b.open.reset();
+    b.openId = id;
+    b.showBefore = false;
+    b.useDlss5 = true;
+    Share([id] {
+        sharing::Preset preset;
+        const Failure failure = Attempt([&] { preset = sharing::Get(id, sharingQueue.cancel); });
+        return std::function<void()>([id, preset, failure] {
+            Browse& b = m.browse;
+            if (b.view != BrowseView::Preset || b.openId != id)
+                return;
+            if (!failure.message.empty())
+            {
+                ShowToast(failure.message);
+                ClosePreset();
+                return;
+            }
+            b.open = preset;
+        });
+    });
+}
+
+void ReadAccount()
+{
+    Browse& b = m.browse;
+    b.accountRead = true;
+    b.token = SharingToken();
+    if (b.token.empty())
+        return;
+    Share([token = b.token] {
+        std::string name;
+        const Failure failure = Attempt([&] { name = sharing::AccountName(token, sharingQueue.cancel); });
+        // The list says when the server can't be reached.
+        return std::function<void()>([token, name, failure] {
+            if (m.browse.token != token)
+                return;
+            if (failure.signedOut)
+                ForgetToken();
+            else
+                m.browse.account = name;
+        });
+    });
+}
+
+// Opens Discord's sign-in in the browser and waits for it on a thread of its own, since it can take minutes. While it
+// waits, the page opens again.
+void SignIn()
+{
+    if (m.browse.signingIn)
+    {
+        if (!m.browse.signInUrl.empty())
+            ShellOpen(Wide(m.browse.signInUrl));
+        return;
+    }
+    m.browse.signingIn = true;
+    m.browse.signInUrl.clear();
+    std::thread([] {
+        std::function<void()> answer = [] { m.browse.signingIn = false; };
+        try
+        {
+            const auto [url, poll] = sharing::StartSignIn(sharingQueue.cancel);
+            ShellOpen(Wide(url));
+            Answer([url] { m.browse.signInUrl = url; });
+            // The API forgets a sign-in after 10 minutes.
+            for (int attempt = 0; attempt < 300; ++attempt)
+            {
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                if (const std::optional<sharing::Account> account = sharing::PollSignIn(poll, sharingQueue.cancel))
+                {
+                    answer = [account = *account] {
+                        Browse& b = m.browse;
+                        b.signingIn = false;
+                        b.token = account.token;
+                        b.account = account.name;
+                        SetSharingToken(account.token);
+                        ShowToast("Signed in as " + account.name);
+                    };
+                    break;
+                }
+            }
+        }
+        catch (const std::exception& e)
+        {
+            answer = [message = std::string(e.what())] {
+                m.browse.signingIn = false;
+                ShowToast(message);
+            };
+        }
+        Answer(std::move(answer));
+    }).detach();
+}
+
+void SignOut()
+{
+    Browse& b = m.browse;
+    // The token is forgotten here either way.
+    Share([token = b.token] {
+        Attempt([&] { sharing::SignOut(token, sharingQueue.cancel); });
+        return std::function<void()>();
+    });
+    ForgetToken();
+    if (b.view == BrowseView::Own)
+        b.view = BrowseView::List;
+}
+
+void LoadOwn()
+{
+    Browse& b = m.browse;
+    b.ownLoading = true;
+    Share([token = b.token] {
+        std::vector<sharing::OwnPreset> own;
+        const Failure failure = Attempt([&] { own = sharing::OwnPresets(token, sharingQueue.cancel); });
+        return std::function<void()>([own, failure] {
+            Browse& b = m.browse;
+            b.ownLoading = false;
+            if (failure.signedOut)
+                ForgetToken();
+            if (!failure.message.empty())
+                ShowToast(failure.message);
+            else
+                b.own = own;
+        });
+    });
+}
+
+void DeleteShared()
+{
+    Browse& b = m.browse;
+    Share([token = b.token, id = b.deleteId, name = b.deleteName] {
+        const Failure failure = Attempt([&] { sharing::Delete(token, id, sharingQueue.cancel); });
+        return std::function<void()>([failure, name] {
+            if (failure.signedOut)
+                ForgetToken();
+            ShowToast(failure.message.empty() ? "Deleted " + name : failure.message);
+            if (m.browse.view == BrowseView::Own && !m.browse.token.empty())
+                LoadOwn();
+        });
+    });
+}
+
+// The name a shared preset's file gets, or one Windows allows when its own isn't.
+std::wstring SharedFileName(const sharing::Preset& preset)
+{
+    std::wstring name = Wide(preset.name);
+    if (!NameProblem(name).empty())
+        name = L"Shared preset " + std::to_wstring(preset.id);
+    return name;
+}
+
+bool Trying(const sharing::Preset& preset)
+{
+    return m.browse.tryingId == preset.id && SamePath(m.current, m.browse.tryingPath);
+}
+
+// Switches to a shared preset from a file outside the presets folder, so it is not kept unless Keep copies it in.
+void TryPreset(const sharing::Preset& preset)
+{
+    std::error_code error;
+    fs::path folder = fs::temp_directory_path(error) / L"Unishade" / std::to_wstring(preset.id);
+    if (!error)
+        fs::create_directories(folder, error);
+    // Spelled the way ReShade spells the preset it loads, which resolves links and short names.
+    if (!error)
+        folder = fs::canonical(folder, error);
+    const fs::path path = folder / (SharedFileName(preset) + L".ini");
+    if (!error)
+    {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file << preset.ini;
+        file.close();
+        if (!file)
+            error = std::make_error_code(std::errc::io_error);
+    }
+    if (error)
+    {
+        ShowToast("Windows could not save the preset to try it");
+        return;
+    }
+    m.browse.tryingId = preset.id;
+    m.browse.tryingPath = path;
+    m.pendingPreset = path;
+}
+
+// Saves a shared preset to the game's folder and switches to it, with its DLSS5 settings when asked to.
+void KeepPreset(const sharing::Preset& preset)
+{
+    Browse& b = m.browse;
+    const fs::path folder = NewPresetFolder();
+    const std::wstring name = SharedFileName(preset);
+    std::error_code error;
+    fs::path target = folder / (name + L".ini");
+    for (int copy = 2; fs::exists(target, error); ++copy)
+        target = folder / (name + L" (" + std::to_wstring(copy) + L").ini");
+    fs::create_directories(folder, error);
+    if (!error && Trying(preset))
+    {
+        // Changes made while trying it come along, as with Save as new.
+        m.runtime->export_current_preset(Utf8(target.wstring()).c_str());
+        m.pendingKeepsEdits = true;
+    }
+    else if (!error)
+    {
+        std::ofstream file(target, std::ios::binary);
+        file << preset.ini;
+        file.close();
+        if (!file)
+            error = std::make_error_code(std::errc::io_error);
+    }
+    if (error || !fs::exists(target, error))
+    {
+        m.pendingKeepsEdits = false;
+        ShowToast("Windows could not save the preset");
+        return;
+    }
+    m.pendingPreset = target;
+    RequestScan();
+
+    std::string message = "Kept " + Utf8(target.stem().wstring());
+    if (b.useDlss5 && !preset.dlss5.empty() && GetModuleHandleW(kDlssModule))
+    {
+        for (const auto& [key, value] : preset.dlss5)
+            if (std::any_of(std::begin(kDlss5Keys), std::end(kDlss5Keys), [&key](const char* shared) { return key == shared; }))
+                reshade::set_config_value(m.runtime, kDlss5Section, key.c_str(), value.c_str());
+        message += ". Its DLSS5 settings apply after Unishade restarts";
+    }
+    ShowToast(message, {}, 5000);
+    Share([id = preset.id] {
+        // Saves only sort the list, so a failed count doesn't matter.
+        Attempt([&] { sharing::CountSave(id, sharingQueue.cancel); });
+        return std::function<void()>();
+    });
+}
+
+void OpenPublish()
+{
+    Browse& b = m.browse;
+    if (b.token.empty())
+    {
+        SignIn();
+        ShowToast("Sign in with Discord in your browser, then publish", {}, 5000);
+        return;
+    }
+    CopyText(b.publishName, Utf8(m.current.stem().wstring()));
+    b.publishDescription[0] = '\0';
+    b.publishForExperience = true;
+    b.publishNeedsDepth = DepthEnabled();
+    b.publishError.clear();
+    b.published = false;
+    b.openPublishPopup = true;
+}
+
+// Checks what can be checked now, then takes the screenshots in the next frame.
+void StartPublish()
+{
+    Browse& b = m.browse;
+    b.publishError.clear();
+    if (Trimmed(b.publishName).empty())
+    {
+        b.publishError = "Give the preset a name.";
+        return;
+    }
+    if (m.techniquesDirty || !EffectsLoaded())
+    {
+        b.publishError = "Wait for the effects to finish loading.";
+        return;
+    }
+    if (const std::vector<std::string> missing = MissingEffects(m.current); !missing.empty())
+    {
+        std::string names;
+        for (const std::string& effect : missing)
+            names += (names.empty() ? "" : ", ") + effect;
+        b.publishError = "It uses effects that are not installed: " + names + ".";
+        return;
+    }
+    if (!m.runtime->get_effects_state() || m.comparing)
+    {
+        b.publishError = "Turn effects on, so the screenshots show them.";
+        return;
+    }
+    // The preset as it is on screen, unsaved changes included.
+    std::error_code error;
+    const fs::path file = fs::temp_directory_path(error) / L"Unishade" / L"Publish.ini";
+    if (!error)
+        fs::create_directories(file.parent_path(), error);
+    b.publishIni.clear();
+    if (!error)
+    {
+        m.runtime->export_current_preset(Utf8(file.wstring()).c_str());
+        b.publishIni = ReadText(file);
+        fs::remove(file, error);
+    }
+    if (b.publishIni.empty())
+    {
+        b.publishError = "Unishade could not read the preset.";
+        return;
+    }
+    b.publishing = true;
+    b.capture = Capture::Before;
+    b.captureAt = GetTickCount64();
+}
+
+// Others only have the effects Setup installs, so a preset that uses any other could not work for them.
+void CheckSetupEffects(const std::string& ini)
+{
+    const fs::path shaders = fs::path(ExeDirectory()) / L"reshade-shaders" / L"Shaders";
+    std::set<std::string> installed;
+    std::error_code error;
+    for (fs::recursive_directory_iterator entry(shaders, error), end; !error && entry != end; entry.increment(error))
+        installed.insert(Lower(Utf8(entry->path().filename().wstring())));
+    for (const std::string& effect : PresetEffectFiles(PresetIni(ini)))
+        if (!installed.count(Lower(effect)))
+            throw std::runtime_error(effect + " is not one of the effects Setup installs, so others couldn't use the preset.");
+}
+
+// Sends the preset with the screenshots taken for it.
+void FinishPublish(Frame after)
+{
+    Browse& b = m.browse;
+    Frame before = std::exchange(b.before, {});
+    if (before.pixels.empty() || after.pixels.empty())
+    {
+        b.publishing = false;
+        b.publishError = "Unishade could not take the screenshots.";
+        return;
+    }
+    const sharing::Publication publication{
+        .name = Trimmed(b.publishName),
+        .description = Trimmed(b.publishDescription),
+        .executable = Utf8(GameExecutable()),
+        .gameName = GameName(),
+        .place = b.publishForExperience && b.experience ? b.place : std::nullopt,
+        .ini = b.publishIni,
+        .needsDepth = b.publishNeedsDepth,
+        .dlss5 = Dlss5Settings(),
+    };
+    auto frames = std::make_shared<std::pair<Frame, Frame>>(std::move(before), std::move(after));
+    Share([publication, frames, token = b.token] {
+        const Failure failure = Attempt([&] {
+            CheckSetupEffects(publication.ini);
+            sharing::Publication sent = publication;
+            sent.before = EncodeJpeg(frames->first);
+            sent.after = EncodeJpeg(frames->second);
+            sharing::Publish(token, sent, sharingQueue.cancel);
+        });
+        return std::function<void()>([failure, name = publication.name] {
+            Browse& b = m.browse;
+            b.publishing = false;
+            if (failure.signedOut)
+                ForgetToken();
+            if (failure.message.empty())
+            {
+                b.published = true;
+                ShowToast("Sent " + name + " for review", {}, 5000);
+                if (b.view == BrowseView::Own)
+                    LoadOwn();
+                return;
+            }
+            b.publishError = failure.message;
+            if (!b.publishDialogOpen)
+                ShowToast(failure.message);
+        });
+    });
+}
+
+void OpenReport(const sharing::Preset& preset)
+{
+    Browse& b = m.browse;
+    if (b.token.empty())
+    {
+        SignIn();
+        ShowToast("Sign in with Discord in your browser, then report it", {}, 5000);
+        return;
+    }
+    b.reportId = preset.id;
+    b.reportName = preset.name;
+    b.reportReason[0] = '\0';
+    b.openReportPopup = true;
+}
+
+void SendReport()
+{
+    Browse& b = m.browse;
+    Share([token = b.token, id = b.reportId, reason = Trimmed(b.reportReason)] {
+        const Failure failure = Attempt([&] { sharing::Report(token, id, reason, sharingQueue.cancel); });
+        return std::function<void()>([failure] {
+            if (failure.signedOut)
+                ForgetToken();
+            ShowToast(failure.message.empty() ? "Sent the report to the team" : failure.message);
+        });
+    });
+}
+
+// Drawing
+
+bool BackLink()
+{
+    PushSize(13.5f);
+    const bool clicked = Link("Back");
+    ImGui::PopFont();
+    return clicked;
+}
+
+bool PresetCard(const sharing::Preset& preset, float width)
+{
+    ImGui::PushID(static_cast<int>(preset.id));
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    const float imageHeight = std::round(width * 9 / 16);
+    const ImVec2 size(width, imageHeight + S(48));
+    const bool clicked = ImGui::InvisibleButton("card", size, ImGuiButtonFlags_EnableNav);
+    const bool hovered = ImGui::IsItemHovered();
+    HandOnHover();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(start, start + size, hovered ? kCardHover : kCard, S(8));
+    DrawPicture(draw, Picture(preset.id, "thumbnail", preset.thumbnail, kThumbnailWidth), start, start + ImVec2(width, imageHeight),
+                ImDrawFlags_RoundCornersTop);
+    draw->AddRect(start, start + size, hovered ? kBorderStrong : kBorder, S(8));
+
+    draw->PushClipRect(start, start + size - ImVec2(S(8), 0), true);
+    PushSize(14);
+    draw->AddText(start + ImVec2(S(10), imageHeight + S(7)), kText, preset.name.c_str());
+    ImGui::PopFont();
+    PushSize(12.5f);
+    const std::string saves = Saves(preset.saves);
+    const float savesX = start.x + width - S(10) - ImGui::CalcTextSize(saves.c_str()).x;
+    draw->AddText(ImVec2(savesX, start.y + imageHeight + S(27)), kDim, saves.c_str());
+    draw->PushClipRect(start, ImVec2(savesX - S(8), start.y + size.y), true);
+    draw->AddText(start + ImVec2(S(10), imageHeight + S(27)), kDim, preset.author.c_str());
+    draw->PopClipRect();
+    ImGui::PopFont();
+    draw->PopClipRect();
+    ImGui::PopID();
+    return clicked;
+}
+
+// The preset's effects as small buttons that wrap. Returns the one clicked, or null.
+const std::string* EffectChips(const std::vector<std::string>& effects)
+{
+    const std::string* clicked = nullptr;
+    const float left = ImGui::GetCursorScreenPos().x;
+    const float right = left + ImGui::GetContentRegionAvail().x;
+    float x = left;
+    float y = ImGui::GetCursorScreenPos().y;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    PushSize(13);
+    const float height = ImGui::GetFontSize() + S(10);
+    for (const std::string& effect : effects)
+    {
+        const std::string name = EffectName(effect);
+        const ImVec2 size(ImGui::CalcTextSize(name.c_str()).x + S(18), height);
+        if (x > left && x + size.x > right)
+        {
+            x = left;
+            y += height + S(6);
+        }
+        const ImVec2 min(x, y);
+        ImGui::SetCursorScreenPos(min);
+        ImGui::PushID(effect.c_str());
+        if (ImGui::InvisibleButton("effect", size, ImGuiButtonFlags_EnableNav))
+            clicked = &effect;
+        const bool hovered = ImGui::IsItemHovered();
+        HandOnHover();
+        if (hovered)
+            ImGui::SetTooltip("Show presets with %s", name.c_str());
+        draw->AddRectFilled(min, min + size, hovered ? kCardHover : kCard, size.y / 2);
+        draw->AddRect(min, min + size, kBorder, size.y / 2);
+        draw->AddText(min + ImVec2(S(9), S(5)), kText, name.c_str());
+        ImGui::PopID();
+        x += size.x + S(6);
+    }
+    ImGui::PopFont();
+    ImGui::SetCursorScreenPos(ImVec2(left, y + height));
+    ImGui::Dummy(ImVec2(0, 0));
+    return clicked;
+}
+
+void BrowseList()
+{
+    Browse& b = m.browse;
+    if (Button(b.publishing ? "Publishing..." : "Publish", ImVec2(S(120), S(32)), true, !b.publishing))
+        OpenPublish();
+    if (!b.token.empty())
+    {
+        ImGui::SameLine(0, S(8));
+        if (Button("Your presets", ImVec2(S(120), S(32))))
+        {
+            b.view = BrowseView::Own;
+            LoadOwn();
+        }
+    }
+    ImGui::Dummy(ImVec2(0, S(2)));
+
+    if (b.experience)
+    {
+        const std::string experience = Shortened(b.experience->name, 28);
+        const int clicked = Segmented("scope", { experience.c_str(), "All of Roblox" }, b.allOfRoblox ? 1 : 0, kAccent);
+        if (clicked >= 0 && (clicked == 1) != b.allOfRoblox)
+        {
+            b.allOfRoblox = clicked == 1;
+            LoadPresets(false);
+        }
+    }
+    const int sort = Segmented("sort", { "Popular", "New" }, b.newest ? 1 : 0, kAccent);
+    if (sort >= 0 && (sort == 1) != b.newest)
+    {
+        b.newest = sort == 1;
+        LoadPresets(false);
+    }
+    if (!b.effect.empty())
+    {
+        Text("Only presets with " + EffectName(b.effect) + ".", kDim, 13);
+        ImGui::SameLine(0, S(6));
+        PushSize(13);
+        if (Link("Show all"))
+        {
+            b.effect.clear();
+            LoadPresets(false);
+        }
+        ImGui::PopFont();
+    }
+    ImGui::Dummy(ImVec2(0, S(2)));
+
+    const std::string game = b.experience && !b.allOfRoblox ? b.experience->name : b.game ? b.game->name : GameName();
+    if (!b.error.empty())
+    {
+        Text(b.error, kWarning, 13.5f);
+        PushSize(13.5f);
+        if (Link("Try again"))
+        {
+            if (b.game)
+                LoadPresets(false);
+            b.resolved = false;
+        }
+        ImGui::PopFont();
+    }
+    else if (!b.resolved || (b.loading && b.presets.empty()))
+        Spinner(S(10));
+    else if (b.presets.empty())
+        Text(b.effect.empty() ? "Nobody has shared a preset for " + game + " yet." : "No presets for " + game + " use " + EffectName(b.effect) + ".", kDim,
+             13.5f);
+    else
+    {
+        const float gap = S(10);
+        const float width = std::floor((ImGui::GetContentRegionAvail().x - gap) / 2);
+        for (size_t i = 0; i < b.presets.size(); ++i)
+        {
+            if (i % 2)
+                ImGui::SameLine(0, gap);
+            if (PresetCard(b.presets[i], width))
+                OpenPreset(b.presets[i].id);
+        }
+        if (b.next)
+        {
+            ImGui::Dummy(ImVec2(0, S(2)));
+            if (Button(b.loading ? "Loading..." : "Show more", ImVec2(ImGui::GetContentRegionAvail().x, S(32)), false, !b.loading))
+                LoadPresets(true);
+        }
+    }
+
+    ImGui::Dummy(ImVec2(0, S(6)));
+    PushSize(13);
+    if (b.token.empty())
+    {
+        if (Link(b.signingIn ? "Waiting for Discord in your browser..." : "Sign in with Discord"))
+            SignIn();
+        if (b.signingIn && ImGui::IsItemHovered())
+            ImGui::SetTooltip("Opens the sign-in page again");
+    }
+    else
+    {
+        Text(b.account.empty() ? "Signed in with Discord." : "Signed in as " + b.account + ".", kDim, 13);
+        ImGui::SameLine(0, S(6));
+        if (Link("Sign out"))
+            SignOut();
+    }
+    ImGui::PopFont();
+}
+
+void PresetPage()
+{
+    Browse& b = m.browse;
+    if (BackLink())
+    {
+        ClosePreset();
+        return;
+    }
+    if (!b.open)
+    {
+        Spinner(S(10));
+        return;
+    }
+    const sharing::Preset& preset = *b.open;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const float width = ImGui::GetContentRegionAvail().x;
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    const ImVec2 size(width, std::round(width * 9 / 16));
+    // Both download at once, so holding to compare doesn't wait.
+    const SharedPicture& after = Picture(preset.id, "after", preset.after, kScreenshotWidth);
+    const SharedPicture& before = Picture(preset.id, "before", preset.before, kScreenshotWidth);
+    DrawPicture(draw, b.showBefore ? before : after, start, start + size, ImDrawFlags_RoundCornersAll);
+    ImGui::Dummy(size);
+    PushSize(13.5f);
+    Button("Hold to compare", ImVec2(width, S(30)));
+    b.showBefore = ImGui::IsItemActive();
+    if (ImGui::IsItemHovered() && !b.showBefore)
+        ImGui::SetTooltip("Hold to see the screenshot without effects");
+    ImGui::PopFont();
+
+    Text(preset.name, kText, 16.5f);
+    Text("by " + preset.author + ", " + Saves(preset.saves), kDim, 13);
+    if (!preset.description.empty())
+        Text(preset.description, kText, 13.5f);
+    Heading("EFFECTS");
+    if (const std::string* effect = EffectChips(preset.effects))
+    {
+        const std::string chosen = *effect;
+        ClosePreset();
+        b.effect = chosen;
+        LoadPresets(false);
+        return;
+    }
+    if (preset.needsDepth)
+        Text(DepthEnabled() ? "Needs depth estimation." : "Needs depth estimation, which isn't running. Add it in Unishade Setup.",
+             DepthEnabled() ? kDim : kWarning, 13);
+    if (!preset.dlss5.empty())
+    {
+        if (!GetModuleHandleW(kDlssModule))
+            Text("Made with DLSS5, so it looks different without it.", kDim, 13);
+        else if (SwitchRow("dlss5", b.useDlss5, "Use its DLSS5 settings", "They apply after Unishade restarts."))
+            b.useDlss5 = !b.useDlss5;
+    }
+
+    ImGui::Dummy(ImVec2(0, S(2)));
+    const bool trying = Trying(preset);
+    if (Button(trying ? "Trying" : "Try", ImVec2(S(100), S(32)), false, !trying))
+        TryPreset(preset);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Switches to it without adding it to your presets");
+    ImGui::SameLine(0, S(8));
+    if (Button("Keep", ImVec2(S(100), S(32)), true))
+        KeepPreset(preset);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Adds it to your presets for %s and switches to it", GameName().c_str());
+    ImGui::Dummy(ImVec2(0, S(4)));
+    PushSize(13);
+    if (Link("Report", kDim))
+        OpenReport(preset);
+    ImGui::PopFont();
+}
+
+void OwnPresetsPage()
+{
+    Browse& b = m.browse;
+    if (BackLink())
+    {
+        b.view = BrowseView::List;
+        return;
+    }
+    Text("Your presets", kText, 16.5f);
+    if (b.ownLoading && b.own.empty())
+    {
+        Spinner(S(10));
+        return;
+    }
+    if (b.own.empty())
+    {
+        Text("You haven't published a preset yet.", kDim, 13.5f);
+        return;
+    }
+    for (const sharing::OwnPreset& preset : b.own)
+    {
+        ImGui::PushID(static_cast<int>(preset.id));
+        ImGui::Dummy(ImVec2(0, S(2)));
+        Text(preset.name, kText, 14.5f);
+        if (preset.status == "approved")
+            Text(preset.game + ". Shared, " + Saves(preset.saves) + ".", kDim, 13);
+        else if (preset.status == "pending")
+            Text(preset.game + ". Waiting for review.", kDim, 13);
+        else
+            Text(preset.game + ". Rejected" + (preset.rejectReason.empty() ? "." : ": " + preset.rejectReason), kWarning, 13);
+        PushSize(13);
+        if (Link("Delete", kDim))
+        {
+            b.deleteId = preset.id;
+            b.deleteName = preset.name;
+            m.confirm = Confirmation::DeleteShared;
+            m.openConfirmPopup = true;
+        }
+        ImGui::PopFont();
+        ImGui::PopID();
+    }
+}
+
+void BrowseTab()
+{
+    Browse& b = m.browse;
+    if (!b.accountRead)
+        ReadAccount();
+    if (!m.gameProcess)
+    {
+        Text("Browse shows presets for the game Unishade runs on.", kDim, 13.5f);
+        return;
+    }
+    ResolveGame();
+    switch (b.view)
+    {
+    case BrowseView::List: BrowseList(); break;
+    case BrowseView::Preset: PresetPage(); break;
+    case BrowseView::Own: OwnPresetsPage(); break;
+    }
+}
+
+void PublishDialog()
+{
+    Browse& b = m.browse;
+    b.publishDialogOpen = BeginDialog("##publish", b.openPublishPopup, 420);
+    if (!b.publishDialogOpen)
+        return;
+    DialogText("Publish " + Utf8(m.current.stem().wstring()), "The team reviews it before others can find it.");
+    PushSize(14.5f);
+    Text("Name", kDim, 12.5f);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputText("##name", b.publishName, sizeof(b.publishName));
+    Text("Description", kDim, 12.5f);
+    ImGui::InputTextMultiline("##description", b.publishDescription, sizeof(b.publishDescription), ImVec2(-FLT_MIN, S(64)));
+    if (b.experience)
+        ImGui::Checkbox(("Only for " + Shortened(b.experience->name, 40)).c_str(), &b.publishForExperience);
+    ImGui::Checkbox("Needs depth estimation", &b.publishNeedsDepth);
+    ImGui::PopFont();
+    if (Dlss5On())
+        Text("Your DLSS5 settings are shared with it.", kDim, 13);
+    Text("Its screenshots are the game behind the menu, with and without effects.", kDim, 13);
+    if (!b.publishError.empty())
+        Text(b.publishError, kError, 13.5f);
+    const int clicked = DialogButtons({ "Cancel", b.publishing ? "Publishing..." : "Publish" }, !b.publishing);
+    if (clicked == 1)
+        StartPublish();
+    if (b.published || clicked == 0 || ImGui::IsKeyPressed(ImGuiKey_Escape))
+    {
+        b.published = false;
+        ImGui::CloseCurrentPopup();
+    }
+    EndDialog();
+}
+
+void ReportDialog()
+{
+    Browse& b = m.browse;
+    if (!BeginDialog("##report", b.openReportPopup, 400))
+        return;
+    DialogText("Report " + b.reportName, "Tell the team what's wrong with it.");
+    if (ImGui::IsWindowAppearing())
+        ImGui::SetKeyboardFocusHere();
+    PushSize(14.5f);
+    ImGui::InputTextMultiline("##reason", b.reportReason, sizeof(b.reportReason), ImVec2(-FLT_MIN, S(64)));
+    ImGui::PopFont();
+    const int clicked = DialogButtons({ "Cancel", "Send" }, !Trimmed(b.reportReason).empty());
+    if (clicked == 1)
+        SendReport();
+    if (clicked >= 0 || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        ImGui::CloseCurrentPopup();
+    EndDialog();
+}
+
 // Frame
 
 void Header(ImVec2 origin, float width)
@@ -3194,9 +4572,11 @@ void Tabs(ImVec2 origin, float width)
         // Empty for DLSS5. RenoDX's add-on only draws its settings in ReShade's menu, so its tab opens that.
         std::optional<Tab> tab;
     };
-    Entry entries[5];
+    Entry entries[6];
     int count = 0;
     entries[count++] = { "Presets", Tab::Presets };
+    if (sharing::Available())
+        entries[count++] = { "Browse", Tab::Browse };
     entries[count++] = { "Effects", Tab::Effects };
     if (GetModuleHandleW(kDlssModule))
         entries[count++] = { "DLSS5", std::nullopt };
@@ -3353,6 +4733,7 @@ void DrawMenu()
     switch (m.tab)
     {
     case Tab::Presets: PresetsTab(); break;
+    case Tab::Browse: BrowseTab(); break;
     case Tab::Effects: EffectsTab(); break;
     case Tab::Settings: SettingsTab(); break;
     case Tab::Status: StatusTab(); break;
@@ -3364,6 +4745,8 @@ void DrawMenu()
     DeleteDialog();
     UnsavedDialog(m.current);
     ConfirmDialog();
+    PublishDialog();
+    ReportDialog();
     if (scrolls)
     {
         // Lets the window scroll down to the footer.
@@ -3597,6 +4980,18 @@ void CarryOutRequests()
         m.runtime->save_screenshot(m.beforeTaken ? "After" : nullptr);
         m.screenshotRequested = m.beforeAfterRequested = m.beforeTaken = false;
     }
+    // Publishing takes the picture after the effects in the frame it took the one before them.
+    if (m.browse.capture == Capture::After)
+    {
+        m.browse.capture = Capture::None;
+        FinishPublish(CaptureFrame(m.runtime));
+    }
+    else if (m.browse.capture == Capture::Before && GetTickCount64() - m.browse.captureAt > kCaptureWait)
+    {
+        m.browse.capture = Capture::None;
+        m.browse.publishing = false;
+        m.browse.publishError = "Turn effects on, so the screenshots show them.";
+    }
     // Steps go by presets read at most a couple of seconds before they were asked for, so new ones count.
     if (m.presetStep && (!m.scanVersion || m.scannedAt + kScanInterval < m.presetStepAt))
     {
@@ -3657,6 +5052,11 @@ void OnBeginEffects(effect_runtime* runtime, command_list*, resource_view, resou
         runtime->save_screenshot("Before");
         m.beforeTaken = true;
     }
+    if (runtime == m.runtime && m.browse.capture == Capture::Before)
+    {
+        m.browse.before = CaptureFrame(runtime);
+        m.browse.capture = Capture::After;
+    }
 }
 
 // What happens every frame before anything is drawn.
@@ -3688,6 +5088,7 @@ void UpdateFrame(bool menu)
         m.runtime->set_current_preset_path(Utf8(m.current.wstring()).c_str());
     }
     TakeScan();
+    TakeSharingAnswers();
     FinishDelete();
     FollowGame();
     CarryOutRequests();
@@ -3784,6 +5185,9 @@ void OnDestroyDevice(reshade::api::device* destroyed)
         return;
     m.logo = {};
     m.folderLogos.clear();
+    for (auto& [key, picture] : m.browse.pictures)
+        picture.texture = {};
+    m.browse.retired.clear();
     m.device = nullptr;
 }
 
