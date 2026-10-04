@@ -9,6 +9,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <system_error>
+#include <shlobj.h>
 
 namespace fs = std::filesystem;
 
@@ -85,10 +86,64 @@ std::vector<AutoGame> DefaultAutoGames()
     return { { L"RobloxPlayerBeta.exe", L"Roblox" } };
 }
 
+fs::path InstalledStudioExecutable()
+{
+    PWSTR localAppData = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DEFAULT, nullptr, &localAppData)))
+        return {};
+    const fs::path versions = fs::path(localAppData) / L"Roblox" / L"Versions";
+    CoTaskMemFree(localAppData);
+
+    std::error_code error;
+    for (fs::directory_iterator it(versions, error), end; !error && it != end; it.increment(error))
+    {
+        if (error)
+            break;
+        if (!it->is_directory(error))
+            continue;
+        if (error)
+        {
+            error.clear();
+            continue;
+        }
+        const fs::path executable = it->path() / L"RobloxStudioBeta.exe";
+        if (!fs::is_regular_file(executable, error))
+        {
+            error.clear();
+            continue;
+        }
+        return executable;
+    }
+    return {};
+}
+
+bool AddInstalledStudio(std::vector<AutoGame>& games)
+{
+    const fs::path executable = InstalledStudioExecutable();
+    if (executable.empty())
+        return false;
+    const auto existing = std::find_if(games.begin(), games.end(), [](const AutoGame& game) {
+        return _wcsicmp(game.executable.filename().c_str(), L"RobloxStudioBeta.exe") == 0;
+    });
+    if (existing != games.end())
+    {
+        if (existing->executable == L"RobloxStudioBeta.exe")
+            return false;
+        existing->executable = L"RobloxStudioBeta.exe";
+        return true;
+    }
+    games.push_back({ L"RobloxStudioBeta.exe", L"Roblox Studio", false });
+    return true;
+}
+
 std::vector<AutoGame> LoadAutoGames(const fs::path& path)
 {
     if (!fs::exists(path))
-        return DefaultAutoGames();
+    {
+        auto games = DefaultAutoGames();
+        AddInstalledStudio(games);
+        return games;
+    }
     std::ifstream input(path, std::ios::binary);
     if (!input)
         throw std::runtime_error("Could not read the saved game list");

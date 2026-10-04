@@ -498,6 +498,12 @@ void LocateGames()
 {
     // Found again when the copy found is gone, such as after an update.
     std::erase_if(l.located, [](const auto& entry) { return GetFileAttributesW(entry.second.c_str()) == INVALID_FILE_ATTRIBUTES; });
+    const auto studio = std::find_if(g.autoGames.begin(), g.autoGames.end(), [](const AutoGame& game) {
+        return _wcsicmp(game.executable.filename().c_str(), L"RobloxStudioBeta.exe") == 0;
+    });
+    if (studio != g.autoGames.end() && !l.located.contains(studio->executable.wstring()))
+        if (const fs::path executable = InstalledStudioExecutable(); !executable.empty())
+            l.located[studio->executable.wstring()] = executable;
     const auto unlocated = [](const AutoGame& game) {
         return !game.executable.has_parent_path() && !l.located.contains(game.executable.wstring());
     };

@@ -20,6 +20,7 @@
 #include "update.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <vector>
@@ -86,6 +87,15 @@ void LoadGames()
     try
     {
         g.autoGames = LoadAutoGames(path);
+        if (AddInstalledStudio(g.autoGames))
+            try
+            {
+                SaveAutoGames(path, g.autoGames);
+            }
+            catch (const std::exception& e)
+            {
+                Report(LogLevel::Warning, L"Roblox Studio was added for this session but could not be saved to games.ini (%hs).", e.what());
+            }
     }
     catch (const std::exception& e)
     {

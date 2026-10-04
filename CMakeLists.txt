@@ -124,12 +124,27 @@ target_compile_definitions(setup_libraries PUBLIC MINIZ_NO_STDIO MINIZ_NO_TIME)
 target_compile_definitions(setup_libraries PRIVATE IMGUI_IMPL_WIN32_DISABLE_GAMEPAD)
 
 # Built on request, like the Inno Setup installer it replaces: cmake --build build --config Release --target installer
+set(INSTALLER_PAYLOAD_DIR "${CMAKE_CURRENT_BINARY_DIR}/installer-payload/$<CONFIG>")
+set(INSTALLER_PAYLOAD_EXE "${INSTALLER_PAYLOAD_DIR}/Unishade.exe")
+set(INSTALLER_RESOURCE_DIR "${CMAKE_CURRENT_BINARY_DIR}/installer-resources/$<CONFIG>")
+set(INSTALLER_RESOURCE_RC "${INSTALLER_RESOURCE_DIR}/setup.rc")
+add_custom_command(OUTPUT "${INSTALLER_PAYLOAD_EXE}" "${INSTALLER_RESOURCE_RC}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${INSTALLER_PAYLOAD_DIR}" "${INSTALLER_RESOURCE_DIR}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:Unishade>" "${INSTALLER_PAYLOAD_EXE}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/installer/setup.rc" "${INSTALLER_RESOURCE_RC}"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${INSTALLER_RESOURCE_RC}"
+    DEPENDS Unishade "${CMAKE_CURRENT_SOURCE_DIR}/installer/setup.rc"
+    VERBATIM)
+add_custom_target(installer_host_payload DEPENDS "${INSTALLER_PAYLOAD_EXE}" "${INSTALLER_RESOURCE_RC}")
+
 add_executable(installer WIN32 EXCLUDE_FROM_ALL
     installer/main.cpp
     installer/install.cpp
     src/net.cpp
-    installer/setup.rc)
-# setup.rc embeds Unishade.exe, found through the include path.
+    "${INSTALLER_RESOURCE_RC}")
+add_dependencies(installer installer_host_payload)
+target_include_directories(installer BEFORE PRIVATE "${INSTALLER_PAYLOAD_DIR}")
+target_include_directories(installer PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/installer")
 target_include_directories(installer PRIVATE "$<TARGET_FILE_DIR:Unishade>")
 target_compile_definitions(installer PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_definitions(installer PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
