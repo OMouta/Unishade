@@ -3,10 +3,13 @@ import { Image } from 'astro:assets';
 import Base from '../layouts/Base.astro';
 import DownloadButton from '../components/DownloadButton.astro';
 import { steps } from '../site';
+import { videos } from '../videos';
 import banner from '../../../assets/unishade-banner.png';
 import menu from '../assets/menu-effects-crop.jpg';
 import launcher from '../content/docs/images/launcher.png';
 import setup from '../content/docs/images/setup-addons.png';
+
+const [featured, ...more] = videos;
 ---
 
 <Base
@@ -48,6 +51,31 @@ import setup from '../content/docs/images/setup-addons.png';
         </ul>
       </div>
       <Image src={menu} widths={[640, 900]} sizes="(max-width: 900px) 100vw, 60vw" alt="The Unishade menu with an effect's settings open" class="shot" />
+    </section>
+
+    <section class="videos">
+      <div class="videos-text">
+        <h2>Seen on YouTube</h2>
+        <p>Creators trying DLSS5 in Greenville, Driving Empire and other Roblox games.</p>
+      </div>
+      <a class="video" href={featured.url}>
+        <Image src={featured.thumbnail} widths={[640, 1280]} sizes="(max-width: 900px) 100vw, 60vw" alt="" class="shot" />
+        <span class="video-title">{featured.title}</span>
+        <span class="dim">{featured.channel}</span>
+      </a>
+      <ul class="video-grid">
+        {
+          more.map((video) => (
+            <li>
+              <a class="video" href={video.url}>
+                <Image src={video.thumbnail} widths={[320, 640]} sizes="(max-width: 600px) 100vw, 320px" alt="" class="shot" />
+                <span class="video-title">{video.title}</span>
+                <span class="dim">{video.channel}</span>
+              </a>
+            </li>
+          ))
+        }
+      </ul>
     </section>
 
     <section class="install">
@@ -106,6 +134,7 @@ import setup from '../content/docs/images/setup-addons.png';
 
   .games,
   .menu,
+  .videos,
   .install {
     display: grid;
     grid-template-columns: minmax(0, 5fr) minmax(0, 8fr);
@@ -120,6 +149,7 @@ import setup from '../content/docs/images/setup-addons.png';
 
   .games-text,
   .menu-text,
+  .videos-text,
   .install-text {
     display: grid;
     gap: 20px;
@@ -150,6 +180,52 @@ import setup from '../content/docs/images/setup-addons.png';
     font-weight: 700;
   }
 
+  .video-grid {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 32px 24px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .video {
+    display: grid;
+    gap: 4px;
+    align-content: start;
+    color: var(--ink);
+    text-decoration: none;
+  }
+
+  .video .shot {
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    margin-bottom: 8px;
+  }
+
+  .video-title {
+    font-weight: 650;
+    line-height: 1.35;
+  }
+
+  .videos > .video .video-title {
+    font-size: 1.25rem;
+    font-stretch: 112%;
+  }
+
+  .video .dim {
+    font-size: 0.9rem;
+  }
+
+  .video:hover {
+    color: var(--accent);
+  }
+
+  .video:hover .shot {
+    border-color: var(--line-strong);
+  }
+
   .shot {
     width: 100%;
     border-radius: var(--radius);
@@ -159,6 +235,7 @@ import setup from '../content/docs/images/setup-addons.png';
   @media (max-width: 900px) {
     .games,
     .menu,
+    .videos,
     .install {
       grid-template-columns: minmax(0, 1fr);
     }
