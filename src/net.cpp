@@ -130,10 +130,13 @@ void CALLBACK OnSecureFailure(HINTERNET, DWORD_PTR context, DWORD status, LPVOID
 }
 
 // Sends the request and waits for the response. Returns false with the reason in GetLastError.
-bool Send(HINTERNET request, DWORD& certificateFailure)
+bool Send(HINTERNET request, const std::wstring& headers, const std::string& body, DWORD& certificateFailure)
 {
     certificateFailure = 0;
-    return WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, reinterpret_cast<DWORD_PTR>(&certificateFailure)) &&
+    const DWORD size = static_cast<DWORD>(body.size());
+    return WinHttpSendRequest(request, headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(), headers.empty() ? 0 : static_cast<DWORD>(-1L),
+                              body.empty() ? WINHTTP_NO_REQUEST_DATA : const_cast<char*>(body.data()), size, size,
+                              reinterpret_cast<DWORD_PTR>(&certificateFailure)) &&
            WinHttpReceiveResponse(request, nullptr);
 }
 
@@ -164,11 +167,14 @@ bool UseWindowsCredentialsForProxy(HINTERNET request)
 }
 
 // With decompress, WinHTTP asks the server to compress the data and hands it over decompressed. It then drops the
-// Content-Length header, so maxSize applies to the decompressed data and the total is unknown.
-void Get(const std::wstring& url, const std::function<void(const char*, size_t)>& sink, const std::atomic<bool>& cancel, uint64_t maxSize,
-         const DownloadProgress& progress, bool decompress)
+// Content-Length header, so maxSize applies to the decompressed data and the total is unknown. Without status, an
+// answer other than 200 fails. With it, any answer is read and its status goes there.
+void Transfer(const wchar_t* method, const std::wstring& url, const std::wstring& headers, const std::string& body,
+              const std::function<void(const char*, size_t)>& sink, const std::atomic<bool>& cancel, uint64_t maxSize,
+              const DownloadProgress& progress, bool decompress, DWORD* answered = nullptr)
 {
-    const auto fail = [&](const std::string& reason) { throw std::runtime_error("Could not download " + Utf8(url) + ": " + reason + "."); };
+    const std::string action = wcscmp(method, L"GET") == 0 ? "download " : "send to ";
+    const auto fail = [&](const std::string& reason) { throw std::runtime_error("Could not " + action + Utf8(url) + ": " + reason + "."); };
     if (cancel)
         throw Cancelled{};
 
@@ -195,7 +201,7 @@ void Get(const std::wstring& url, const std::function<void(const char*, size_t)>
     // still fails, and the repeated request still checks everything else about the certificate.
     for (bool checkRevocation = true;; checkRevocation = false)
     {
-        const HINTERNET handle = WinHttpOpenRequest(connection.get(), L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
+        const HINTERNET handle = WinHttpOpenRequest(connection.get(), method, path.c_str(), nullptr, WINHTTP_NO_REFERER,
                                                     WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
         if (!handle)
             fail(ErrorText(GetLastError()));
@@ -213,10 +219,10 @@ void Get(const std::wstring& url, const std::function<void(const char*, size_t)>
         WinHttpSetStatusCallback(handle, OnSecureFailure, WINHTTP_CALLBACK_FLAG_SECURE_FAILURE, 0);
 
         DWORD certificateFailure = 0;
-        bool sent = Send(handle, certificateFailure);
+        bool sent = Send(handle, headers, body, certificateFailure);
         for (int attempt = 0; sent && attempt < 2 && StatusCode(handle) == HTTP_STATUS_PROXY_AUTH_REQ && UseWindowsCredentialsForProxy(handle);
              ++attempt)
-            sent = Send(handle, certificateFailure);
+            sent = Send(handle, headers, body, certificateFailure);
         if (!sent)
         {
             const DWORD error = GetLastError();
@@ -235,7 +241,9 @@ void Get(const std::wstring& url, const std::function<void(const char*, size_t)>
         const DWORD status = StatusCode(handle);
         if (status == HTTP_STATUS_PROXY_AUTH_REQ)
             fail("the proxy server asks for a sign-in that Windows cannot provide");
-        if (status != HTTP_STATUS_OK)
+        if (answered)
+            *answered = status;
+        else if (status != HTTP_STATUS_OK)
             fail("the server answered " + std::to_string(status));
         uint64_t total = 0;
         DWORD size = sizeof(total);
@@ -278,8 +286,19 @@ void Get(const std::wstring& url, const std::function<void(const char*, size_t)>
 std::string Fetch(const std::wstring& url, const std::atomic<bool>& cancel, uint64_t maxSize, const DownloadProgress& progress)
 {
     std::string data;
-    Get(url, [&](const char* chunk, size_t size) { data.append(chunk, size); }, cancel, maxSize, progress, true);
+    Transfer(L"GET", url, {}, {}, [&](const char* chunk, size_t size) { data.append(chunk, size); }, cancel, maxSize, progress, true);
     return data;
+}
+
+HttpResponse Request(const wchar_t* method, const std::wstring& url, const std::wstring& headers, const std::string& body,
+                     const std::atomic<bool>& cancel, uint64_t maxSize)
+{
+    HttpResponse response;
+    DWORD status = 0;
+    Transfer(method, url, headers, body, [&](const char* chunk, size_t size) { response.body.append(chunk, size); }, cancel, maxSize, {}, true,
+             &status);
+    response.status = status;
+    return response;
 }
 
 std::string Download(const std::wstring& url, const std::filesystem::path& path, const std::string& sha256, uint64_t maxSize,
@@ -292,7 +311,7 @@ std::string Download(const std::wstring& url, const std::filesystem::path& path,
     try
     {
         Sha256Hasher hasher;
-        Get(url,
+        Transfer(L"GET", url, {}, {},
             [&](const char* chunk, size_t size) {
                 file.write(chunk, size);
                 hasher.Add(chunk, size);

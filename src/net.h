@@ -24,6 +24,17 @@ constexpr uint64_t kAddonLimit = 1ull << 30;     // add-on files, such as the de
 // also interrupts a download that is still connecting or waiting for the server.
 std::string Fetch(const std::wstring& url, const std::atomic<bool>& cancel, uint64_t maxSize = kListLimit, const DownloadProgress& progress = {});
 
+struct HttpResponse
+{
+    unsigned status = 0;
+    std::string body;
+};
+
+// Sends an HTTPS request with headers, each "Name: value" followed by "\r\n", and a body, and returns the answer
+// whatever its status. Throws like Fetch when no answer arrives.
+HttpResponse Request(const wchar_t* method, const std::wstring& url, const std::wstring& headers, const std::string& body,
+                     const std::atomic<bool>& cancel, uint64_t maxSize = kListLimit);
+
 // Downloads an HTTPS url to a file. A non-empty sha256 (lowercase hex) must match the downloaded data. Returns the
 // SHA-256 of the data as it came from the server.
 std::string Download(const std::wstring& url, const std::filesystem::path& path, const std::string& sha256, uint64_t maxSize,
