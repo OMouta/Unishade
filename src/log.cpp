@@ -1,6 +1,7 @@
 #include "log.h"
 #include "config.h"
 #include "text.h"
+#include "web_address.h"
 
 #include <windows.h>
 
@@ -9,7 +10,6 @@
 #include <cstdarg>
 #include <cstdio>
 #include <mutex>
-#include <type_traits>
 
 namespace
 {
@@ -34,25 +34,6 @@ Shared& shared = *new Shared;
 HANDLE file = INVALID_HANDLE_VALUE;
 std::wstring path;
 std::atomic<unsigned> noticeVersion = 0;
-
-template <class Char>
-size_t WebAddressLengthOf(std::basic_string_view<Char> word)
-{
-    const auto startsWith = [word](std::string_view prefix) {
-        return word.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), word.begin(), [](char a, Char b) { return Char(a) == b; });
-    };
-    const auto punctuation = [](Char character) {
-        const auto code = static_cast<std::make_unsigned_t<Char>>(character);
-        return code < 128 && std::string_view(".,;:!?)'\"").find(static_cast<char>(code)) != std::string_view::npos;
-    };
-    if (!startsWith("https://") && !startsWith("http://"))
-        return 0;
-    // The slashes after http: are no punctuation, so this stops there at the latest.
-    size_t length = word.size();
-    while (punctuation(word[length - 1]))
-        --length;
-    return length;
-}
 
 // Called with the mutex held.
 void WriteToFile(std::string text)
