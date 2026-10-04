@@ -61,18 +61,31 @@ std::wstring PerformanceSection(const std::wstring& game)
     return game.empty() ? L"Performance" : L"Performance." + game;
 }
 
-// A performance setting of the game, read from the file once. valid turns what the file holds into a value the
+// A game's performance setting, or the default for an empty game. valid turns what the file holds into a value the
 // setting takes, which is never negative.
+int ReadNumber(const std::wstring& game, const wchar_t* name, int fallback, int (*valid)(int))
+{
+    const std::wstring path = IniPath();
+    int number = static_cast<int>(GetPrivateProfileIntW(L"Performance", name, fallback, path.c_str()));
+    if (!game.empty())
+        number = static_cast<int>(GetPrivateProfileIntW(PerformanceSection(game).c_str(), name, number, path.c_str()));
+    return valid(number);
+}
+
+void WriteNumber(const std::wstring& game, const wchar_t* name, int value)
+{
+    ++settingsVersion;
+    if (!WritePrivateProfileStringW(PerformanceSection(game).c_str(), name, std::to_wstring(value).c_str(), IniPath().c_str()))
+        Log(LogLevel::Warning, L"Could not save %ls to RobloxShadeHost.ini. It applies until Unishade closes.", name);
+}
+
+// A performance setting of the game being played, read from the file once.
 int CachedNumber(std::atomic<int>& cached, const wchar_t* name, int fallback, int (*valid)(int))
 {
     int value = cached;
     if (value < 0)
     {
-        const std::wstring path = IniPath();
-        int number = static_cast<int>(GetPrivateProfileIntW(L"Performance", name, fallback, path.c_str()));
-        if (!performanceGame.empty())
-            number = static_cast<int>(GetPrivateProfileIntW(PerformanceSection(performanceGame).c_str(), name, number, path.c_str()));
-        value = valid(number);
+        value = ReadNumber(performanceGame, name, fallback, valid);
         cached = value;
     }
     return value;
@@ -82,9 +95,15 @@ void SaveNumber(std::atomic<int>& cached, const wchar_t* name, int value)
 {
     if (cached.exchange(value) == value)
         return;
-    ++settingsVersion;
-    if (!WritePrivateProfileStringW(PerformanceSection(performanceGame).c_str(), name, std::to_wstring(value).c_str(), IniPath().c_str()))
-        Log(LogLevel::Warning, L"Could not save %ls to RobloxShadeHost.ini. It applies until Unishade closes.", name);
+    WriteNumber(performanceGame, name, value);
+}
+
+// Changes a game's setting, and the game being played's when it is that game or uses the defaults that changed.
+void SaveGameNumber(std::atomic<int>& cached, const std::wstring& game, const wchar_t* name, int value)
+{
+    WriteNumber(game, name, value);
+    if (game.empty() || _wcsicmp(game.c_str(), performanceGame.c_str()) == 0)
+        cached = -1;
 }
 
 int ValidFrameRate(int fps)
@@ -408,6 +427,36 @@ int DepthSize()
 void SetDepthSize(int size)
 {
     SaveNumber(depthSize, L"DepthSize", ValidDepthSize(size));
+}
+
+int FrameRateLimit(const std::wstring& game)
+{
+    return ReadNumber(game, L"FrameRateLimit", 0, ValidFrameRate);
+}
+
+void SetFrameRateLimit(const std::wstring& game, int fps)
+{
+    SaveGameNumber(frameRateLimit, game, L"FrameRateLimit", ValidFrameRate(fps));
+}
+
+int EffectResolution(const std::wstring& game)
+{
+    return ReadNumber(game, L"EffectResolution", 100, ValidResolution);
+}
+
+void SetEffectResolution(const std::wstring& game, int percent)
+{
+    SaveGameNumber(effectResolution, game, L"EffectResolution", ValidResolution(percent));
+}
+
+int DepthSize(const std::wstring& game)
+{
+    return ReadNumber(game, L"DepthSize", kDefaultDepthSize, ValidDepthSize);
+}
+
+void SetDepthSize(const std::wstring& game, int size)
+{
+    SaveGameNumber(depthSize, game, L"DepthSize", ValidDepthSize(size));
 }
 
 std::wstring GamePreset(const std::wstring& game)

@@ -161,6 +161,15 @@ constexpr int kDefaultDepthSize = 518;
 int DepthSize();
 void SetDepthSize(int size);
 
+// The same settings of any saved game, by its presets folder's name, or the defaults for an empty name, for the
+// launcher's game pages. A change to the game being played, or to the defaults it uses, applies right away.
+int FrameRateLimit(const std::wstring& game);
+void SetFrameRateLimit(const std::wstring& game, int fps);
+int EffectResolution(const std::wstring& game);
+void SetEffectResolution(const std::wstring& game, int percent);
+int DepthSize(const std::wstring& game);
+void SetDepthSize(const std::wstring& game, int size);
+
 // The preset last used in a saved game, relative to the presets folder, from RobloxShadeHost.ini. Empty when the
 // game has none yet.
 std::wstring GamePreset(const std::wstring& game);
