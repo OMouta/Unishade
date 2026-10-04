@@ -79,7 +79,8 @@ const std::filesystem::path& SetupLogPath();
 // A resource embedded in Setup, such as the host exe.
 std::string_view Resource(int id);
 
-// Finds the newest ReShade on reshade.me and downloads its license from that version's source tag.
+// Finds the newest ReShade on reshade.me, or on GitHub when reshade.me fails, and downloads its license from that
+// version's source tag.
 ReShadeRelease FetchReShadeRelease(const std::atomic<bool>& cancel);
 
 // Downloads everything into a temporary folder first, so a failed or cancelled download leaves the installation

@@ -13,7 +13,9 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdarg>
+#include <cstdio>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -191,6 +193,32 @@ bool IsVersion(const std::string& text)
         start = end + 1;
     }
     return true;
+}
+
+// The newest vX.Y.Z tag in ReShade's repository, without the v. GitHub lists the newest tags first, so the first page
+// holds it.
+std::string NewestReShadeTag(const std::atomic<bool>& cancel)
+{
+    const std::string json = Fetch(L"https://api.github.com/repos/crosire/reshade/tags?per_page=100", cancel, kListLimit);
+    std::string newest;
+    std::array<unsigned long, 3> newestNumbers{};
+    for (size_t key = json.find("\"name\""); key != std::string::npos; key = json.find("\"name\"", key + 1))
+    {
+        const size_t start = json.find_first_not_of(" \t\r\n:", key + 6);
+        const size_t end = start == std::string::npos || json[start] != '"' ? std::string::npos : json.find('"', start + 1);
+        if (end == std::string::npos || json[start + 1] != 'v')
+            continue;
+        const std::string version = json.substr(start + 2, end - start - 2);
+        std::array<unsigned long, 3> numbers{};
+        if (IsVersion(version) && sscanf_s(version.c_str(), "%lu.%lu.%lu", &numbers[0], &numbers[1], &numbers[2]) == 3 && numbers > newestNumbers)
+        {
+            newest = version;
+            newestNumbers = numbers;
+        }
+    }
+    if (newest.empty())
+        throw std::runtime_error("Could not find the newest ReShade on reshade.me or GitHub.");
+    return newest;
 }
 
 std::wstring IniString(const fs::path& file, const std::wstring& section, const wchar_t* key, const wchar_t* fallback = L"")
@@ -962,17 +990,26 @@ std::string_view Resource(int id)
 
 ReShadeRelease FetchReShadeRelease(const std::atomic<bool>& cancel)
 {
-    // The download button on reshade.me links ReShade_Setup_<version>_Addon.exe of the newest version.
-    const std::string page = Fetch(L"https://reshade.me/", cancel, kListLimit);
-    const size_t end = page.find("_Addon.exe");
-    const size_t start = end == std::string::npos || end == 0 ? std::string::npos : page.rfind('_', end - 1);
-    if (start == std::string::npos)
-        throw std::runtime_error("Could not find ReShade's download on reshade.me.");
     ReShadeRelease release;
-    release.version = page.substr(start + 1, end - start - 1);
-    // The version becomes part of the download and license addresses.
-    if (!IsVersion(release.version))
-        throw std::runtime_error("reshade.me lists an unexpected ReShade version.");
+    try
+    {
+        // The download button on reshade.me links ReShade_Setup_<version>_Addon.exe of the newest version.
+        const std::string page = Fetch(L"https://reshade.me/", cancel, kListLimit);
+        const size_t end = page.find("_Addon.exe");
+        const size_t start = end == std::string::npos || end == 0 ? std::string::npos : page.rfind('_', end - 1);
+        if (start == std::string::npos)
+            throw std::runtime_error("Could not find ReShade's download on reshade.me.");
+        release.version = page.substr(start + 1, end - start - 1);
+        // The version becomes part of the download and license addresses.
+        if (!IsVersion(release.version))
+            throw std::runtime_error("reshade.me lists an unexpected ReShade version.");
+    }
+    catch (const std::runtime_error& error)
+    {
+        // reshade.me's pages break at times while its downloads keep working. Every release is also a tag on GitHub.
+        SetupLog(std::string(error.what()) + " Looking for the newest ReShade on GitHub instead.");
+        release.version = NewestReShadeTag(cancel);
+    }
     release.license = Fetch(L"https://raw.githubusercontent.com/crosire/reshade/v" + Wide(release.version) + L"/LICENSE.md", cancel, kListLimit);
     if (release.license.find("Redistribution and use") == std::string::npos)
         throw std::runtime_error("Could not load the ReShade license.");
