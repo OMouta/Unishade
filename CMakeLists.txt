@@ -123,6 +123,24 @@ target_compile_definitions(setup_libraries PUBLIC MINIZ_NO_STDIO MINIZ_NO_TIME)
 # Otherwise the backend loads XInput by its bare name, which could find a DLL next to Setup.
 target_compile_definitions(setup_libraries PRIVATE IMGUI_IMPL_WIN32_DISABLE_GAMEPAD)
 
+# The launcher's window, which Unishade.exe loads. It has a Dear ImGui of its own and draws on the CPU, since the
+# host's ImGui and graphics card belong to ReShade. See src/ui/launcher_module.h.
+set(UI_SOURCES src/ui/launcher_module.cpp src/ui/launcher_ui.cpp src/ui/kit.cpp src/ui/soft_renderer.cpp)
+add_library(UnishadeUi SHARED
+    ${UI_SOURCES}
+    "${IMGUI_DIR}/imgui.cpp"
+    "${IMGUI_DIR}/imgui_draw.cpp"
+    "${IMGUI_DIR}/imgui_tables.cpp"
+    "${IMGUI_DIR}/imgui_widgets.cpp"
+    "${IMGUI_DIR}/backends/imgui_impl_win32.cpp")
+target_include_directories(UnishadeUi PRIVATE src "${IMGUI_DIR}" "${IMGUI_DIR}/backends")
+# 32-bit characters, so emoji outside the first 65536 code points show too.
+target_compile_definitions(UnishadeUi PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_UI_EXPORTS IMGUI_IMPL_WIN32_DISABLE_GAMEPAD IMGUI_USE_WCHAR32)
+target_compile_options(UnishadeUi PRIVATE /EHsc)
+set_source_files_properties(${UI_SOURCES} PROPERTIES COMPILE_OPTIONS "/W4;/permissive-")
+target_link_libraries(UnishadeUi PRIVATE dwmapi imm32)
+add_dependencies(Unishade UnishadeUi)
+
 # Built on request, like the Inno Setup installer it replaces: cmake --build build --config Release --target installer
 add_executable(installer WIN32 EXCLUDE_FROM_ALL
     installer/main.cpp
