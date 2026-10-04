@@ -65,7 +65,7 @@ Set `UNISHADE_VALIDATION=1` to run with the Vulkan validation layers.
 | --- | --- |
 | `main.cpp` | Command line, single instance, starts `App` |
 | `app.cpp` | Finds the game, moves the overlay, shortcuts, presets, screenshots |
-| `ui.cpp` | Launcher and menu |
+| `ui.cpp` | Menu, and what the shared launcher in `src/ui` shows |
 | `effects.cpp` | ReShade effect runtime on Vulkan |
 | `gpu.cpp` | Vulkan device, images and window swapchains |
 | `platform_x11.cpp`, `platform_macos.mm` | Everything in `platform.h` |

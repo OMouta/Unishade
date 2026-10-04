@@ -29,6 +29,9 @@ struct PresetFolder
     std::vector<fs::path> presets;
 };
 
+// The presets in a folder, sorted by name.
+std::vector<fs::path> PresetsIn(const fs::path& folder);
+
 // Why a preset or folder name can't be used, or empty when it can. Presets move between Windows, macOS and Linux, so
 // names follow Windows' rules too, and a leading dot would hide the file.
 std::string PresetNameProblem(const std::string& name);

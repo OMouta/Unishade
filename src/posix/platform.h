@@ -12,6 +12,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct GLFWwindow;
@@ -143,4 +144,7 @@ bool DisplayDrmDevice(int64_t& major, int64_t& minor);
 
 // A sans-serif font for the launcher and the menu, regular or bold, or empty when the system has none.
 std::string UiFont(bool bold);
+// Fonts for what that font lacks, such as Chinese, Japanese and Korean, the user's own language first: each file with
+// the font's index in it, for collections.
+std::vector<std::pair<std::string, int>> UiFallbackFonts(bool bold);
 } // namespace platform
