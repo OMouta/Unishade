@@ -410,6 +410,19 @@ void SetDepthSize(int size)
     SaveNumber(depthSize, L"DepthSize", ValidDepthSize(size));
 }
 
+std::string SharingToken()
+{
+    wchar_t value[256] = L"";
+    GetPrivateProfileStringW(L"Sharing", L"Token", L"", value, static_cast<DWORD>(std::size(value)), IniPath().c_str());
+    return Utf8(value);
+}
+
+void SetSharingToken(const std::string& token)
+{
+    if (!WritePrivateProfileStringW(L"Sharing", L"Token", token.empty() ? nullptr : Wide(token).c_str(), IniPath().c_str()))
+        Log(LogLevel::Warning, L"Could not save the Discord sign-in to RobloxShadeHost.ini.");
+}
+
 std::wstring GamePreset(const std::wstring& game)
 {
     std::wstring value(32768, L'\0');

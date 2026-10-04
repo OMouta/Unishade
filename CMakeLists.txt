@@ -93,6 +93,7 @@ add_executable(Unishade WIN32
     src/overlay.cpp
     src/reshade_config.cpp
     src/setup_check.cpp
+    src/sharing.cpp
     src/update.cpp
     src/net.cpp)
 target_include_directories(Unishade PRIVATE "${RESHADE_INCLUDE}" "${RESHADE_IMGUI_INCLUDE}" "${ONNXRUNTIME_INCLUDE}")
@@ -100,6 +101,9 @@ target_compile_definitions(Unishade PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN
 target_compile_definitions(Unishade PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
 # src/net.cpp sends this for the update check.
 target_compile_definitions(Unishade PRIVATE UNISHADE_USER_AGENT="Unishade/${PROJECT_VERSION}")
+# The presets API that the menu's Browse tab uses. Builds with it empty leave the tab out.
+set(UNISHADE_SHARING_API "https://api.unishade.me" CACHE STRING "Address of the presets API, without a slash at the end")
+target_compile_definitions(Unishade PRIVATE UNISHADE_SHARING_API="${UNISHADE_SHARING_API}")
 target_compile_definitions(Unishade PRIVATE UNISHADE_VERSION_RESOURCE=${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0)
 target_compile_options(Unishade PRIVATE /W4 /permissive- /EHsc /bigobj)
 target_link_libraries(Unishade PRIVATE d3d11 d3d12 d3dcompiler dxgi dwmapi windowsapp gdi32 gdiplus version winhttp bcrypt shlwapi windowscodecs)

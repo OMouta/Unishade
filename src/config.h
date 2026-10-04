@@ -163,6 +163,10 @@ void SetDepthSize(int size);
 
 // The preset last used in a saved game, relative to the presets folder, from RobloxShadeHost.ini. Empty when the
 // game has none yet.
+// The token the presets API gave when signing in with Discord, from RobloxShadeHost.ini. Empty when signed out.
+std::string SharingToken();
+void SetSharingToken(const std::string& token);
+
 std::wstring GamePreset(const std::wstring& game);
 void SetGamePreset(const std::wstring& game, const std::wstring& preset);
 // Forgets the game's preset, such as when the game is removed or renamed.
