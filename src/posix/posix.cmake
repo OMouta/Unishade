@@ -275,6 +275,10 @@ if(BUILD_TESTING)
     target_link_libraries(posix_tests PRIVATE unishade_core)
     add_test(NAME posix_tests COMMAND posix_tests)
 
+    add_executable(image_tests "${CMAKE_SOURCE_DIR}/tests/image_tests.cpp")
+    target_link_libraries(image_tests PRIVATE posix_libraries)
+    add_test(NAME image_tests COMMAND image_tests)
+
     add_executable(posix_effects_tests "${CMAKE_SOURCE_DIR}/tests/posix_effects_tests.cpp")
     target_link_libraries(posix_effects_tests PRIVATE unishade_core)
     target_compile_options(posix_effects_tests PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
