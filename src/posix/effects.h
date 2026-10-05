@@ -2,6 +2,7 @@
 
 #include "config.h"
 #include "gpu.h"
+#include "image.h"
 #include "preset_ini.h"
 
 #include <effect_module.hpp>
@@ -69,6 +70,7 @@ struct EffectGpu;
 // An image a texture loads from its source annotation, decoded and sized for it.
 struct TextureImage
 {
+    image::Memory memory;
     std::vector<uint8_t> pixels; // every level after the first is made on the graphics card
     std::string error;
 };

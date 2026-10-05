@@ -5,8 +5,6 @@
 #include <effect_parser.hpp>
 #include <effect_preprocessor.hpp>
 
-#include <stb_image.h>
-#include <stb_image_dds.h>
 #include <stb_image_resize2.h>
 
 #include <unistd.h>
@@ -823,38 +821,47 @@ TextureImage DecodeTexture(const reshadefx::texture_desc& texture, const fs::pat
         result.error = "images load only into R8, RG8, RGBA8 and 32-bit float textures";
         return result;
     }
-    std::string data;
-    if (file.empty() || !ReadText(file, data) || data.size() > size_t(std::numeric_limits<int>::max()))
-    {
-        result.error = "the file is missing";
-        return result;
-    }
-    const auto* bytes = reinterpret_cast<const stbi_uc*>(data.data());
-    const int length = static_cast<int>(data.size());
-    int width = 0, height = 0, depth = 1, components = 0;
-    void* pixels = floating ? static_cast<void*>(stbi_loadf_from_memory(bytes, length, &width, &height, &components, 4))
-                   : stbi_dds_test_memory(bytes, length) ? stbi_dds_load_from_memory(bytes, length, &width, &height, &depth, &components, 4)
-                                                         : stbi_load_from_memory(bytes, length, &width, &height, &components, 4);
-    if (!pixels)
-    {
-        result.error = "it is not an image stb_image can read";
-        return result;
-    }
     const size_t componentSize = floating ? 4 : 1, pixelSize = channels * componentSize;
+    const uint32_t textureHeight = texture.type == reshadefx::texture_type::texture_1d ? 1 : texture.height;
+    size_t outputBytes = 0;
+    if (!image::ByteSize(texture.width, textureHeight, std::max<unsigned>(1, texture.depth), pixelSize, outputBytes))
+    {
+        result.error = "texture dimensions exceed the image size limit";
+        return result;
+    }
+    image::Pixels pixels = image::Read(file, floating);
+    if (!pixels.data)
+    {
+        result.error = std::move(pixels.error);
+        return result;
+    }
+    const int width = pixels.width, height = pixels.height, depth = pixels.depth;
     const size_t count = size_t(width) * height * depth;
     if (depth != std::max<int>(1, texture.depth) || (depth > 1 && (uint32_t(width) != texture.width || uint32_t(height) != texture.height)))
     {
-        stbi_image_free(pixels);
         result.error = "3D images cannot be resized";
         return result;
     }
     // Only the channels the format has.
-    auto* source = static_cast<uint8_t*>(pixels);
+    auto* source = static_cast<uint8_t*>(pixels.data.get());
     for (size_t i = 0; i < count; ++i)
         std::memmove(source + i * pixelSize, source + i * 4 * componentSize, pixelSize);
 
-    const uint32_t textureHeight = texture.type == reshadefx::texture_type::texture_1d ? 1 : texture.height;
-    result.pixels.resize(size_t(texture.width) * textureHeight * depth * pixelSize);
+    if (!result.memory.Resize(outputBytes))
+    {
+        result.error = "image memory limit reached";
+        return result;
+    }
+    try
+    {
+        result.pixels.resize(outputBytes);
+    }
+    catch (const std::bad_alloc&)
+    {
+        result.memory.Resize(0);
+        result.error = "out of memory";
+        return result;
+    }
     if (uint32_t(width) == texture.width && uint32_t(height) == textureHeight)
         std::memcpy(result.pixels.data(), source, result.pixels.size());
     else
@@ -867,7 +874,6 @@ TextureImage DecodeTexture(const reshadefx::texture_desc& texture, const fs::pat
             result.error = "it could not be resized";
         }
     }
-    stbi_image_free(pixels);
     return result;
 }
 
@@ -1335,29 +1341,50 @@ void Runtime::ReloadNow()
     Loader& loader = *loaders.emplace_back(std::make_unique<Loader>());
     loader.thread = std::thread([this, &loader, jobs = std::move(jobs), options, texturePaths = settings.texturePaths, current] {
         const auto cancelled = [this, current] { return generation != current; };
-        const TextureIndex textureIndex = ScanTextures(texturePaths);
-        std::atomic<size_t> next = 0;
-        std::vector<std::thread> workers;
-        const unsigned count = std::max(1u, std::min(std::thread::hardware_concurrency(), 8u));
-        for (unsigned i = 0; i < count; ++i)
-            workers.emplace_back([&] {
-                for (size_t index; !cancelled() && (index = next++) < jobs.size();)
-                {
-                    Effect effect;
-                    CompileEffect(effect, jobs[index].path, jobs[index].definitions, options, cancelled);
-                    if (effect.compiled && jobs[index].decode)
-                        DecodeImages(effect, textureIndex, cancelled);
-                    std::lock_guard lock(finishedMutex);
-                    if (cancelled())
-                        return;
-                    ++loadedCount;
-                    finished.push_back(std::move(effect));
-                }
-            });
-        for (std::thread& worker : workers)
-            worker.join();
-        if (!cancelled())
-            PruneCache(options.cacheDirectory);
+        try
+        {
+            const TextureIndex textureIndex = ScanTextures(texturePaths);
+            std::atomic<size_t> next = 0;
+            std::vector<std::future<void>> workers;
+            const unsigned count = std::max(1u, std::min(std::thread::hardware_concurrency(), 8u));
+            for (unsigned i = 0; i < count; ++i)
+                workers.emplace_back(std::async(std::launch::async, [&] {
+                    for (size_t index; !cancelled() && (index = next++) < jobs.size();)
+                    {
+                        Effect effect;
+                        try
+                        {
+                            CompileEffect(effect, jobs[index].path, jobs[index].definitions, options, cancelled);
+                            if (effect.compiled && jobs[index].decode)
+                                DecodeImages(effect, textureIndex, cancelled);
+                        }
+                        catch (const std::bad_alloc&)
+                        {
+                            effect.compiled = false;
+                            effect.errors = "out of memory";
+                        }
+                        catch (const std::exception& e)
+                        {
+                            effect.compiled = false;
+                            effect.errors = e.what();
+                        }
+                        std::lock_guard lock(finishedMutex);
+                        if (cancelled())
+                            return;
+                        ++loadedCount;
+                        finished.push_back(std::move(effect));
+                    }
+                }));
+            for (std::future<void>& worker : workers)
+                worker.get();
+            if (!cancelled())
+                PruneCache(options.cacheDirectory);
+        }
+        catch (const std::exception& e)
+        {
+            if (!cancelled())
+                Report(LogLevel::Error, "Could not load effects: %s", e.what());
+        }
         {
             std::lock_guard lock(finishedMutex);
             if (!cancelled())
@@ -2639,16 +2666,45 @@ bool Runtime::ImagesReady(Effect& effect)
     for (const auto& [name, key] : effect.textures)
     {
         SharedTexture& shared = sharedTextures.at(key);
-        if (shared.source.empty() || shared.image.image || !shared.loaded.pixels.empty() || !shared.loaded.error.empty())
+        const bool imageReady = shared.image.image && (!shared.renderTarget || shared.image.target) &&
+                                (!shared.storage || !shared.image.storage.empty());
+        if (shared.source.empty() || imageReady || !shared.loaded.pixels.empty() || !shared.loaded.error.empty())
             continue;
         if (!shared.decoding.valid())
         {
-            std::packaged_task<TextureImage()> task([desc = shared.desc, file = FindTexture(shared.source)] { return DecodeTexture(desc, file); });
-            shared.decoding = task.get_future();
-            std::thread(std::move(task)).detach();
+            const auto decoding = std::count_if(sharedTextures.begin(), sharedTextures.end(), [](const auto& entry) {
+                const auto& future = entry.second.decoding;
+                return future.valid() && future.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
+            });
+            if (decoding >= 2)
+            {
+                ready = false;
+                continue;
+            }
+            try
+            {
+                std::packaged_task<TextureImage()> task([desc = shared.desc, file = FindTexture(shared.source)] { return DecodeTexture(desc, file); });
+                auto future = task.get_future();
+                std::thread(std::move(task)).detach();
+                shared.decoding = std::move(future);
+            }
+            catch (const std::exception&)
+            {
+                shared.loaded.error = "could not start image decoding";
+                continue;
+            }
         }
         if (shared.decoding.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
-            shared.loaded = shared.decoding.get();
+        {
+            try
+            {
+                shared.loaded = shared.decoding.get();
+            }
+            catch (const std::exception&)
+            {
+                shared.loaded.error = "could not decode image";
+            }
+        }
         else
             ready = false;
     }
