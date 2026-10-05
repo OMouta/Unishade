@@ -36,6 +36,14 @@ const Shortcut* FindShortcut(int id)
 bool App::Init(std::string& error)
 {
     settings = LoadSettings();
+    Log(LogLevel::Info, "Settings: auto_save=%d, preset=%s, definitions=%s.", settings.autoSavePresets, settings.preset.c_str(),
+        FormatDefinitions(settings.definitions).c_str());
+    for (const fs::path& path : settings.effectPaths)
+        Log(LogLevel::Info, "Effect search path: %s.", path.c_str());
+    for (const fs::path& path : settings.texturePaths)
+        Log(LogLevel::Info, "Texture search path: %s.", path.c_str());
+    for (const Shortcut& shortcut : kShortcuts)
+        Log(LogLevel::Info, "Shortcut: %s=%s.", shortcut.label, FormatHotkey(settings.hotkeys.*shortcut.member).c_str());
     try
     {
         autoGames = LoadAutoGames(DataDirectory() / "games.ini");
@@ -108,6 +116,7 @@ bool App::Init(std::string& error)
 void App::Run()
 {
     Log(LogLevel::Info, "Waiting for a supported game...");
+    double nextStateLog = Now();
     while (!glfwWindowShouldClose(launcher.window))
     {
         glfwWaitEventsTimeout(overlayVisible ? (menuOpen ? 1.0 / 60 : 0.1) : 0.25);
@@ -140,6 +149,15 @@ void App::Run()
             platform::Activate(*active); // the window manager focused the overlay, which should never have it
 
         const bool newFrame = active && platform::TakeFrame(frame);
+        if (Now() >= nextStateLog)
+        {
+            Log(LogLevel::Info, "State: window=%llu, pid=%d, capture=%d, visible=%d, menu=%d, in_front=%d, frame=%ux%u, serial=%llu, "
+                               "gpu_frame=%d, effects_loading=%d, device_lost=%d, preset=%s.",
+                static_cast<unsigned long long>(active ? active->id : 0), active ? active->pid : 0, captureEnabled, overlayVisible,
+                menuOpen, inFront, frame.width, frame.height, static_cast<unsigned long long>(frame.serial), frame.image != VK_NULL_HANDLE,
+                runtime.Loading(), gpu.lost, runtime.PresetPath().c_str());
+            nextStateLog = Now() + 30;
+        }
         const bool toastShowing = !toast.empty() && Now() < toastUntil;
         if (overlayVisible && HasFrame() && (newFrame || menuOpen || toastShowing || Now() - lastOverlayFrame > 0.1))
             RenderOverlay();
@@ -159,6 +177,7 @@ void App::Run()
 
 void App::Shutdown()
 {
+    Log(LogLevel::Info, "Shutdown requested. Stopping capture, effects and graphics resources.");
     for (std::future<std::string>& screenshot : screenshots)
         screenshot.wait();
     screenshots.clear();
@@ -185,6 +204,8 @@ void App::Shutdown()
 
 void App::StartCapture(const platform::Window& window)
 {
+    Log(LogLevel::Info, "Attaching: window=%llu, pid=%d, title=%s, executable=%s.", static_cast<unsigned long long>(window.id),
+        window.pid, window.title.c_str(), platform::ProcessExecutable(window.pid).c_str());
     if (!platform::HasCapturePermission())
     {
         lastCaptureError = "Unishade needs permission to record the screen.";
@@ -369,12 +390,17 @@ void App::UpdateOverlay()
     if (!visible)
     {
         if (overlayVisible)
+        {
+            Log(LogLevel::Info, "Overlay hidden: capture=%d, frame=%d, sized=%d, in_front=%d, menu=%d.",
+                captureEnabled, HasFrame(), sized, inFront, menuOpen);
             platform::ShowOverlay(overlay.window, false);
+        }
         overlayVisible = false;
         return;
     }
     if (!overlayVisible || !(bounds == overlayBounds))
     {
+        Log(LogLevel::Info, "Overlay placed: bounds=%d,%d %dx%d, frame=%ux%u.", bounds.x, bounds.y, bounds.width, bounds.height, frame.width, frame.height);
         glfwSetWindowPos(overlay.window, bounds.x, bounds.y);
         glfwSetWindowSize(overlay.window, bounds.width, bounds.height);
         overlayBounds = bounds;

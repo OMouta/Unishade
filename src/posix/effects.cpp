@@ -1592,6 +1592,7 @@ void Runtime::ApplyPreset(Effect& effect, size_t effectIndex)
 
 bool Runtime::LoadPreset(const fs::path& path)
 {
+    Log(LogLevel::Info, "Loading preset: %s.", path.c_str());
     presetPath = path;
     dirty = false;
     presetIni = PresetIni(ReadFile(path));
