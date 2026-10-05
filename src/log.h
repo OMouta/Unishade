@@ -22,9 +22,12 @@ struct Notice
 // run's log is kept as Unishade.old.log.
 void InitLog();
 
+// MSVC's terminate handler is per thread. Call at the start of host worker threads.
+void InitThreadLog();
+
 // Writes a timestamped line to the log file. Warnings and errors are also shown in the launcher and the
 // menu. printf-style; use %ls for wide strings and %hs for narrow ones. Safe from any thread. A line that
-// repeats right away is written once, followed by how often it repeated, and the file stops growing at 16 MB.
+// repeats on the same thread right away is counted. At 16 MB, the file rolls over to Unishade.previous.log.
 void Log(LogLevel level, const wchar_t* format, ...);
 
 // Like Log, but shown in the launcher and the menu at any level. For what the user should see at a glance,
@@ -49,3 +52,10 @@ const std::wstring& LogPath();
 
 // Writes what the log still holds back, such as how often the last line repeated. Called before the host exits.
 void FlushLog();
+
+// Writes the current call stack as module paths and offsets, including in builds without debug symbols.
+void LogStackTrace();
+
+// Copies new ReShade warnings and errors, including shader compiler diagnostics, into Unishade.log.
+// Called on the host thread.
+void LogReShadeDiagnostics();
