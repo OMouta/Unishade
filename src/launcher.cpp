@@ -1305,6 +1305,7 @@ void PlaceWindow(int show)
 
 void CreateLauncher()
 {
+    Log(LogLevel::Info, L"Creating launcher: module=%ls%ls.", ExeDirectory().c_str(), kUiModule);
     l.module = LoadLibraryExW((ExeDirectory() + kUiModule).c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     const auto create = l.module ? reinterpret_cast<LauncherUi* (*)()>(GetProcAddress(l.module, "UnishadeLauncherUi")) : nullptr;
     l.ui = create ? create() : nullptr;
@@ -1334,6 +1335,7 @@ void CreateLauncher()
     AddTrayIcon();
     if (!l.ui->Init(g.launcher))
         throw std::runtime_error("Could not start the launcher's window");
+    Log(LogLevel::Info, L"Launcher initialized: hwnd=%p, module=%p, dpi=%u, tray=%d.", g.launcher, l.module, GetDpiForWindow(g.launcher), l.trayAdded);
     Refresh();
 
     // Started with Windows, it waits in the notification area, or on the taskbar until there is one.

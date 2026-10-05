@@ -365,6 +365,8 @@ void Copy(ID3D12CommandQueue* queue, ID3D12Resource* texture, ID3D12Resource* bu
 
 void Worker()
 {
+    InitThreadLog();
+    Log(LogLevel::Info, L"Depth worker started.");
     winrt::com_ptr<ID3D12Resource> input, output, inputBuffer, outputBuffer;
     // Declared last, so it goes first.
     std::unique_ptr<DepthModel> model;
@@ -398,6 +400,8 @@ void Worker()
                 model->Load(d.directory, kModelFile, d.width, d.height, d.d3d12.get());
                 loadedWidth = d.modelWidth = d.width;
                 loadedHeight = d.modelHeight = d.height;
+                Log(LogLevel::Info, L"Depth model loaded: %ls%ls, input=%dx%d, half_input=%d, half_output=%d.", d.directory.c_str(),
+                    kModelFile, d.width, d.height, model->HalfInput(), model->HalfOutput());
                 d.halfInput = model->HalfInput();
                 d.halfOutput = model->HalfOutput();
                 Report(LogLevel::Ok, L"Depth estimation ready (%dx%d)", d.width, d.height);
@@ -426,11 +430,15 @@ void Worker()
         catch (const std::exception& e)
         {
             Log(LogLevel::Error, L"Depth estimation stopped: %hs", e.what());
+            LogStackTrace();
             d.failed = true;
         }
         catch (const winrt::hresult_error& e)
         {
             Log(LogLevel::Error, L"Depth estimation stopped: %ls (0x%08X)", e.message().c_str(), static_cast<unsigned>(e.code()));
+            Log(LogLevel::Info, L"Depth worker state: model=%dx%d, requested=%dx%d, input_fence=%llu, resource_version=%u.",
+                loadedWidth, loadedHeight, d.width, d.height, d.inputValue, d.version);
+            LogStackTrace();
             d.failed = true;
         }
         d.done = true;
@@ -673,7 +681,10 @@ bool InitDepth()
     // The setup check at startup reports missing files.
     d.directory = ExeDirectory();
     if (GetFileAttributesW((d.directory + kModelFile).c_str()) == INVALID_FILE_ATTRIBUTES)
+    {
+        Log(LogLevel::Info, L"Depth model not found: %ls%ls.", d.directory.c_str(), kModelFile);
         return false;
+    }
     if (!AddonRegistered())
     {
         Log(LogLevel::Warning, L"Depth estimation is off because ReShade did not load the Unishade add-on.");
@@ -692,11 +703,13 @@ bool InitDepth()
     catch (const std::exception& e)
     {
         Log(LogLevel::Error, L"Depth estimation is off: %hs", e.what());
+        LogStackTrace();
         return false;
     }
     d.request = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     d.worker = std::thread(Worker);
     d.enabled = true;
+    Log(LogLevel::Info, L"Depth estimation initialized: model=%ls%ls, depth_size=%d.", d.directory.c_str(), kModelFile, DepthSize());
     return true;
 }
 

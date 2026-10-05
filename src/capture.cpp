@@ -171,16 +171,31 @@ void CloseCapture()
 
 void CreateDevice()
 {
+    Log(LogLevel::Info, L"Creating a D3D11 graphics device.");
     // Made in locals, so a failure leaves no half-made device behind.
     winrt::com_ptr<ID3D11Device> device;
     winrt::com_ptr<ID3D11DeviceContext> context;
+    D3D_FEATURE_LEVEL feature{};
     winrt::check_hresult(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0,
-                                           D3D11_SDK_VERSION, device.put(), nullptr, context.put()));
+                                           D3D11_SDK_VERSION, device.put(), &feature, context.put()));
 
     // The capture pool uses the device from its own worker threads.
     device.as<ID3D11Multithread>()->SetMultithreadProtected(TRUE);
 
     auto dxgiDevice = device.as<IDXGIDevice1>();
+    winrt::com_ptr<IDXGIAdapter> adapter;
+    if (SUCCEEDED(dxgiDevice->GetAdapter(adapter.put())))
+    {
+        DXGI_ADAPTER_DESC description{};
+        adapter->GetDesc(&description);
+        LARGE_INTEGER driver{};
+        adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &driver);
+        Log(LogLevel::Info, L"Graphics device: %ls, vendor=0x%04X, device=0x%04X, luid=%08lX:%08lX, "
+                           L"vram=%zu MB, shared=%zu MB, feature=0x%04X, driver=%u.%u.%u.%u.",
+            description.Description, description.VendorId, description.DeviceId, static_cast<DWORD>(description.AdapterLuid.HighPart),
+            description.AdapterLuid.LowPart, description.DedicatedVideoMemory / (1024 * 1024), description.SharedSystemMemory / (1024 * 1024),
+            feature, HIWORD(driver.HighPart), LOWORD(driver.HighPart), HIWORD(driver.LowPart), LOWORD(driver.LowPart));
+    }
     dxgiDevice->SetMaximumFrameLatency(1);
 
     winrt::com_ptr<::IInspectable> inspectable;
@@ -198,6 +213,7 @@ bool DeviceLost(HRESULT error)
 
 void ReleaseDevice()
 {
+    Log(LogLevel::Info, L"Releasing capture, swapchain, depth resources and graphics device.");
     StopCapture();
     g.swapchain = nullptr;
     scaler = {};
@@ -218,14 +234,20 @@ void RequestBorderlessCapture()
     using winrt::Windows::Foundation::AsyncStatus;
     using winrt::Windows::Security::Authorization::AppCapabilityAccess::AppCapabilityAccessStatus;
     if (!ApiInformation::IsPropertyPresent(kSessionClass, L"IsBorderRequired"))
+    {
+        Log(LogLevel::Info, L"Borderless capture is unavailable on this Windows version.");
         return;
+    }
     try
     {
         // Windows answers in the background. Programs that are not packaged are allowed without a prompt.
         GraphicsCaptureAccess::RequestAccessAsync(GraphicsCaptureAccessKind::Borderless)
             .Completed([](const auto& request, AsyncStatus status) {
                 if (status == AsyncStatus::Completed && request.GetResults() == AppCapabilityAccessStatus::Allowed)
+                {
+                    Log(LogLevel::Info, L"Borderless capture permission granted.");
                     return;
+                }
                 borderRequired = true;
                 Log(LogLevel::Info, L"Windows did not allow capture without a border, so it may draw one around the game.");
             });
@@ -246,6 +268,9 @@ void StartCapture(HWND target)
 
     g.hdrWhiteLevel = HdrWhiteLevel(target);
     g.poolSize = item.Size();
+    Log(LogLevel::Info, L"Creating capture pool: hwnd=%p, size=%dx%d, buffers=%d, format=%d, SDR_white=%.1f nits, border_required=%d.",
+        target, g.poolSize.Width, g.poolSize.Height, kFrameBuffers, static_cast<int>(g.hdrWhiteLevel ? kHdrPixelFormat : kPixelFormat),
+        g.hdrWhiteLevel.value_or(80), borderRequired.load());
     g.pool = Direct3D11CaptureFramePool::CreateFreeThreaded(g.captureDevice, g.hdrWhiteLevel ? kHdrPixelFormat : kPixelFormat, kFrameBuffers,
                                                             g.poolSize);
     g.capturedFrames.store(0, std::memory_order_relaxed);
@@ -255,6 +280,7 @@ void StartCapture(HWND target)
         g.takingFrames = true;
     }
     g.frameArrived = g.pool.FrameArrived(winrt::auto_revoke, [](const Direct3D11CaptureFramePool& pool, auto&&) {
+        InitThreadLog();
         try
         {
             while (Direct3D11CaptureFrame frame = pool.TryGetNextFrame())
@@ -266,9 +292,16 @@ void StartCapture(HWND target)
                     g.arrivedFrame = std::move(frame);
             }
         }
-        catch (const winrt::hresult_error&)
+        catch (const winrt::hresult_error& e)
         {
-            // The pool was closed while this ran.
+            bool taking = false;
+            {
+                const std::lock_guard lock(g.frameMutex);
+                taking = g.takingFrames;
+            }
+            // Closing the pool while a callback finishes is expected.
+            if (taking)
+                Log(LogLevel::Error, L"Capture worker could not read a frame: %ls (0x%08X).", e.message().c_str(), static_cast<unsigned>(e.code()));
         }
         if (!captureIdle)
             SetEvent(g.frameEvent);
@@ -285,6 +318,8 @@ void StartCapture(HWND target)
         g.session.MinUpdateInterval(std::chrono::milliseconds(1));
 
     g.session.StartCapture();
+    Log(LogLevel::Info, L"Capture session started: hwnd=%p, resumed=%d, minimum_interval_supported=%d.", target, resumed,
+        ApiInformation::IsPropertyPresent(kSessionClass, L"MinUpdateInterval"));
     g.target = target;
     if (!resumed)
     {
@@ -296,6 +331,8 @@ void StartCapture(HWND target)
 
 void StopCapture()
 {
+    if (g.target)
+        Log(LogLevel::Info, L"Stopping capture: hwnd=%p, captured_frames=%llu.", g.target, g.capturedFrames.load(std::memory_order_relaxed));
     SetEditMode(false);
     CloseCapture();
     captureIdle = false;
@@ -309,6 +346,7 @@ void SetCaptureIdle(bool idle)
 {
     if (!g.target || captureIdle == idle)
         return;
+    Log(LogLevel::Info, L"Capture idle=%d, hwnd=%p.", idle, g.target);
     if (ApiInformation::IsPropertyPresent(kSessionClass, L"MinUpdateInterval"))
     {
         captureIdle = idle;
@@ -338,6 +376,8 @@ void PresentLatestFrame()
 
     if (!g.swapchain)
     {
+        Log(LogLevel::Info, L"Creating swapchain: %ux%u, source=%ux%u, source_format=%u, output_format=%u, buffers=2, effect_resolution=%d%%.",
+            width, height, size.Width, size.Height, size.Format, DXGI_FORMAT_B8G8R8A8_UNORM, EffectResolution());
         winrt::com_ptr<IDXGIAdapter> adapter;
         winrt::check_hresult(g.device.as<IDXGIDevice>()->GetAdapter(adapter.put()));
         winrt::com_ptr<IDXGIFactory2> factory;
@@ -368,7 +408,10 @@ void PresentLatestFrame()
             height = desc.Height;
         }
         else if (desc.Width != width || desc.Height != height)
+        {
+            Log(LogLevel::Info, L"Resizing swapchain: %ux%u -> %ux%u, source=%ux%u.", desc.Width, desc.Height, width, height, size.Width, size.Height);
             winrt::check_hresult(g.swapchain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0));
+        }
     }
 
     winrt::com_ptr<ID3D11Texture2D> backBuffer;
@@ -379,7 +422,11 @@ void PresentLatestFrame()
         DrawFrame(surface.get(), size, backBuffer.get(), width, height);
     // Depth is estimated from SDR, so an HDR frame is read once it was drawn as SDR.
     UpdateDepth(g.hdrWhiteLevel ? backBuffer.get() : surface.get());
-    winrt::check_hresult(g.swapchain->Present(0, 0));
+    const HRESULT presented = g.swapchain->Present(0, 0);
+    if (FAILED(presented))
+        Log(LogLevel::Error, L"Swapchain Present failed: 0x%08X, device_reason=0x%08X, output=%ux%u, source=%ux%u, source_format=%u.",
+            static_cast<unsigned>(presented), static_cast<unsigned>(g.device->GetDeviceRemovedReason()), width, height, size.Width, size.Height, size.Format);
+    winrt::check_hresult(presented);
     const auto finished = FrameStatistics::Clock::now();
     g.frameStatistics.RecordPresent(frameTimestamp, std::chrono::duration<double, std::milli>(finished - started).count());
     g.frameStatistics.Update(finished, g.capturedFrames.load(std::memory_order_relaxed));

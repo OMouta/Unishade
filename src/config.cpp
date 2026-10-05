@@ -38,6 +38,7 @@ bool CachedFlag(std::atomic<int>& cached, const wchar_t* name, bool fallback)
     {
         value = GetPrivateProfileIntW(L"Menu", name, fallback, IniPath().c_str()) != 0;
         cached = value;
+        Log(LogLevel::Info, L"Setting loaded: Menu.%ls=%d.", name, value);
     }
     return value != 0;
 }
@@ -47,7 +48,10 @@ bool SaveFlag(std::atomic<int>& cached, const wchar_t* name, bool enabled)
 {
     cached = enabled;
     ++settingsVersion;
-    return WritePrivateProfileStringW(L"Menu", name, enabled ? L"1" : L"0", IniPath().c_str()) != FALSE;
+    const bool saved = WritePrivateProfileStringW(L"Menu", name, enabled ? L"1" : L"0", IniPath().c_str()) != FALSE;
+    const DWORD error = saved ? ERROR_SUCCESS : GetLastError();
+    Log(LogLevel::Info, L"Setting changed: Menu.%ls=%d, saved=%d, error=%lu.", name, enabled, saved, error);
+    return saved;
 }
 
 // Also turns a scale that is not a number into the default.
@@ -75,7 +79,11 @@ int ReadNumber(const std::wstring& game, const wchar_t* name, int fallback, int 
 void WriteNumber(const std::wstring& game, const wchar_t* name, int value)
 {
     ++settingsVersion;
-    if (!WritePrivateProfileStringW(PerformanceSection(game).c_str(), name, std::to_wstring(value).c_str(), IniPath().c_str()))
+    const std::wstring section = PerformanceSection(game);
+    const bool saved = WritePrivateProfileStringW(section.c_str(), name, std::to_wstring(value).c_str(), IniPath().c_str()) != FALSE;
+    const DWORD error = saved ? ERROR_SUCCESS : GetLastError();
+    Log(LogLevel::Info, L"Setting changed: %ls.%ls=%d, saved=%d, error=%lu.", section.c_str(), name, value, saved, error);
+    if (!saved)
         Log(LogLevel::Warning, L"Could not save %ls to RobloxShadeHost.ini. It applies until Unishade closes.", name);
 }
 
@@ -87,6 +95,7 @@ int CachedNumber(std::atomic<int>& cached, const wchar_t* name, int fallback, in
     {
         value = ReadNumber(performanceGame, name, fallback, valid);
         cached = value;
+        Log(LogLevel::Info, L"Setting loaded: %ls.%ls=%d.", PerformanceSection(performanceGame).c_str(), name, value);
     }
     return value;
 }
@@ -146,6 +155,8 @@ void UseHotkeys(const InputHotkeys& hotkeys)
     g.hotkeys = hotkeys;
     g.inputHotkey = FormatHotkey(hotkeys.input);
     g.overlayHotkey = FormatHotkey(hotkeys.overlay);
+    for (const Shortcut& shortcut : kShortcuts)
+        Log(LogLevel::Info, L"Shortcut: %ls=%ls.", shortcut.name, FormatHotkey(hotkeys.*shortcut.member).c_str());
 }
 
 bool Register(const Shortcut& shortcut, const InputHotkeys& hotkeys)
@@ -308,6 +319,7 @@ float MenuScale()
         GetPrivateProfileStringW(L"Menu", L"Scale", L"1", value, static_cast<DWORD>(std::size(value)), IniPath().c_str());
         scale = ValidScale(wcstof(value, nullptr));
         menuScale = scale;
+        Log(LogLevel::Info, L"Setting loaded: Menu.Scale=%.2f.", scale);
     }
     return scale;
 }
@@ -322,6 +334,7 @@ void SetMenuScale(float scale)
     ++settingsVersion;
     wchar_t value[32]{};
     swprintf_s(value, L"%.2f", scale);
+    Log(LogLevel::Info, L"Setting changed: Menu.Scale=%ls.", value);
     if (!WritePrivateProfileStringW(L"Menu", L"Scale", value, IniPath().c_str()))
         Log(LogLevel::Warning, L"Could not save the menu size to RobloxShadeHost.ini. It applies until Unishade closes.");
 }
@@ -368,6 +381,8 @@ void SetPerformanceGame(const std::wstring& game)
     effectResolution = -1;
     depthSize = -1;
     ++settingsVersion;
+    Log(LogLevel::Info, L"Performance game: %ls, fps_limit=%d, effect_resolution=%d%%, depth_size=%d.",
+        game.empty() ? L"defaults" : game.c_str(), FrameRateLimit(), EffectResolution(), DepthSize());
 }
 
 const std::wstring& PerformanceGame()

@@ -654,6 +654,7 @@ std::vector<ScannedFolder> ScanLibrary(ScanCache& cache, unsigned generation)
 
 void ScanThread()
 {
+    InitThreadLog();
     // WIC and the shell's icon extraction both work in a single-threaded apartment.
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     ScanCache cache;
@@ -1540,6 +1541,7 @@ void OpenImportDialog()
         importDialog.process = m.gameProcess;
     }
     std::thread([] {
+        InitThreadLog();
         // The main thread's apartment is multithreaded, and the shell's dialogs need a single-threaded one.
         const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
         std::vector<fs::path> files = PickPresets();

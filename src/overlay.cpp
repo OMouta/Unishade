@@ -119,6 +119,7 @@ void CreateOverlayWindow()
     g.overlay = CreateWindowExW(kPassThroughStyle, wc.lpszClassName, L"Unishade", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr,
                                 wc.hInstance, nullptr);
     winrt::check_bool(g.overlay != nullptr);
+    Log(LogLevel::Info, L"Overlay window created: hwnd=%p, dpi=%u.", g.overlay, GetDpiForWindow(g.overlay));
     SetLayeredWindowAttributes(g.overlay, 0, 255, LWA_ALPHA);
 }
 
@@ -164,7 +165,11 @@ void UpdateOverlay()
     if (!visible)
     {
         if (g.overlayVisible)
+        {
+            Log(LogLevel::Info, L"Overlay hidden: capture=%d, target=%p, minimized=%d, in_front=%d, keep_visible=%d, cloaked=%d.",
+                g.captureEnabled, g.target, g.target && IsIconic(g.target), inFront, KeepEffectsVisible(), g.target && IsCloaked(g.target));
             ShowWindow(g.overlay, SW_HIDE);
+        }
         g.overlayVisible = false;
         return;
     }
@@ -175,6 +180,9 @@ void UpdateOverlay()
         if (!g.overlayVisible || !aboveGameOnly || !EqualRect(&bounds, &g.overlayRect) || GetWindow(g.target, GW_HWNDPREV) != g.overlay)
         {
             PlaceAboveGame(bounds);
+            if (!g.overlayVisible || !aboveGameOnly || !EqualRect(&bounds, &g.overlayRect))
+                Log(LogLevel::Info, L"Overlay placed above game: bounds=%ld,%ld %ldx%ld.", bounds.left, bounds.top,
+                    bounds.right - bounds.left, bounds.bottom - bounds.top);
             aboveGameOnly = true;
             g.overlayRect = bounds;
             g.overlayVisible = true;
@@ -184,6 +192,8 @@ void UpdateOverlay()
 
     if (!g.overlayVisible || aboveGameOnly || !EqualRect(&bounds, &g.overlayRect))
     {
+        Log(LogLevel::Info, L"Overlay placed in front: bounds=%ld,%ld %ldx%ld.", bounds.left, bounds.top,
+            bounds.right - bounds.left, bounds.bottom - bounds.top);
         SetWindowPos(g.overlay, HWND_TOPMOST, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top,
                      SWP_NOACTIVATE | SWP_SHOWWINDOW);
         aboveGameOnly = false;

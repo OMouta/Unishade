@@ -301,6 +301,7 @@ void Step(Worker& worker, std::optional<discord::Activity>& wanted)
 
 void Run()
 {
+    InitThreadLog();
     Worker worker;
     std::optional<discord::Activity> wanted;
     for (;;)
