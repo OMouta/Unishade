@@ -23,7 +23,7 @@ struct Notice
 void InitLog();
 
 // Writes a timestamped line to the log. Warnings and errors are also shown in the launcher and the menu.
-// printf-style. Safe from any thread.
+// printf-style. Safe from any thread. At 16 MB the file rolls over to Unishade.previous.log.
 void Log(LogLevel level, const char* format, ...) __attribute__((format(printf, 2, 3)));
 
 // Like Log, but shown in the launcher and the menu at any level.
@@ -35,3 +35,4 @@ std::vector<Notice> Notices();
 void ClearNotices();
 
 const std::filesystem::path& LogPath();
+void FlushLog();
