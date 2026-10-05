@@ -208,8 +208,12 @@ bool WriteFile(const fs::path& path, const std::string& contents)
     }
     fs::rename(temporary, path, error);
     if (error)
-        fs::remove(temporary, error);
-    return !error;
+    {
+        std::error_code ignored;
+        fs::remove(temporary, ignored);
+        return false;
+    }
+    return true;
 }
 
 std::string Lowercase(std::string text)

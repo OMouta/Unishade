@@ -353,8 +353,12 @@ bool WriteCacheFile(const fs::path& path, const std::string& contents)
     }
     fs::rename(temporary, path, error);
     if (error)
-        fs::remove(temporary, error);
-    return !error;
+    {
+        std::error_code ignored;
+        fs::remove(temporary, ignored);
+        return false;
+    }
+    return true;
 }
 
 // Writes an effect for the cache and reads it back with the same Visit functions, so the two cannot drift apart.

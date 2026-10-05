@@ -9,6 +9,8 @@
 #include "preset_ini.h"
 #include "setup.h"
 
+#include <unistd.h>
+
 #include <cstdio>
 #include <stdexcept>
 #include <string>
@@ -26,6 +28,18 @@ bool Check(bool condition, const char* what)
 int main()
 {
     bool ok = true;
+
+    const fs::path directory = fs::temp_directory_path() / ("unishade-write-test-" + std::to_string(getpid()));
+    if (!fs::create_directory(directory))
+        return 1;
+    const fs::path file = directory / "preset.ini";
+    ok &= Check(WriteFile(file, "value=1\n") && ReadFile(file) == "value=1\n", "writes a new file");
+    ok &= Check(WriteFile(file, "value=2\n") && ReadFile(file) == "value=2\n", "replaces an existing file");
+    const fs::path blocked = directory / "blocked";
+    fs::create_directory(blocked);
+    ok &= Check(!WriteFile(blocked, "contents"), "a failed rename is reported even when cleanup succeeds");
+    ok &= Check(fs::is_directory(blocked) && !fs::exists(blocked.string() + ".tmp"), "failed write keeps the destination and removes the temporary file");
+    fs::remove_all(directory);
 
     // Shortcuts are written as on Windows and read back the same.
     Hotkey hotkey;
