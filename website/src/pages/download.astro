@@ -21,51 +21,93 @@ const others = [
 
 <Base title="Download | Unishade" description="Download Unishade Setup for Windows 10 and 11, or Unishade for macOS and Linux.">
   <main class="download-page">
-    <section class="main">
-      <h1>Download Unishade</h1>
-      <p>Unishade, ReShade and every official effect in one installer. Depth estimation and DLSS5 are optional.</p>
-      <a class="button button-primary" href={release.setup.url}>
-        {release.setup.name ? `Download Setup ${release.version}` : 'Download from GitHub Releases'}
-      </a>
-      <dl>
-        {
-          release.version && (
-            <div>
-              <dt>Version</dt>
-              <dd>
-                {release.version}, released {released}
-              </dd>
-            </div>
-          )
-        }
-        {
-          release.setup.name && (
-            <div>
-              <dt>File</dt>
-              <dd>{release.setup.name}{size(release.setup)}. ReShade and the effects download during install.</dd>
-            </div>
-          )
-        }
-        <div>
-          <dt>Needs</dt>
-          <dd>{requirements.windows}</dd>
+    <div class="top">
+      <header>
+        <h1>Download Unishade</h1>
+        <p class="lede">Unishade, ReShade and every official effect in one installer. Depth estimation and DLSS5 are optional.</p>
+      </header>
+
+      <!-- Framed like Unishade's own windows. -->
+      <section class="windows">
+        <div class="windows-head">
+          <h2>Windows</h2>
+          <a class="button button-primary" href={release.setup.url}>
+            {release.setup.name ? `Download Setup ${release.version}` : 'Download from GitHub Releases'}
+          </a>
         </div>
-      </dl>
-      {note && <p>{note}</p>}
-      <p class="dim">
-        Setup isn't code-signed yet, so the first time Windows may say <strong>Windows protected your PC</strong>.{' '}
-        Click <strong>More info</strong>, then <strong>Run anyway</strong>.
-      </p>
+        <dl>
+          {
+            release.version && (
+              <div>
+                <dt>Version</dt>
+                <dd>
+                  {release.version}, released {released}
+                </dd>
+              </div>
+            )
+          }
+          {
+            release.setup.name && (
+              <div>
+                <dt>File</dt>
+                <dd>{release.setup.name}{size(release.setup)}. ReShade and the effects download during install.</dd>
+              </div>
+            )
+          }
+          <div>
+            <dt>Needs</dt>
+            <dd>{requirements.windows}</dd>
+          </div>
+        </dl>
+        {note && <p>{note}</p>}
+        <p class="dim">
+          Setup isn't code-signed yet, so the first time Windows may say <strong>Windows protected your PC</strong>.{' '}
+          Click <strong>More info</strong>, then <strong>Run anyway</strong>.
+        </p>
+        <p class="release-links">
+          {
+            release.version && (
+              <>
+                <a href={release.notes}>What's new in {release.version}</a> ·{' '}
+              </>
+            )
+          }
+          <a href={links.releases}>{release.version ? 'Older versions' : 'All versions'}</a>
+        </p>
+      </section>
+    </div>
+
+    <section class="others">
+      <h2 id="macos-and-linux">macOS and Linux (experimental)</h2>
       <p>
-        {
-          release.version && (
-            <>
-              <a href={release.notes}>What's new in {release.version}</a> ·{' '}
-            </>
-          )
-        }
-        <a href={links.releases}>{release.version ? 'Older versions' : 'All versions'}</a>
+        ReShade only runs on Windows, so these run ReShade's effects themselves, with the same presets. They're new, so
+        expect bugs.
       </p>
+      <div class="platforms">
+        {
+          others.map(({ name, file, needs }) => (
+            <div class="platform">
+              <h3>{name}</h3>
+              <p>
+                {file ? (
+                  <>
+                    <a href={file.url}>Download for {name}</a> ({file.name}{size(file)})
+                  </>
+                ) : release.version ? (
+                  <>
+                    Not in {release.version} yet. Look on <a href={links.releases}>GitHub Releases</a>, or{' '}
+                    <a href={links.build}>build it yourself</a>.
+                  </>
+                ) : (
+                  <a href={links.releases}>Download from GitHub Releases</a>
+                )}
+              </p>
+              <p class="dim">Needs {needs}.</p>
+            </div>
+          ))
+        }
+      </div>
+      <a href="/docs/macos-linux/">How to set them up</a>
     </section>
 
     <section>
@@ -82,41 +124,6 @@ const others = [
         Run the new Setup. Your presets, settings and games stay. Coming from RobloxShadeHost? Setup upgrades it the same
         way.
       </p>
-    </section>
-
-    <section>
-      <h2 id="macos-and-linux">macOS and Linux (experimental)</h2>
-      <p>
-        ReShade only runs on Windows, so these run ReShade's effects themselves, with the same presets. They're new, so
-        expect bugs.
-      </p>
-      <dl>
-        {
-          others.map(({ name, file, needs }) => (
-            <div>
-              <dt>{name}</dt>
-              <dd>
-                <p>
-                  {file ? (
-                    <>
-                      <a href={file.url}>Download for {name}</a> ({file.name}{size(file)})
-                    </>
-                  ) : release.version ? (
-                    <>
-                      Not in {release.version} yet. Look on <a href={links.releases}>GitHub Releases</a>, or{' '}
-                      <a href={links.build}>build it yourself</a>.
-                    </>
-                  ) : (
-                    <a href={links.releases}>Download from GitHub Releases</a>
-                  )}
-                </p>
-                <p class="dim">Needs {needs}.</p>
-              </dd>
-            </div>
-          ))
-        }
-      </dl>
-      <a href="/docs/macos-linux/">How to set them up</a>
     </section>
 
     <section>
@@ -144,9 +151,25 @@ const others = [
 <style>
   .download-page {
     display: grid;
-    gap: clamp(56px, 8vw, 88px);
-    width: min(760px, 100% - 2 * var(--gutter));
-    margin: clamp(40px, 7vw, 80px) auto 0;
+    gap: clamp(56px, 8vw, 96px);
+    width: min(820px, 100% - 2 * var(--gutter));
+    margin: clamp(40px, 7vw, 88px) auto 0;
+  }
+
+  .top {
+    display: grid;
+    gap: 36px;
+  }
+
+  header {
+    display: grid;
+    gap: 18px;
+  }
+
+  .lede {
+    max-width: 50ch;
+    color: var(--haze);
+    font-size: 1.25rem;
   }
 
   section {
@@ -155,15 +178,44 @@ const others = [
     justify-items: start;
   }
 
-  .main p:first-of-type {
-    max-width: 52ch;
-    font-size: 1.15rem;
+  h2 {
+    font-size: clamp(1.6rem, 3vw, 2.2rem);
+  }
+
+  .windows {
+    position: relative;
+    padding: clamp(24px, 4vw, 40px);
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--night-raised);
+    box-shadow: 0 40px 100px -50px rgb(84 110 255 / 0.5);
+  }
+
+  .windows::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto;
+    height: 2px;
+    background: linear-gradient(90deg, var(--spectrum));
+  }
+
+  .windows-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px 24px;
+    width: 100%;
   }
 
   dl {
     display: grid;
     gap: 10px;
-    margin: 8px 0 0;
+    width: 100%;
+    margin: 4px 0 0;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
   }
 
   dl div {
@@ -181,6 +233,26 @@ const others = [
     overflow-wrap: anywhere;
   }
 
+  .platforms {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    width: 100%;
+  }
+
+  .platform {
+    display: grid;
+    align-content: start;
+    gap: 10px;
+    padding: 22px 24px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+
+  .platform .dim {
+    font-size: 0.95rem;
+  }
+
   ol {
     display: grid;
     gap: 10px;
@@ -191,5 +263,11 @@ const others = [
   li::marker {
     color: var(--accent);
     font-weight: 700;
+  }
+
+  @media (max-width: 640px) {
+    .platforms {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 </style>

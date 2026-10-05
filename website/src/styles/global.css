@@ -1,18 +1,21 @@
 :root {
-  --night: #0f1024;
-  --night-raised: #161834;
-  --line: #2a2d52;
+  --night: #0b0c1c;
+  --night-raised: #14152b;
+  --night-high: #1d1f3b;
+  --line: #25284a;
   /* Borders of buttons and other controls, at least 3:1 against the page. */
-  --line-strong: #62669a;
-  --ink: #f1f1fa;
-  --haze: #a3a6c8;
-  --accent: #8c94ff;
-  --accent-ink: #0f1024;
+  --line-strong: #5f6396;
+  --ink: #f2f2fb;
+  --haze: #a2a5c8;
+  --accent: #8f96ff;
+  /* The line under the title bar in Unishade's windows. */
+  --spectrum: #ff4860, #ff9e36, #f8e44c, #55de7a, #3ec6ff, #546eff, #ba5cff;
 
-  --page: min(1180px, 100% - 2 * var(--gutter));
+  --page: min(1200px, 100% - 2 * var(--gutter));
   --gutter: clamp(20px, 4vw, 48px);
   --radius: 14px;
   --nav-height: 72px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 
   color-scheme: dark;
   /* Links to a heading stop below the navigation. */
@@ -23,6 +26,17 @@
   color: var(--ink);
   background: var(--night);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Pages fade into each other, and the bar at the top stays put. */
+@view-transition {
+  navigation: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @view-transition {
+    navigation: none;
+  }
 }
 
 *,
@@ -45,27 +59,29 @@ h1,
 h2,
 h3 {
   margin: 0;
-  font-stretch: 122%;
-  line-height: 1.08;
+  font-stretch: 125%;
+  line-height: 1.04;
   text-wrap: balance;
 }
 
 h1 {
-  font-size: clamp(2.4rem, 5.4vw, 4.6rem);
+  font-size: clamp(2.5rem, 5.6vw, 4.75rem);
   font-weight: 800;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.025em;
 }
 
 h2 {
-  font-size: clamp(1.75rem, 3.2vw, 2.6rem);
-  font-weight: 750;
-  letter-spacing: -0.01em;
+  font-size: clamp(1.9rem, 3.6vw, 3rem);
+  font-weight: 760;
+  letter-spacing: -0.02em;
 }
 
 h3 {
-  font-size: 1.25rem;
+  font-size: 1.3rem;
   font-weight: 700;
-  font-stretch: 112%;
+  font-stretch: 115%;
+  line-height: 1.2;
+  letter-spacing: -0.005em;
 }
 
 p {
@@ -76,6 +92,7 @@ p {
 a {
   color: var(--accent);
   text-underline-offset: 0.2em;
+  text-decoration-thickness: 1px;
 }
 
 a:hover {
@@ -88,26 +105,59 @@ a:hover {
   border-radius: 4px;
 }
 
-.button {
-  display: inline-flex;
-  align-items: center;
-  min-height: 48px;
-  padding: 0 22px;
-  border-radius: 10px;
-  font-weight: 650;
-  font-stretch: 110%;
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.button-primary {
-  color: var(--accent-ink);
+::selection {
+  color: var(--night);
   background: var(--accent);
 }
 
+.button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 50px;
+  padding: 0 24px;
+  border-radius: 12px;
+  font-weight: 680;
+  font-stretch: 112%;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background-color 0.2s,
+    border-color 0.2s,
+    transform 0.2s var(--ease-out);
+}
+
+.button:active {
+  transform: translateY(1px);
+}
+
+/* White, like the cube. On hover the spectrum glows under it. */
+.button-primary {
+  isolation: isolate;
+  color: var(--night);
+  background: var(--ink);
+}
+
+.button-primary::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 6px 10px -2px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--spectrum));
+  filter: blur(14px);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
 .button-primary:hover {
-  color: var(--accent-ink);
-  background: #a8aeff;
+  color: var(--night);
+  background: #fff;
+}
+
+.button-primary:hover::before {
+  opacity: 0.75;
 }
 
 .button-secondary {
@@ -116,72 +166,109 @@ a:hover {
 }
 
 .button-secondary:hover {
+  color: var(--ink);
   border-color: var(--haze);
+  background: var(--night-raised);
 }
 
 .dim {
   color: var(--haze);
 }
 
+/* A key on the keyboard. */
+kbd {
+  display: inline-block;
+  min-width: 1.9em;
+  padding: 0.05em 0.5em 0.1em;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 3px;
+  border-radius: 7px;
+  color: var(--ink);
+  background: var(--night-high);
+  font-family: inherit;
+  font-size: 0.86em;
+  font-weight: 650;
+  font-stretch: 100%;
+  line-height: 1.5;
+  text-align: center;
+  white-space: nowrap;
+}
+
 /* Pages written in Markdown: the docs and the legal pages. */
-.prose h1 {
-  font-size: clamp(2.1rem, 4.4vw, 3.2rem);
+.prose > h2 {
+  margin: 64px 0 18px;
+  font-size: clamp(1.55rem, 2.6vw, 2.05rem);
 }
 
-.prose h2 {
-  margin: 56px 0 16px;
-  font-size: clamp(1.5rem, 2.6vw, 2rem);
+.prose > h3 {
+  margin: 40px 0 12px;
 }
 
-.prose h3 {
-  margin: 36px 0 12px;
+.prose > :first-child {
+  margin-top: 0;
 }
 
 .prose p,
 .prose ul,
 .prose ol,
 .prose table {
-  margin: 0 0 16px;
+  margin: 0 0 18px;
   max-width: 68ch;
 }
 
+.prose ul,
+.prose ol {
+  padding-left: 1.3em;
+}
+
 .prose li {
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+  padding-left: 0.2em;
 }
 
 .prose li::marker {
   color: var(--accent);
+  font-weight: 700;
 }
 
 .prose li > ul,
 .prose li > ol {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
+}
+
+.prose strong {
+  font-weight: 680;
 }
 
 .prose img {
-  margin: 26px 0 8px;
+  margin: 28px 0 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  box-shadow: 0 24px 60px -24px rgb(0 0 0 / 0.7);
 }
 
 .prose code {
-  padding: 2px 6px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
   border-radius: 6px;
-  font-size: 0.92em;
+  font-size: 0.9em;
   background: var(--night-raised);
+  overflow-wrap: anywhere;
 }
 
 .prose pre {
   max-width: 68ch;
-  margin: 0 0 16px;
-  padding: 14px 18px;
+  margin: 0 0 18px;
+  padding: 16px 20px;
   overflow-x: auto;
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   background: var(--night-raised);
 }
 
 .prose pre code {
   padding: 0;
+  border: 0;
   background: none;
 }
 
@@ -192,12 +279,18 @@ a:hover {
 
 .prose th,
 .prose td {
-  padding: 10px 14px 10px 0;
+  padding: 12px 16px 12px 0;
   border-bottom: 1px solid var(--line);
   text-align: left;
+  vertical-align: top;
 }
 
 .prose th {
   color: var(--haze);
   font-weight: 600;
+}
+
+.prose td:first-child {
+  white-space: nowrap;
+  font-weight: 650;
 }

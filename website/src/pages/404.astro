@@ -1,9 +1,13 @@
 ---
+import { Image } from 'astro:assets';
 import Base from '../layouts/Base.astro';
+import logo from '../../../assets/UnishadeSmall.png';
 ---
 
 <Base title="Page not found | Unishade" description="There's nothing at this address." noindex>
   <main class="not-found">
+    <!-- The logo with its colour turned off. -->
+    <Image src={logo} widths={[240, 480]} sizes="240px" alt="" class="logo" />
     <h1>Page not found</h1>
     <p>There's nothing at this address. The page may have moved, or the link has a typo.</p>
     <div class="actions">
@@ -20,12 +24,19 @@ import Base from '../layouts/Base.astro';
     gap: 24px;
     justify-items: start;
     width: var(--page);
-    margin: clamp(56px, 10vw, 120px) auto 0;
+    margin: clamp(48px, 9vw, 112px) auto 0;
+  }
+
+  .logo {
+    width: 200px;
+    margin-bottom: 8px;
+    filter: grayscale(1) brightness(0.7);
   }
 
   .not-found p {
     max-width: 52ch;
-    font-size: 1.15rem;
+    color: var(--haze);
+    font-size: 1.2rem;
   }
 
   .actions {

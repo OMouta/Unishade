@@ -1,0 +1,286 @@
+---
+import { Image } from 'astro:assets';
+import DownloadButton from './DownloadButton.astro';
+import before from '../assets/compare-before.jpg';
+import after from '../assets/compare-after.jpg';
+---
+
+<!-- The same scene without and with effects, filling the window. The after picture shows right of the line. -->
+<section class="hero">
+  <Image src={before} widths={[800, 1400, 1920]} sizes="100vw" alt="A Roblox game without effects" class="shot" priority />
+  <Image src={after} widths={[800, 1400, 1920]} sizes="100vw" alt="The same scene with Unishade's effects" class="shot after" priority />
+
+  <input class="compare-range" type="range" min="0" max="100" value="50" aria-label="Compare before and after" />
+  <div class="compare-line" aria-hidden="true">
+    <span class="compare-handle"><span>Before</span><span class="compare-grip"></span><span>After</span></span>
+  </div>
+
+  <div class="hero-text">
+    <h1>Universal <span>post-processing</span> without injection.</h1>
+    <p class="lede">Built for games where traditional ReShade injection isn't available or desirable. Formerly RobloxShadeHost.</p>
+    <DownloadButton detect />
+  </div>
+</section>
+
+<script>
+  const hero = document.querySelector<HTMLElement>('.hero')!;
+  const afterShot = hero.querySelector<HTMLImageElement>('.after')!;
+  const range = hero.querySelector<HTMLInputElement>('.compare-range')!;
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const clamp = (value: number) => Math.min(Math.max(value, 0), 1);
+  const ease = (p: number) => (p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2);
+  const rest = 0.5;
+
+  // Once the after picture has loaded, the line crosses from the right and the effects come on behind it.
+  let sweep: number | undefined;
+  let split = still ? rest : 1;
+  let target = split;
+  let frame = 0;
+  let last = 0;
+
+  const place = () => {
+    hero.style.setProperty('--split', `${split * 100}%`);
+    range.value = String(Math.round(target * 100));
+  };
+
+  const tick = (now: number) => {
+    frame = 0;
+    const dt = last ? Math.min((now - last) / 1000, 0.1) : 0;
+    last = now;
+    if (sweep !== undefined) {
+      sweep ||= now;
+      const p = clamp((now - sweep) / 1500);
+      split = target = 1 - (1 - rest) * ease(p);
+      if (p === 1) sweep = undefined;
+    } else if (still) {
+      split = target;
+    } else {
+      split += (target - split) * (1 - Math.exp(-dt * 16));
+    }
+    place();
+    if (sweep !== undefined || Math.abs(target - split) > 0.0005) frame = requestAnimationFrame(tick);
+    else last = 0;
+  };
+
+  const draw = () => {
+    if (!frame) frame = requestAnimationFrame(tick);
+  };
+
+  const moveTo = (value: number) => {
+    sweep = undefined;
+    target = value;
+    draw();
+  };
+
+  place();
+  if (!still) {
+    const start = () =>
+      setTimeout(() => {
+        if (target !== 1) return;
+        sweep = 0;
+        draw();
+      }, 300);
+    if (afterShot.complete) start();
+    else afterShot.addEventListener('load', start, { once: true });
+  }
+
+  // A mouse moves the line from the first press. A finger has to move sideways first, so it can still scroll.
+  const share = (event: PointerEvent) => clamp((event.clientX - hero.getBoundingClientRect().left) / hero.clientWidth);
+  let dragging: number | undefined;
+  let pending: { id: number; x: number; y: number } | undefined;
+
+  hero.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || (event.target as Element).closest('a, button, input')) return;
+    if (event.pointerType === 'mouse') {
+      event.preventDefault();
+      dragging = event.pointerId;
+      hero.setPointerCapture(event.pointerId);
+      moveTo(share(event));
+    } else {
+      pending = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    }
+  });
+
+  hero.addEventListener('pointermove', (event) => {
+    if (pending?.id === event.pointerId) {
+      const dx = Math.abs(event.clientX - pending.x);
+      const dy = Math.abs(event.clientY - pending.y);
+      if (dx > 8 && dx > dy) {
+        dragging = event.pointerId;
+        hero.setPointerCapture(event.pointerId);
+        pending = undefined;
+      } else if (dy > 8) {
+        pending = undefined;
+      }
+    }
+    if (dragging === event.pointerId) moveTo(share(event));
+  });
+
+  hero.addEventListener('pointerup', (event) => {
+    // A tap moves the line there.
+    if (pending?.id === event.pointerId) moveTo(share(event));
+    pending = undefined;
+    dragging = undefined;
+  });
+
+  hero.addEventListener('pointercancel', () => {
+    pending = undefined;
+    dragging = undefined;
+  });
+
+  range.addEventListener('input', () => moveTo(Number(range.value) / 100));
+</script>
+
+<style>
+  .hero {
+    position: relative;
+    height: 100svh;
+    min-height: 620px;
+    max-height: 1200px;
+    overflow: hidden;
+    background: var(--night-raised);
+    cursor: ew-resize;
+    touch-action: pan-y;
+    user-select: none;
+  }
+
+  .shot {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    pointer-events: none;
+  }
+
+  .after {
+    clip-path: inset(0 0 0 var(--split, 50%));
+  }
+
+  /* Darkens the top, behind the navigation and the text, and the bottom edge, where the page starts. The rest of the
+     picture is left as Unishade saved it. */
+  .hero::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(to bottom, rgb(11 12 28 / 0.78), rgb(11 12 28 / 0.42) 32%, transparent 52%),
+      linear-gradient(to top, var(--night), transparent 14%);
+    pointer-events: none;
+  }
+
+  .hero-text {
+    position: absolute;
+    z-index: 2;
+    inset: calc(var(--nav-height) + clamp(24px, 6svh, 72px)) 0 auto;
+    display: grid;
+    gap: 22px;
+    justify-items: start;
+    width: var(--page);
+    margin: 0 auto;
+    pointer-events: none;
+  }
+
+  .hero-text :global(a) {
+    pointer-events: auto;
+  }
+
+  h1 {
+    font-size: clamp(2.4rem, 4.8vw, 4.2rem);
+    font-weight: 820;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    text-shadow: 0 2px 30px rgb(11 12 28 / 0.6);
+  }
+
+  h1 span {
+    white-space: nowrap;
+  }
+
+  .lede {
+    max-width: 46ch;
+    color: #e4e5f4;
+    font-size: clamp(1.05rem, 1.4vw, 1.2rem);
+    text-shadow: 0 1px 16px rgb(11 12 28 / 0.8);
+  }
+
+  .hero-text :global(.download .dim) {
+    color: #d0d2ea;
+    text-shadow: 0 1px 12px rgb(11 12 28 / 0.9);
+  }
+
+  .compare-line {
+    position: absolute;
+    z-index: 3;
+    inset: 0 auto 0 var(--split, 50%);
+    width: 2px;
+    margin-left: -1px;
+    background: linear-gradient(to bottom, var(--spectrum));
+    pointer-events: none;
+  }
+
+  .compare-line::before {
+    content: '';
+    position: absolute;
+    inset: 0 -5px;
+    background: inherit;
+    filter: blur(10px);
+    opacity: 0.8;
+  }
+
+  .compare-handle {
+    position: absolute;
+    bottom: 12%;
+    left: 50%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 14px;
+    border: 1px solid rgb(255 255 255 / 0.16);
+    border-radius: 999px;
+    color: var(--ink);
+    background: rgb(11 12 28 / 0.62);
+    backdrop-filter: blur(12px);
+    font-size: 0.82rem;
+    font-weight: 650;
+    font-stretch: 112%;
+    line-height: 1;
+    white-space: nowrap;
+    transform: translateX(-50%);
+  }
+
+  .compare-grip {
+    width: 2px;
+    height: 18px;
+    border-radius: 2px;
+    background: linear-gradient(to bottom, var(--spectrum));
+  }
+
+  /* The keyboard moves the line through this, and the handle shows its focus. */
+  .compare-range {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .compare-range:focus-visible + .compare-line .compare-handle {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+
+  /* On phones the text runs further down the picture. */
+  @media (max-width: 520px) {
+    h1 {
+      font-size: 9.2vw;
+      font-stretch: 108%;
+    }
+
+    .hero::after {
+      background:
+        linear-gradient(to bottom, rgb(11 12 28 / 0.82), rgb(11 12 28 / 0.55) 50%, transparent 70%),
+        linear-gradient(to top, var(--night), transparent 14%);
+    }
+  }
+</style>

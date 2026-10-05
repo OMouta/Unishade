@@ -2,12 +2,12 @@
 import { Image } from 'astro:assets';
 import Base from '../layouts/Base.astro';
 import DownloadButton from '../components/DownloadButton.astro';
-import { steps } from '../site';
+import Hero from '../components/Hero.astro';
+import Steps from '../components/Steps.astro';
+import { links } from '../links';
 import { videos } from '../videos';
-import banner from '../../../assets/unishade-banner.png';
-import menu from '../assets/menu-effects-crop.jpg';
-import launcher from '../content/docs/images/launcher.png';
-import setup from '../content/docs/images/setup-addons.png';
+import logo from '../../../assets/UnishadeSmall.png';
+import GithubIcon from '../icons/github.svg';
 
 const [featured, ...more] = videos;
 ---
@@ -18,48 +18,17 @@ const [featured, ...more] = videos;
   overlay
 >
   <main>
-    <section class="hero">
-      <div class="stage">
-        <Image src={banner} widths={[900, 1800]} sizes="100vw" alt="Six games with Unishade effects" class="banner" priority />
-      </div>
-      <div class="lede">
-        <h1>Universal post-processing without injection.</h1>
-        <p>Built for games where traditional ReShade injection isn't available or desirable. Formerly RobloxShadeHost.</p>
-        <DownloadButton detect />
-      </div>
-    </section>
+    <Hero />
 
-    <section class="games">
-      <div class="games-text">
-        <h2>Add your game in two clicks</h2>
-        <p>Open your game, click Add game and pick its window. Next time you play, your effects are already on.</p>
-        <p class="dim">Works with games in windowed or borderless mode.</p>
-        <a href="/docs/games/">More about games</a>
-      </div>
-      <Image src={launcher} sizes="(max-width: 900px) 100vw, 55vw" alt="The Unishade window with three saved games" class="shot" />
-    </section>
-
-    <section class="menu">
-      <div class="menu-text">
-        <h2>Press Home and pick a look</h2>
-        <p>The menu opens right over the game. Switch presets, turn effects on and tweak them while you watch.</p>
-        <ul>
-          <li>Save your own presets or import shared ones</li>
-          <li>Every ReShade effect, searchable</li>
-          <li>Hold F7 to compare with the original</li>
-          <li>Before and after screenshots from the same frame</li>
-        </ul>
-      </div>
-      <Image src={menu} widths={[640, 900]} sizes="(max-width: 900px) 100vw, 60vw" alt="The Unishade menu with an effect's settings open" class="shot" />
-    </section>
+    <Steps />
 
     <section class="videos">
       <div class="videos-text">
         <h2>Seen on YouTube</h2>
-        <p>Creators trying DLSS5 in Greenville, Driving Empire and other Roblox games.</p>
+        <p class="dim">Creators trying DLSS5 in Greenville, Driving Empire and other Roblox games.</p>
       </div>
-      <a class="video" href={featured.url}>
-        <Image src={featured.thumbnail} widths={[640, 1280]} sizes="(max-width: 900px) 100vw, 60vw" alt="" class="shot" />
+      <a class="video featured" href={featured.url}>
+        <Image src={featured.thumbnail} widths={[640, 1280]} sizes="(max-width: 900px) 100vw, 60vw" alt="" class="thumb" />
         <span class="video-title">{featured.title}</span>
         <span class="dim">{featured.channel}</span>
       </a>
@@ -68,7 +37,7 @@ const [featured, ...more] = videos;
           more.map((video) => (
             <li>
               <a class="video" href={video.url}>
-                <Image src={video.thumbnail} widths={[320, 640]} sizes="(max-width: 600px) 100vw, 320px" alt="" class="shot" />
+                <Image src={video.thumbnail} widths={[320, 640]} sizes="(max-width: 600px) 100vw, 240px" alt="" class="thumb" />
                 <span class="video-title">{video.title}</span>
                 <span class="dim">{video.channel}</span>
               </a>
@@ -78,107 +47,37 @@ const [featured, ...more] = videos;
       </ul>
     </section>
 
-    <section class="install">
-      <div class="install-text">
-        <h2>One installer, a few minutes</h2>
-        <p>Setup brings ReShade, every official effect and a set of presets. Depth estimation and DLSS5 are there if you want them.</p>
-        <ol>
-          {steps.map((step) => <li>{step}</li>)}
-        </ol>
-        <DownloadButton />
-        <a href="/docs/">Read the install guide</a>
-      </div>
-      <Image src={setup} sizes="(max-width: 900px) 100vw, 55vw" alt="Setup's add-ons page" class="shot" />
+    <section class="closing">
+      <Image src={logo} widths={[360, 720]} sizes="360px" alt="" class="closing-logo" />
+      <h2>Free and open source</h2>
+      <DownloadButton>
+        <a class="button button-secondary" href={links.github}><GithubIcon aria-hidden="true" />View on GitHub</a>
+      </DownloadButton>
     </section>
   </main>
 </Base>
 
 <style>
-  /* The picture stays clear of text. The headline sits under it. */
-  .stage {
-    position: relative;
-    height: clamp(320px, 55svh, 640px);
-  }
-
-  .banner {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-  /* Fades the picture into the page above the headline. */
-  .stage::after {
-    content: '';
-    position: absolute;
-    inset: auto 0 0;
-    height: 35%;
-    background: linear-gradient(to bottom, transparent, var(--night));
-  }
-
-  .lede {
+  .videos {
     display: grid;
-    gap: 24px;
+    grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+    gap: 48px clamp(32px, 5vw, 64px);
+    align-items: end;
     width: var(--page);
-    margin: clamp(28px, 4vw, 44px) auto 0;
+    margin: clamp(96px, 13vw, 180px) auto 0;
   }
 
-  .lede h1 {
-    max-width: 24ch;
-    font-size: clamp(1.9rem, 3.9vw, 3.5rem);
-  }
-
-  section:not(.hero) {
-    width: var(--page);
-    margin: clamp(96px, 13vw, 160px) auto 0;
-  }
-
-  .games,
-  .menu,
-  .videos,
-  .install {
+  .videos-text {
     display: grid;
-    grid-template-columns: minmax(0, 5fr) minmax(0, 8fr);
-    gap: clamp(32px, 5vw, 64px);
-    align-items: center;
-  }
-
-  .games-text,
-  .menu-text,
-  .videos-text,
-  .install-text {
-    display: grid;
-    gap: 20px;
-    justify-items: start;
-    max-width: 42ch;
-  }
-
-  .menu-text ul {
-    display: grid;
-    gap: 8px;
-    margin: 0;
-    padding-left: 1.2em;
-  }
-
-  .menu-text li::marker {
-    color: var(--accent);
-  }
-
-  .install ol {
-    display: grid;
-    gap: 10px;
-    margin: 0;
-    padding-left: 1.4em;
-  }
-
-  .install li::marker {
-    color: var(--accent);
-    font-weight: 700;
+    gap: 16px;
+    align-self: center;
+    max-width: 30ch;
   }
 
   .video-grid {
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 32px 24px;
     margin: 0;
     padding: 0;
@@ -193,10 +92,16 @@ const [featured, ...more] = videos;
     text-decoration: none;
   }
 
-  .video .shot {
+  .thumb {
+    width: 100%;
     aspect-ratio: 16 / 9;
     object-fit: cover;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    transition:
+      transform 0.35s var(--ease-out),
+      border-color 0.2s;
   }
 
   .video-title {
@@ -204,8 +109,8 @@ const [featured, ...more] = videos;
     line-height: 1.35;
   }
 
-  .videos > .video .video-title {
-    font-size: 1.25rem;
+  .featured .video-title {
+    font-size: 1.3rem;
     font-stretch: 112%;
   }
 
@@ -217,22 +122,54 @@ const [featured, ...more] = videos;
     color: var(--accent);
   }
 
-  .video:hover .shot {
+  .video:hover .thumb {
     border-color: var(--line-strong);
+    transform: translateY(-3px);
   }
 
-  .shot {
-    width: 100%;
-    border-radius: var(--radius);
-    border: 1px solid var(--line);
+  .closing {
+    display: grid;
+    justify-items: center;
+    gap: 18px;
+    width: var(--page);
+    margin: clamp(120px, 16vw, 220px) auto 0;
+    text-align: center;
+  }
+
+  .closing-logo {
+    width: min(320px, 70vw);
+    margin-bottom: 12px;
+  }
+
+  .closing :global(.download) {
+    justify-content: center;
+    margin-top: 10px;
+  }
+
+  /* The version and size go on their own line, under both buttons. */
+  .closing :global(.download > .dim) {
+    flex-basis: 100%;
+  }
+
+  .closing .button svg {
+    width: 20px;
+    height: 20px;
+    margin-right: 10px;
   }
 
   @media (max-width: 900px) {
-    .games,
-    .menu,
-    .videos,
-    .install {
+    .videos {
       grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .thumb {
+      transition: none;
+    }
+
+    .video:hover .thumb {
+      transform: none;
     }
   }
 </style>

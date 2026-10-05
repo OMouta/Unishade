@@ -15,7 +15,7 @@ import MenuIcon from '../icons/menu.svg';
 interface Props {
   title: string;
   description: string;
-  // The home page lays its navigation over the picture.
+  // The home page lays its navigation over the hero.
   overlay?: boolean;
   // Keeps the page out of search results, like the 404 page, which Cloudflare shows at any address without a page.
   noindex?: boolean;
@@ -26,7 +26,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
 
 // Small icons for browser tabs and home screens. The .ico stays for older browsers.
 const favicon = await getImage({ src: appIcon, width: 32, height: 32, format: 'png', layout: 'none' });
-const touchIcon = await getImage({ src: appIcon, width: 180, height: 180, format: 'png', background: '#0f1024', layout: 'none' });
+const touchIcon = await getImage({ src: appIcon, width: 180, height: 180, format: 'png', background: '#0b0c1c', layout: 'none' });
 // The picture link previews show, cropped to their 1.91:1. The banner is 600px tall, and images aren't enlarged.
 const preview = await getImage({ src: banner, width: 1146, height: 600, fit: 'cover', format: 'jpg', quality: 80, layout: 'none' });
 ---
@@ -39,7 +39,7 @@ const preview = await getImage({ src: banner, width: 1146, height: 600, fit: 'co
     <title>{title}</title>
     <meta name="description" content={description} />
     {noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={canonical} />}
-    <meta name="theme-color" content="#0f1024" />
+    <meta name="theme-color" content="#0b0c1c" />
     <Font cssVariable="--font-archivo" preload />
     <link rel="icon" href={icon} sizes="48x48" />
     <link rel="icon" href={favicon.src} type="image/png" sizes="32x32" />
@@ -161,24 +161,36 @@ const preview = await getImage({ src: banner, width: 1146, height: 600, fit: 'co
     gap: 24px;
     height: var(--nav-height);
     padding: 0 calc((100% - var(--page)) / 2);
-    transition: background-color 0.2s, box-shadow 0.2s;
+    view-transition-name: nav;
+    transition:
+      background-color 0.25s,
+      box-shadow 0.25s;
+  }
+
+  /* The spectrum along the top of the window, like Unishade's own windows. */
+  .nav::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto;
+    height: 2px;
+    background: linear-gradient(90deg, var(--spectrum));
+  }
+
+  .nav.scrolled {
+    box-shadow: 0 1px 0 var(--line);
+    background-color: rgb(11 12 28 / 0.82);
+    backdrop-filter: blur(18px) saturate(1.4);
   }
 
   .nav.overlay {
     position: fixed;
     inset: 0 0 auto;
-    background-image: linear-gradient(to bottom, rgb(15 16 36 / 0.7), transparent);
-  }
-
-  .nav.scrolled {
-    box-shadow: 0 1px 0 var(--line);
-    background-color: rgb(15 16 36 / 0.8);
-    backdrop-filter: blur(16px);
   }
 
   .nav .button {
     min-height: 40px;
     padding: 0 18px;
+    border-radius: 10px;
   }
 
   .brand {
@@ -186,9 +198,15 @@ const preview = await getImage({ src: banner, width: 1146, height: 600, fit: 'co
     align-items: center;
     gap: 10px;
     color: var(--ink);
-    font-weight: 750;
-    font-stretch: 118%;
+    font-size: 1.05rem;
+    font-weight: 780;
+    font-stretch: 125%;
+    letter-spacing: -0.01em;
     text-decoration: none;
+  }
+
+  .brand:hover {
+    color: var(--ink);
   }
 
   .brand-logo {
@@ -200,7 +218,7 @@ const preview = await getImage({ src: banner, width: 1146, height: 600, fit: 'co
   nav ul {
     display: flex;
     align-items: center;
-    gap: 26px;
+    gap: 28px;
   }
 
   nav ul {
@@ -218,7 +236,12 @@ const preview = await getImage({ src: banner, width: 1146, height: 600, fit: 'co
     align-items: center;
     gap: 8px;
     color: var(--ink);
+    font-weight: 520;
     text-decoration: none;
+  }
+
+  nav a:not(.button):hover {
+    color: var(--accent);
   }
 
   nav svg {
@@ -248,12 +271,8 @@ const preview = await getImage({ src: banner, width: 1146, height: 600, fit: 'co
     border-color: var(--haze);
   }
 
-  nav a:not(.button):hover {
-    color: var(--accent);
-  }
-
   .footer {
-    margin-top: clamp(80px, 12vw, 140px);
+    margin-top: clamp(96px, 14vw, 180px);
     border-top: 1px solid var(--line);
   }
 
@@ -263,15 +282,15 @@ const preview = await getImage({ src: banner, width: 1146, height: 600, fit: 'co
     gap: 48px clamp(32px, 6vw, 96px);
     width: var(--page);
     margin: 0 auto;
-    padding: 56px 0 40px;
+    padding: 64px 0 40px;
   }
 
   .footer-about {
     display: grid;
-    gap: 14px;
+    gap: 16px;
     align-content: start;
     justify-items: start;
-    max-width: 30ch;
+    max-width: 32ch;
   }
 
   .footer-links {
@@ -317,7 +336,7 @@ const preview = await getImage({ src: banner, width: 1146, height: 600, fit: 'co
     font-size: 0.9rem;
   }
 
-  @media (max-width: 780px) {
+  @media (max-width: 800px) {
     nav {
       gap: 12px;
     }
@@ -335,12 +354,12 @@ const preview = await getImage({ src: banner, width: 1146, height: 600, fit: 'co
       flex-direction: column;
       align-items: stretch;
       gap: 2px;
-      min-width: 200px;
+      min-width: 210px;
       padding: 8px;
       border: 1px solid var(--line);
       border-radius: var(--radius);
       background: var(--night-raised);
-      box-shadow: 0 16px 40px rgb(0 0 0 / 0.4);
+      box-shadow: 0 20px 50px rgb(0 0 0 / 0.5);
     }
 
     .menu-open ul {
@@ -354,7 +373,7 @@ const preview = await getImage({ src: banner, width: 1146, height: 600, fit: 'co
     }
 
     nav ul a:not(.button):hover {
-      background: var(--night);
+      background: var(--night-high);
     }
 
     .footer-inner {
