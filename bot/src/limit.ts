@@ -1,6 +1,6 @@
 import { PermissionFlagsBits, type GuildMember } from "discord.js";
 import { hasFlag } from "./members.ts";
-import { answersToday } from "./usage.ts";
+import { usedToday } from "./usage.ts";
 
 const roleIds = (list: string | undefined) => list?.split(",").map((id) => id.trim()).filter(Boolean) ?? [];
 // Role IDs separated by commas. The team, like admins, has no limit, and tiers 1 and 2 have higher limits. All three
@@ -36,13 +36,16 @@ const warned = new Set<string>();
 
 // "answer" while the person is under their limits. Over one, a reply saying which the first time, and "ignore" after
 // that, so someone who keeps going gets one reply and not one per message. The day is counted in answers, from the
-// usage records, so it survives a restart and a failed answer doesn't use one up.
-export function limit(userId: string, tier: Tier, now = Date.now()): "answer" | "ignore" | { warn: string } {
+// usage records, so it survives a restart and a failed answer doesn't use one up. A question with [web] needs two left,
+// since it counts as two when the answer searches.
+export function limit(userId: string, tier: Tier, web: boolean, now = Date.now()): "answer" | "ignore" | { warn: string } {
   const { perMinute, perDay } = limits[tier];
   const times = (recent.get(userId) ?? []).filter((time) => now - time < 60_000);
   recent.set(userId, times);
+  const used = usedToday(userId);
   let warning: string | undefined;
-  if (answersToday(userId) >= perDay) warning = `You've used today's ${perDay} questions. You can ask again ${nextDay(now)}.`;
+  if (used >= perDay) warning = `You've used today's ${perDay} questions. You can ask again ${nextDay(now)}.`;
+  else if (web && used + 2 > perDay) warning = "A question with [web] counts as 2, and you have 1 left today.";
   else if (times.length >= perMinute) warning = `You can ask ${perMinute} questions a minute. Try again in a bit.`;
   if (!warning) {
     times.push(now);
@@ -58,8 +61,9 @@ export function limit(userId: string, tier: Tier, now = Date.now()): "answer" | 
 export function describeLimits(member: GuildMember, now = Date.now()): string {
   if (hasFlag("excluded", member.id)) return "The bot doesn't answer you.";
   const tier = tierOf(member);
-  if (tier === "team") return "You can ask as often as you like, in any channel.";
+  const web = "Put [web] in a question to let the bot search the web.";
+  if (tier === "team") return `You can ask as often as you like, in any channel. ${web}`;
   const { perMinute, perDay } = limits[tier];
   const where = tier === 0 && channelId ? `in <#${channelId}>` : "in any channel";
-  return `You can ask ${perMinute} questions a minute and ${perDay} a day, ${where}. You've used ${answersToday(member.id)} today, and the count resets ${nextDay(now)}.`;
+  return `You can ask ${perMinute} questions a minute and ${perDay} a day, ${where}. You've used ${usedToday(member.id)} today, and the count resets ${nextDay(now)}. ${web} When it does, the question counts as 2.`;
 }

@@ -47,7 +47,7 @@ export async function replyTo(message: Message<true>, userId: string) {
       if (Date.now() - lastUpdate < editInterval) return;
       update().catch((error) => console.error(`Could not update the reply to message ${message.id}:`, error));
     });
-    recordAnswer(userId, answered.tokens, answered.cost);
+    recordAnswer(userId, answered.tokens, answered.cost, answered.searched);
     text = answered.text;
   } catch (error) {
     console.error(`Could not answer message ${message.id}:`, error);

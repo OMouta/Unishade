@@ -3,25 +3,29 @@ import path from "node:path";
 import { apiKey } from "./answer.ts";
 import { dataDir } from "./context.ts";
 
-type Totals = { answers: number; tokens: number; cost: number };
+// Searches counts the answers that searched the web. Records from before [web] have none.
+type Totals = { answers: number; searches?: number; tokens: number; cost: number };
 
 // What the bot's answers cost, by UTC day and then by the user ID of who asked, such as
-// { "2026-10-04": { "123": { answers: 3, tokens: 9000, cost: 0.0004 } } }.
+// { "2026-10-04": { "123": { answers: 3, searches: 1, tokens: 9000, cost: 0.0074 } } }.
 const keptDays = 30;
 const file = path.join(dataDir, "usage.json");
 const days: Record<string, Record<string, Totals>> = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
 
 const dayOf = (time: number) => new Date(time).toISOString().slice(0, 10);
 const oldestKept = () => dayOf(Date.now() - (keptDays - 1) * 86_400_000);
-const none = (): Totals => ({ answers: 0, tokens: 0, cost: 0 });
+const none = (): Totals => ({ answers: 0, searches: 0, tokens: 0, cost: 0 });
 
-export function answersToday(userId: string): number {
-  return days[dayOf(Date.now())]?.[userId]?.answers ?? 0;
+// The questions someone used today, where an answer that searched the web counts as two.
+export function usedToday(userId: string): number {
+  const totals = days[dayOf(Date.now())]?.[userId];
+  return totals ? totals.answers + (totals.searches ?? 0) : 0;
 }
 
-export function recordAnswer(userId: string, tokens: number, cost: number) {
+export function recordAnswer(userId: string, tokens: number, cost: number, searched: boolean) {
   const totals = ((days[dayOf(Date.now())] ??= {})[userId] ??= none());
   totals.answers++;
+  if (searched) totals.searches = (totals.searches ?? 0) + 1;
   totals.tokens += tokens;
   totals.cost += cost;
   const oldest = oldestKept();
@@ -32,10 +36,12 @@ export function recordAnswer(userId: string, tokens: number, cost: number) {
 
 const usd = (amount: number) => (amount === 0 ? "$0" : `$${amount < 1 ? amount.toPrecision(2) : amount.toFixed(2)}`);
 const count = (amount: number) => amount.toLocaleString("en-US");
-const describe = ({ answers, tokens, cost }: Totals) => `${count(answers)} answers, ${count(tokens)} tokens, ${usd(cost)}`;
+const describe = ({ answers, searches, tokens, cost }: Totals) =>
+  `${count(answers)} answers${searches ? ` (${count(searches)} searched the web)` : ""}, ${count(tokens)} tokens, ${usd(cost)}`;
 
 function add(into: Totals, totals: Totals) {
   into.answers += totals.answers;
+  into.searches = (into.searches ?? 0) + (totals.searches ?? 0);
   into.tokens += totals.tokens;
   into.cost += totals.cost;
 }

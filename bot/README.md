@@ -1,6 +1,6 @@
 # Unishade bot (Unibot)
 
-The Discord bot for the Unishade server. Mention it and it answers anything, in English. For Unishade questions it goes by the docs and by messages the admins picked. Members can ask 3 questions a minute and 20 a day, in the channel in `CHANNEL_ID`. Members with a role in `TIER1_ROLE_IDS` can ask 4 a minute and 30 a day, and members with a role in `TIER2_ROLE_IDS` 5 a minute and 100 a day, both in any channel. Server admins and members with a role in `TEAM_ROLE_IDS` have no limit. Days are UTC. `/limits` shows anyone their own.
+The Discord bot for the Unishade server. Mention it and it answers anything, in English. For Unishade questions it goes by the docs and by messages the admins picked. Members can ask 3 questions a minute and 20 a day, in the channel in `CHANNEL_ID`. Members with a role in `TIER1_ROLE_IDS` can ask 4 a minute and 30 a day, and members with a role in `TIER2_ROLE_IDS` 5 a minute and 100 a day, both in any channel. Server admins and members with a role in `TEAM_ROLE_IDS` have no limit. Put `[web]` in a question to let the bot search the web, and an answer that searched counts as 2 questions. Days are UTC. `/limits` shows anyone their own.
 
 To have the bot answer a message that doesn't mention it, right-click the message and pick **Apps > Answer this**. Only members who can manage the server see it, and it has no limit.
 
@@ -16,7 +16,7 @@ Right-click a member and pick **Apps > Exclude from AI** to have the bot ignore 
 
 ## Usage
 
-`/usage` shows what the OpenRouter key spent today, this week and this month, what's left of its limit and of the account's credits, and how many free model requests it made today. It also counts the bot's answers today and over the last 30 days, and lists the 5 members it answered most. Only members who can manage the server see it.
+`/usage` shows what the OpenRouter key spent today, this week and this month, what's left of its limit and of the account's credits, and how many free model requests it made today. It also counts the bot's answers and web searches today and over the last 30 days, and lists the 5 members it answered most. Only members who can manage the server see it.
 
 ## Running it
 

@@ -54,7 +54,10 @@ async function download(attachment: Attachment): Promise<string> {
 // The message that mentions the bot, with the one it replies to, and apart from it the background to follow it by:
 // where it was posted, what came before, and attached files. Kept apart, the model answers the mention and not
 // whatever question is still open further up. Images are the URLs of its pictures, which the model fetches itself.
-export type Conversation = { background: string; mention: string; images: string[] };
+// Web is whether the message asks for a web search.
+export type Conversation = { background: string; mention: string; images: string[]; web: boolean };
+
+export const asksForWeb = (message: Message) => /\[web\]/i.test(message.content);
 
 export async function conversation(message: Message<true>): Promise<Conversation> {
   const { channel } = message;
@@ -96,5 +99,6 @@ export async function conversation(message: Message<true>): Promise<Conversation
       .flatMap((each) => (each ? [...each.attachments.filter(isImage).values()] : []))
       .slice(0, maxImages)
       .map((attachment) => attachment.url),
+    web: asksForWeb(message),
   };
 }
