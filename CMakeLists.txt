@@ -168,6 +168,12 @@ set_target_properties(installer PROPERTIES
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(log_tests tests/log_tests.cpp src/log.cpp)
+    target_compile_definitions(log_tests PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_VERSION="${PROJECT_VERSION}")
+    target_compile_options(log_tests PRIVATE /W4 /permissive- /EHsc)
+    add_test(NAME log_tests COMMAND log_tests)
+    set_tests_properties(log_tests PROPERTIES TIMEOUT 45)
+
     add_executable(frame_statistics_tests tests/frame_statistics_tests.cpp)
     target_compile_options(frame_statistics_tests PRIVATE /W4 /permissive- /EHsc)
     add_test(NAME frame_statistics_tests COMMAND frame_statistics_tests)
