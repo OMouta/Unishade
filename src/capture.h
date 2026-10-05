@@ -22,5 +22,8 @@ void StartCapture(HWND target);
 // Ends capture, releases input, and clears the target.
 void StopCapture();
 
+// Slows capture while the overlay is hidden. Older Windows versions pause it until the overlay shows again.
+void SetCaptureIdle(bool idle);
+
 // Copies the newest captured frame into the overlay swapchain, creating or resizing it as needed.
 void PresentLatestFrame();

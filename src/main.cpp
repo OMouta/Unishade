@@ -399,6 +399,7 @@ int Run()
         {
             try
             {
+                SetCaptureIdle(!g.overlayVisible);
                 ShowFrames();
             }
             catch (const winrt::hresult_error& e)

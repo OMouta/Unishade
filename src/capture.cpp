@@ -25,6 +25,7 @@ namespace
 constexpr wchar_t kSessionClass[] = L"Windows.Graphics.Capture.GraphicsCaptureSession";
 // Set when Windows does not allow capture without its border, so capture keeps it instead of failing to start.
 std::atomic<bool> borderRequired = false;
+std::atomic<bool> captureIdle = false;
 
 // Draws a texture over the whole target with one triangle. tonemap does it for an HDR frame.
 constexpr char kScaleShader[] = R"(
@@ -150,6 +151,22 @@ void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& size, ID3D11T
     g.context->PSSetShaderResources(0, 1, views);
     g.context->OMSetRenderTargets(0, nullptr, nullptr);
 }
+void CloseCapture()
+{
+    g.frameArrived.revoke();
+    {
+        const std::lock_guard lock(g.frameMutex);
+        g.takingFrames = false;
+        g.arrivedFrame = nullptr;
+    }
+    g.latestFrame = nullptr;
+    if (g.session)
+        g.session.Close();
+    g.session = nullptr;
+    if (g.pool)
+        g.pool.Close();
+    g.pool = nullptr;
+}
 } // namespace
 
 void CreateDevice()
@@ -222,6 +239,7 @@ void RequestBorderlessCapture()
 
 void StartCapture(HWND target)
 {
+    const bool resumed = captureIdle.exchange(false);
     auto interop = winrt::get_activation_factory<GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
     GraphicsCaptureItem item{ nullptr };
     winrt::check_hresult(interop->CreateForWindow(target, winrt::guid_of<GraphicsCaptureItem>(), winrt::put_abi(item)));
@@ -252,7 +270,8 @@ void StartCapture(HWND target)
         {
             // The pool was closed while this ran.
         }
-        SetEvent(g.frameEvent);
+        if (!captureIdle)
+            SetEvent(g.frameEvent);
     });
     g.session = g.pool.CreateCaptureSession(item);
 
@@ -267,31 +286,41 @@ void StartCapture(HWND target)
 
     g.session.StartCapture();
     g.target = target;
-    Log(LogLevel::Info, L"Capturing %ls (%dx%d%ls)", g.activeGame->name.c_str(), g.poolSize.Width, g.poolSize.Height,
-        g.hdrWhiteLevel ? L", HDR" : L"");
-    ShowStartHint();
+    if (!resumed)
+    {
+        Log(LogLevel::Info, L"Capturing %ls (%dx%d%ls)", g.activeGame->name.c_str(), g.poolSize.Width, g.poolSize.Height,
+            g.hdrWhiteLevel ? L", HDR" : L"");
+        ShowStartHint();
+    }
 }
 
 void StopCapture()
 {
     SetEditMode(false);
-    g.frameArrived.revoke();
-    {
-        const std::lock_guard lock(g.frameMutex);
-        g.takingFrames = false;
-        g.arrivedFrame = nullptr;
-    }
-    g.latestFrame = nullptr;
-    if (g.session)
-        g.session.Close();
-    g.session = nullptr;
-    if (g.pool)
-        g.pool.Close();
-    g.pool = nullptr;
+    CloseCapture();
+    captureIdle = false;
     g.target = nullptr;
     g.activeGame.reset();
     SetPerformanceGame({});
     g.frameStatistics.Reset(FrameStatistics::Clock::now(), g.capturedFrames.load(std::memory_order_relaxed));
+}
+
+void SetCaptureIdle(bool idle)
+{
+    if (!g.target || captureIdle == idle)
+        return;
+    if (ApiInformation::IsPropertyPresent(kSessionClass, L"MinUpdateInterval"))
+    {
+        captureIdle = idle;
+        g.session.MinUpdateInterval(std::chrono::milliseconds(idle ? 200 : 1));
+    }
+    else if (idle)
+    {
+        captureIdle = true;
+        CloseCapture();
+    }
+    else
+        StartCapture(g.target);
 }
 
 void PresentLatestFrame()
