@@ -24,7 +24,7 @@ What those sites do with a request is up to their own privacy policies.
 
 While Unishade for Windows runs on a game and Discord is open, it tells the Discord app on your computer the game's name and your preset's name. Discord shows them on your profile, with the game's icon, to the people who can see your activity. What Discord does with them is up to [Discord's privacy policy](https://discord.com/privacy).
 
-This is on until you turn off **Show on Discord** in the launcher's **Discord** tab. Discord clears it when you do, or when Unishade closes.
+This is on until you turn off **Show on Discord** under **Discord** in the Unishade window. Discord clears it when you do, or when Unishade closes.
 
 ## This website
 

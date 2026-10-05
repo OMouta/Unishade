@@ -36,7 +36,7 @@ const [featured, ...more] = videos;
         <p class="dim">Works with games in windowed or borderless mode.</p>
         <a href="/docs/games/">More about games</a>
       </div>
-      <Image src={launcher} sizes="(max-width: 900px) 100vw, 620px" alt="The Unishade window with three saved games" class="shot" />
+      <Image src={launcher} sizes="(max-width: 900px) 100vw, 55vw" alt="The Unishade window with three saved games" class="shot" />
     </section>
 
     <section class="menu">
@@ -140,11 +140,6 @@ const [featured, ...more] = videos;
     grid-template-columns: minmax(0, 5fr) minmax(0, 8fr);
     gap: clamp(32px, 5vw, 64px);
     align-items: center;
-  }
-
-  /* The launcher is a small window, so it gets less room than the text. */
-  .games {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 620px);
   }
 
   .games-text,
