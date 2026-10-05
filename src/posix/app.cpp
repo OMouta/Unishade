@@ -904,6 +904,8 @@ void App::StepPreset(int step)
 
 void App::RequestScreenshot(bool beforeAfter)
 {
+    if (screenshots.size() >= 2)
+        return;
     screenshotRequested = true;
     beforeAfterRequested = beforeAfter;
 }
@@ -921,6 +923,8 @@ fx::Runtime::Source App::Source() const
 void App::SaveScreenshot()
 {
     screenshotRequested = false;
+    if (screenshots.size() >= 2)
+        return;
     std::vector<uint8_t> after = runtime.ReadOutput();
     if (after.empty())
         return;
