@@ -4,6 +4,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "ui.h"
 #include "log.h"
+#include "image.h"
 #include "menu_layout.h"
 #include "theme.h"
 #include "ui/kit.h"
@@ -25,6 +26,7 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <future>
 #include <initializer_list>
 #include <limits>
 #include <map>
@@ -61,21 +63,36 @@ constexpr size_t kMaxPictures = 192;
 constexpr uint32_t kDescriptorPoolSize = kMaxPictures + 64;
 constexpr char kLogoPicture[] = "logo";
 
+struct DecodedPicture
+{
+    image::Memory memory;
+    std::vector<uint8_t> rgba;
+    ImU32 tint = 0;
+};
+
 struct GpuPicture
 {
     GpuImage image;
+    GpuBuffer upload; // kept until this window's frame fence completes
     VkDescriptorSet set = VK_NULL_HANDLE;
+    std::future<DecodedPicture> decoding;
+    bool requested = false;
     bool used = false; // drawn since ForgetPictures last looked
     ImU32 tint = 0;    // the average color of the pixels that show
 };
 
 // The logo, and folders' logos, of each window's Dear ImGui context, by folder and size in pixels: the launcher draws
 // a game's icon at more than one size. A folder without a logo keeps an empty entry until it is looked for again.
-std::map<ImGuiContext*, std::map<std::pair<std::string, int>, GpuPicture>> pictureSets;
+struct PictureSet
+{
+    std::map<std::pair<std::string, int>, GpuPicture> pictures;
+    VkCommandBuffer commands = VK_NULL_HANDLE;
+};
+std::map<ImGuiContext*, PictureSet> pictureSets;
 
 std::map<std::pair<std::string, int>, GpuPicture>& Pictures()
 {
-    return pictureSets[ImGui::GetCurrentContext()];
+    return pictureSets[ImGui::GetCurrentContext()].pictures;
 }
 
 launcher::Level LevelOf(LogLevel level)
@@ -91,6 +108,7 @@ void DestroyPicture(GpuPicture& picture)
 {
     if (picture.set)
         ImGui_ImplVulkan_RemoveTexture(picture.set);
+    gpu.DestroyBuffer(picture.upload);
     gpu.DestroyImage(picture.image);
     picture = {};
 }
@@ -126,52 +144,83 @@ ImTextureID PictureTexture(const std::string& key, float drawn)
 {
     const int size = static_cast<int>(std::round(drawn * ImGui::GetIO().DisplayFramebufferScale.x));
     auto& pictures = Pictures();
-    const auto [entry, added] = pictures.try_emplace({ key, size });
+    const auto entry = pictures.try_emplace({ key, size }).first;
     GpuPicture& picture = entry->second;
     picture.used = true;
-    if (!added || size <= 0)
+    if (picture.set || size <= 0 || size > 1024)
         return (ImTextureID)picture.set;
     if (std::count_if(pictures.begin(), pictures.end(), [](const auto& other) { return other.second.set != VK_NULL_HANDLE; }) >=
         std::ptrdiff_t(kMaxPictures))
         return ImTextureID_Invalid;
-    int width = 0, height = 0, channels = 0;
-    stbi_uc* pixels = key == kLogoPicture ? stbi_load_from_memory(kLogoPng, static_cast<int>(kLogoPngSize), &width, &height, &channels, 4)
-                                          : stbi_load((fs::path(key) / "logo.png").c_str(), &width, &height, &channels, 4);
-    if (!pixels)
-        return ImTextureID_Invalid;
-    const std::vector<uint8_t> rgba = Shrink(pixels, width, height, size);
-    stbi_image_free(pixels);
-    uint64_t sums[3] = {}, weight = 0;
-    for (size_t i = 0; i < rgba.size(); i += 4)
+    if (!picture.requested)
     {
-        for (int c = 0; c < 3; ++c)
-            sums[c] += uint64_t(rgba[i + c]) * rgba[i + 3];
-        weight += rgba[i + 3];
-    }
-    if (weight)
-        picture.tint = IM_COL32(sums[0] / weight, sums[1] / weight, sums[2] / weight, 255);
-    GpuBuffer upload;
-    if (gpu.CreateImage(picture.image, size, size, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) &&
-        gpu.CreateBuffer(upload, rgba.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true))
-    {
-        std::memcpy(upload.mapped, rgba.data(), rgba.size());
-        if (VkCommandBuffer commands = gpu.BeginCommands())
+        size_t pending = 0;
+        for (const auto& [context, set] : pictureSets)
+            for (const auto& [name, other] : set.pictures)
+                if (other.decoding.valid() && other.decoding.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+                    ++pending;
+        if (pending >= 2)
+            return ImTextureID_Invalid;
+        picture.requested = true;
+        try
         {
-            InitLayout(commands, picture.image);
-            VkBufferImageCopy copy{};
-            copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-            copy.imageExtent = { uint32_t(size), uint32_t(size), 1 };
-            vkCmdCopyBufferToImage(commands, upload.buffer, picture.image.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
-            FullBarrier(commands);
-            if (gpu.SubmitAndWait(commands))
-                picture.set = ImGui_ImplVulkan_AddTexture(picture.image.view, VK_IMAGE_LAYOUT_GENERAL);
-            else
-                vkDeviceWaitIdle(gpu.device); // commands that failed to finish may still use the image and buffer
+            picture.decoding = std::async(std::launch::async, [key, size] {
+                DecodedPicture result;
+                image::Pixels pixels = key == kLogoPicture
+                    ? image::Decode(std::string_view(reinterpret_cast<const char*>(kLogoPng), kLogoPngSize))
+                    : image::Read(fs::path(key) / "logo.png");
+                if (!pixels.data || !result.memory.Resize(size_t(size) * size * 4))
+                    return result;
+                result.rgba = Shrink(static_cast<const uint8_t*>(pixels.data.get()), pixels.width, pixels.height, size);
+                uint64_t sums[3] = {}, weight = 0;
+                for (size_t i = 0; i < result.rgba.size(); i += 4)
+                {
+                    for (int c = 0; c < 3; ++c)
+                        sums[c] += uint64_t(result.rgba[i + c]) * result.rgba[i + 3];
+                    weight += result.rgba[i + 3];
+                }
+                if (weight)
+                    result.tint = IM_COL32(sums[0] / weight, sums[1] / weight, sums[2] / weight, 255);
+                return result;
+            });
+        }
+        catch (const std::exception&)
+        {
+            return ImTextureID_Invalid;
         }
     }
-    gpu.DestroyBuffer(upload);
-    if (!picture.set)
+    if (!picture.decoding.valid() || picture.decoding.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        return ImTextureID_Invalid;
+    DecodedPicture decoded;
+    try
+    {
+        decoded = picture.decoding.get();
+    }
+    catch (const std::exception&)
+    {
+        return ImTextureID_Invalid;
+    }
+    const VkCommandBuffer commands = pictureSets[ImGui::GetCurrentContext()].commands;
+    if (decoded.rgba.empty() || !commands)
+        return ImTextureID_Invalid;
+    picture.tint = decoded.tint;
+    if (gpu.CreateImage(picture.image, size, size, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) &&
+        gpu.CreateBuffer(picture.upload, decoded.rgba.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true))
+    {
+        std::memcpy(picture.upload.mapped, decoded.rgba.data(), decoded.rgba.size());
+        InitLayout(commands, picture.image);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        copy.imageExtent = { uint32_t(size), uint32_t(size), 1 };
+        vkCmdCopyBufferToImage(commands, picture.upload.buffer, picture.image.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+        FullBarrier(commands);
+        picture.set = ImGui_ImplVulkan_AddTexture(picture.image.view, VK_IMAGE_LAYOUT_GENERAL);
+    }
+    else
+    {
+        gpu.DestroyBuffer(picture.upload);
         gpu.DestroyImage(picture.image);
+    }
     return (ImTextureID)picture.set;
 }
 
@@ -180,17 +229,18 @@ ImTextureID PictureTexture(const std::string& key, float drawn)
 void ForgetPictures(const std::function<bool(const std::string& folder)>& keep)
 {
     auto& pictures = Pictures();
-    bool waited = false;
     for (auto entry = pictures.begin(); entry != pictures.end();)
     {
         const std::string& folder = entry->first.first;
-        if (std::exchange(entry->second.used, false) && entry->second.set && (folder == kLogoPicture || keep(folder)))
+        GpuPicture& picture = entry->second;
+        const bool used = std::exchange(picture.used, false);
+        const bool pending = picture.decoding.valid() && picture.decoding.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
+        if (picture.upload.buffer || pending || (used && picture.decoding.valid()) ||
+            (used && picture.set && (folder == kLogoPicture || keep(folder))))
         {
             ++entry;
             continue;
         }
-        if (entry->second.set && !std::exchange(waited, true))
-            vkDeviceWaitIdle(gpu.device);
         DestroyPicture(entry->second);
         entry = pictures.erase(entry);
     }
@@ -2059,7 +2109,7 @@ void ShutdownUi(UiWindow& ui)
         return;
     ImGui::SetCurrentContext(ui.context);
     vkDeviceWaitIdle(gpu.device);
-    for (auto& [key, picture] : pictureSets[ui.context])
+    for (auto& [key, picture] : pictureSets[ui.context].pictures)
         DestroyPicture(picture);
     pictureSets.erase(ui.context);
     kit::ForgetContext(ui.context);
@@ -2092,6 +2142,11 @@ void SetWindowIcon([[maybe_unused]] GLFWwindow* window)
 void BeginUi(UiWindow& ui)
 {
     ImGui::SetCurrentContext(ui.context);
+    PictureSet& pictures = pictureSets[ui.context];
+    pictures.commands = ui.surface.commands;
+    // BeginFrame completed this window's previous submission before its upload buffers are released.
+    for (auto& [key, picture] : pictures.pictures)
+        gpu.DestroyBuffer(picture.upload);
     // Every frame sizes its text and its layout by the scale, so a new one needs nothing else.
     if (std::exchange(ui.rescale, false))
         ui.scale = WindowScale(ui.window);
@@ -2111,6 +2166,7 @@ void EndUi(UiWindow& ui)
     ui.surface.BeginRenderPass();
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), ui.surface.commands);
     ui.surface.EndFrame();
+    pictureSets[ui.context].commands = VK_NULL_HANDLE;
 }
 
 void DrawLauncher(App& app)
