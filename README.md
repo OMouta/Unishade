@@ -12,6 +12,8 @@
 
 Unishade is an open-source project for universal post-processing without injection. It runs outside the game process and is built for games where traditional ReShade injection isn't available or desirable.
 
+> Note: This project is not affiliated with the unrelated united-debug/unishade repository that has been reported as malicious. Unishade is developed independently, is fully open source, and its source code and releases are available here at OMouta/Unishade. Only download Unishade from unishade.me or this GitHub repository.
+
 ## Getting started
 
 1. [Download Setup](https://unishade.me/download/) and run it.
