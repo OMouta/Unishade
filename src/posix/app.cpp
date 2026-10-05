@@ -151,9 +151,8 @@ void App::Run()
             lastAutoSave = Now();
         }
 
-        if (!glfwGetWindowAttrib(launcher.window, GLFW_ICONIFIED) &&
-            (glfwGetWindowAttrib(launcher.window, GLFW_FOCUSED) || glfwGetWindowAttrib(launcher.window, GLFW_HOVERED) ||
-             Now() - lastLauncherFrame > 0.25))
+        const bool launcherActive = glfwGetWindowAttrib(launcher.window, GLFW_FOCUSED) || glfwGetWindowAttrib(launcher.window, GLFW_HOVERED);
+        if (!glfwGetWindowAttrib(launcher.window, GLFW_ICONIFIED) && Now() - lastLauncherFrame >= (launcherActive ? 1.0 / 60 : 0.25))
             RenderLauncher();
     }
 }
@@ -499,7 +498,7 @@ void App::UpdateInput()
 void App::RenderLauncher()
 {
     Surface& surface = launcher.surface;
-    if (!surface.BeginFrame())
+    if (!surface.BeginFrame(false))
         return;
     lastLauncherFrame = Now();
     VkClearColorValue background{};

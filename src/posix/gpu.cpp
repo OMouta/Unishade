@@ -776,7 +776,7 @@ void Surface::Destroy()
     surface = VK_NULL_HANDLE;
 }
 
-bool Surface::BeginFrame()
+bool Surface::BeginFrame(bool wait)
 {
     if (gpu.lost)
     {
@@ -788,7 +788,7 @@ bool Surface::BeginFrame()
     }
     if (!fence && !CreateSync())
         return false;
-    const VkResult waited = vkWaitForFences(gpu.device, 1, &fence, VK_TRUE, kFenceTimeout);
+    const VkResult waited = vkWaitForFences(gpu.device, 1, &fence, VK_TRUE, wait ? kFenceTimeout : 0);
     if (waited == VK_ERROR_DEVICE_LOST)
         gpu.ReportLost();
     if (waited != VK_SUCCESS)
@@ -805,7 +805,7 @@ bool Surface::BeginFrame()
             return false;
     }
 
-    VkResult result = vkAcquireNextImageKHR(gpu.device, swapchain, kAcquireTimeout, acquired, VK_NULL_HANDLE, &index);
+    VkResult result = vkAcquireNextImageKHR(gpu.device, swapchain, wait ? kAcquireTimeout : 0, acquired, VK_NULL_HANDLE, &index);
     if (result == VK_ERROR_OUT_OF_DATE_KHR)
     {
         needsRecreate = true;
