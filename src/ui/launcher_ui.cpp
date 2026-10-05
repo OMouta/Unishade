@@ -1250,7 +1250,8 @@ void PickerDialog(const Model& model, Host& host)
     ImGui::SetCursorScreenPos(origin + ImVec2(0, y));
     ImGui::Dummy(ImVec2(width, 0));
 
-    const bool outside = ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+    const bool outside = ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                         !ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
     if (chosen)
         host.ChooseWindow(*chosen);
     else if (cancel || outside || ImGui::IsKeyPressed(ImGuiKey_Escape))

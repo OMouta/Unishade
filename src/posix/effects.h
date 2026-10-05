@@ -187,7 +187,8 @@ public:
     // Finds the effects again and compiles them on worker threads, starting at the next Update, since the frame
     // being recorded may still use the current ones. Effects the current preset uses come first.
     void Reload() { reloadRequested = true; }
-    bool Loading() const { return loaderRunning || reloadRequested || resizePending || (preparingEffects && !gpu.lost); }
+    // Includes the loader's final results until Update takes them and prepares the enabled effects.
+    bool Loading() const { return loaderRunning || summaryPending || reloadRequested || resizePending || (preparingEffects && !gpu.lost); }
     // How many effect files are compiled out of how many were found.
     std::pair<size_t, size_t> LoadingProgress() const { return { loadedCount.load(), totalCount.load() }; }
     // Takes in compiled effects and prepares the ones that are on. Call once per frame on the main thread.

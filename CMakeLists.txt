@@ -46,6 +46,18 @@ if(NOT EXISTS "${MINIZ_DIR}/miniz.c")
     file(ARCHIVE_EXTRACT INPUT "${CMAKE_BINARY_DIR}/miniz-3.1.2.zip" DESTINATION "${MINIZ_DIR}" PATTERNS miniz.c miniz.h)
 endif()
 
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(launcher_ui_tests tests/launcher_ui_tests.cpp src/ui/launcher_ui.cpp src/ui/kit.cpp
+        "${IMGUI_DIR}/imgui.cpp" "${IMGUI_DIR}/imgui_draw.cpp" "${IMGUI_DIR}/imgui_tables.cpp" "${IMGUI_DIR}/imgui_widgets.cpp")
+    target_include_directories(launcher_ui_tests PRIVATE src "${IMGUI_DIR}")
+    target_compile_definitions(launcher_ui_tests PRIVATE IMGUI_USE_WCHAR32)
+    if(WIN32)
+        target_compile_definitions(launcher_ui_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    endif()
+    add_test(NAME launcher_ui_tests COMMAND launcher_ui_tests)
+endif()
+
 # macOS and Linux have their own host in src/posix. ReShade itself only runs on Windows, so it uses ReShade's
 # effect compiler with Vulkan instead.
 if(NOT WIN32)
@@ -166,7 +178,6 @@ set_target_properties(installer PROPERTIES
     OUTPUT_NAME "Unishade-Setup-${PROJECT_VERSION}"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/installer$<0:>")
 
-include(CTest)
 if(BUILD_TESTING)
     add_executable(log_tests tests/log_tests.cpp src/log.cpp)
     target_compile_definitions(log_tests PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_VERSION="${PROJECT_VERSION}")

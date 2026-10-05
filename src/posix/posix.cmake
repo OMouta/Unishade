@@ -264,7 +264,6 @@ else()
     target_compile_options(unishade PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
 endif()
 
-include(CTest)
 if(BUILD_TESTING)
     add_executable(ini_text_tests "${CMAKE_SOURCE_DIR}/tests/ini_text_tests.cpp")
     # GNU mode defines unix as a macro, which the test uses as a name.
