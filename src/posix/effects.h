@@ -187,7 +187,7 @@ public:
     // Finds the effects again and compiles them on worker threads, starting at the next Update, since the frame
     // being recorded may still use the current ones. Effects the current preset uses come first.
     void Reload() { reloadRequested = true; }
-    bool Loading() const { return loaderRunning || reloadRequested || resizePending; }
+    bool Loading() const { return loaderRunning || reloadRequested || resizePending || (preparingEffects && !gpu.lost); }
     // How many effect files are compiled out of how many were found.
     std::pair<size_t, size_t> LoadingProgress() const { return { loadedCount.load(), totalCount.load() }; }
     // Takes in compiled effects and prepares the ones that are on. Call once per frame on the main thread.
@@ -334,7 +334,6 @@ private:
     bool textureFilesScanned = false;
     Setup setup;
     std::vector<Setup> setups; // submitted, until the graphics card is done with them
-    bool texturesRemade = false;
     std::vector<VkFormat> mipmapWarnings;
 
     std::vector<Effect> effects;
@@ -361,6 +360,7 @@ private:
     std::atomic<uint64_t> generation = 0;
     std::atomic<bool> loaderRunning = false;
     bool reloadRequested = false;
+    bool preparingEffects = false;
     bool summaryPending = false;
     std::atomic<size_t> loadedCount = 0;
     std::atomic<size_t> totalCount = 0;

@@ -80,7 +80,7 @@ constexpr const char* kCompatibilityMacros =
 
 // A new size waits this long for the next before effects are compiled for it.
 constexpr auto kResizeDelay = std::chrono::milliseconds(250);
-// How long Update may spend preparing effects on the graphics card. Render prepares whatever is left.
+// How long Update may spend preparing effects on the graphics card, between individual effects.
 constexpr auto kPrepareBudget = std::chrono::milliseconds(8);
 // The compile cache drops the entries used longest ago beyond this.
 constexpr uintmax_t kCacheLimit = 256 * 1024 * 1024;
@@ -2215,7 +2215,6 @@ GpuImage* Runtime::Texture(const reshadefx::texture& texture, Effect& effect)
             if (&effects[user] != &effect)
                 DestroyGpu(effects[user]);
         gpu.DestroyImage(image);
-        texturesRemade = true;
     }
 
     const uint32_t levels = std::max<uint32_t>(1, desc.levels);
@@ -2233,11 +2232,11 @@ GpuImage* Runtime::Texture(const reshadefx::texture& texture, Effect& effect)
     if (shared.source.empty())
         return &image;
 
-    // Decoded before, unless the texture is made again for another use.
+    // ImagesReady decodes the source before creating or replacing the texture.
     TextureImage loaded = std::move(shared.loaded);
     shared.loaded = {};
     if (loaded.pixels.empty() && loaded.error.empty())
-        loaded = DecodeTexture(desc, FindTexture(shared.source));
+        loaded.error = "image was not prepared";
     GpuBuffer upload;
     if (!loaded.error.empty())
         Log(LogLevel::Warning, "%s: could not load %s into texture %s: %s.", effect.file.c_str(), shared.source.c_str(), texture.name.c_str(),
@@ -2715,7 +2714,10 @@ bool Runtime::ImagesReady(Effect& effect)
 void Runtime::PrepareEffects(std::chrono::steady_clock::duration budget)
 {
     if (!width || !height || resizePending || gpu.lost)
+    {
+        preparingEffects = false;
         return;
+    }
     const auto start = std::chrono::steady_clock::now();
     for (const Technique& technique : techniques)
     {
@@ -2727,6 +2729,10 @@ void Runtime::PrepareEffects(std::chrono::steady_clock::duration budget)
         CreateGpu(effect);
     }
     SubmitSetup();
+    preparingEffects = std::any_of(techniques.begin(), techniques.end(), [this](const Technique& technique) {
+        const Effect& effect = effects[technique.effect];
+        return technique.enabled && effect.compiled && !effect.gpu && !effect.gpuFailed;
+    });
 }
 
 void Runtime::DestroyGpu(Effect& effect)
@@ -2845,19 +2851,6 @@ void Runtime::Render(VkCommandBuffer commands, const Source& source, bool enable
         const Effect& effect = effects[technique.effect];
         return technique.enabled && !(input.screenshot && !technique.enabledInScreenshot) && effect.compiled && !effect.gpuFailed;
     };
-    // Every effect that runs is prepared before any pass is recorded, since preparing one can make a texture it
-    // shares again, and with it the effects that already use it.
-    for (int round = 0; round < 3; ++round)
-    {
-        texturesRemade = false;
-        for (const Technique& technique : techniques)
-            if (runs(technique) && !effects[technique.effect].gpu && ImagesReady(effects[technique.effect]))
-                CreateGpu(effects[technique.effect]);
-        if (!texturesRemade)
-            break;
-    }
-    SubmitSetup();
-
     bool colorStale = true;
     for (Technique& technique : techniques)
     {
