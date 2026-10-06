@@ -1,8 +1,21 @@
 # Unishade bot (Unibot)
 
-The Discord bot for the Unishade server. Mention it and it answers anything, in English. For Unishade questions it goes by the docs and by messages the admins picked. Members can ask 3 questions a minute and 20 a day, in the channel in `CHANNEL_ID`. Members with a role in `TIER1_ROLE_IDS` can ask 4 a minute and 30 a day, and members with a role in `TIER2_ROLE_IDS` 5 a minute and 100 a day, both in any channel. Server admins and members with a role in `TEAM_ROLE_IDS` have no limit. Put `[web]` in a question to let the bot search the web, and an answer that searched counts as 2 questions. Days are UTC. `/limits` shows anyone their own.
+The Discord bot for the Unishade server. Mention it and it answers anything, in English. For Unishade questions it goes by the docs and by messages the admins picked. Members can ask 3 questions a minute and 20 a day, in the channel in `CHANNEL_ID`. Members with a role in `TIER1_ROLE_IDS` can ask 4 a minute and 30 a day, and members with a role in `TIER2_ROLE_IDS` 5 a minute and 100 a day, both in any channel. Server admins and members with a role in `TEAM_ROLE_IDS` have no limit. Days are UTC. `/limits` shows anyone their own.
 
 To have the bot answer a message that doesn't mention it, right-click the message and pick **Apps > Answer this**. Only members who can manage the server see it, and it has no limit.
+
+The reply shows up right away with a line under it while the bot works. When it's done, the line says how long it took and which tags it used.
+
+## Tags
+
+Put these in a question to change how the bot answers it:
+
+- `[web]` lets it search the web.
+- `[rate]` has it rate an attached screenshot out of 10 and say what to change.
+- `[tldr]` has it sum up the channel or thread, reading the last 100 messages instead of 10.
+- `[think]` has it reason harder. `[think medium]` picks the level: `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Plain `[think]` is `high`, and without the tag it's `low`. Any other level gets an error reply, not an answer.
+
+`[tldr]` counts as one more question, and so does `[web]` when the bot searches.
 
 ## Context
 

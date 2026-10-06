@@ -1,10 +1,10 @@
 import { Client, Events, GatewayIntentBits, Partials, type Message } from "discord.js";
 import { commands, handleInteraction } from "./commands.ts";
 import { removeMessage } from "./context.ts";
-import { asksForWeb } from "./conversation.ts";
 import { channelId, limit, tierOf } from "./limit.ts";
 import { hasFlag } from "./members.ts";
 import { replyTo } from "./reply.ts";
+import { questionsFor, readTags } from "./tags.ts";
 
 const token = process.env.DISCORD_TOKEN;
 if (!token) throw new Error("DISCORD_TOKEN is not set");
@@ -19,9 +19,10 @@ async function handleMessage(message: Message) {
   if (!message.mentions.has(message.client.user, { ignoreEveryone: true, ignoreRoles: true })) return;
   if (hasFlag("excluded", message.author.id)) return;
 
+  const tags = readTags(message.content);
   const tier = message.member ? tierOf(message.member) : 0;
   if (tier !== "team") {
-    const verdict = limit(message.author.id, tier, asksForWeb(message));
+    const verdict = limit(message.author.id, tier, "error" in tags ? 1 : questionsFor(tags, tags.web));
     if (typeof verdict === "object") await message.reply(verdict.warn);
     if (verdict !== "answer") return;
     // Checked after the limit, so pinging the bot elsewhere over and over doesn't get a reply every time.
@@ -30,7 +31,12 @@ async function handleMessage(message: Message) {
       return;
     }
   }
-  await replyTo(message, message.author.id);
+  // After the limit too, for the same reason.
+  if ("error" in tags) {
+    await message.reply(tags.error);
+    return;
+  }
+  await replyTo(message, message.author.id, tags);
 }
 
 const client = new Client({

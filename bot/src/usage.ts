@@ -3,27 +3,29 @@ import path from "node:path";
 import { apiKey } from "./answer.ts";
 import { dataDir } from "./context.ts";
 
-// Searches counts the answers that searched the web. Records from before [web] have none.
-type Totals = { answers: number; searches?: number; tokens: number; cost: number };
+// Questions is what the answers count toward the daily limit, and searches how many of them searched the web. Records
+// from before tags have neither, and count one question per answer.
+type Totals = { answers: number; questions?: number; searches?: number; tokens: number; cost: number };
 
 // What the bot's answers cost, by UTC day and then by the user ID of who asked, such as
-// { "2026-10-04": { "123": { answers: 3, searches: 1, tokens: 9000, cost: 0.0074 } } }.
+// { "2026-10-04": { "123": { answers: 3, questions: 4, searches: 1, tokens: 9000, cost: 0.0074 } } }.
 const keptDays = 30;
 const file = path.join(dataDir, "usage.json");
 const days: Record<string, Record<string, Totals>> = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
 
 const dayOf = (time: number) => new Date(time).toISOString().slice(0, 10);
 const oldestKept = () => dayOf(Date.now() - (keptDays - 1) * 86_400_000);
-const none = (): Totals => ({ answers: 0, searches: 0, tokens: 0, cost: 0 });
+const none = (): Totals => ({ answers: 0, questions: 0, searches: 0, tokens: 0, cost: 0 });
+const questionsOf = (totals: Totals) => totals.questions ?? totals.answers;
 
-// The questions someone used today, where an answer that searched the web counts as two.
 export function usedToday(userId: string): number {
   const totals = days[dayOf(Date.now())]?.[userId];
-  return totals ? totals.answers + (totals.searches ?? 0) : 0;
+  return totals ? questionsOf(totals) : 0;
 }
 
-export function recordAnswer(userId: string, tokens: number, cost: number, searched: boolean) {
+export function recordAnswer(userId: string, { tokens, cost, searched }: { tokens: number; cost: number; searched: boolean }, questions: number) {
   const totals = ((days[dayOf(Date.now())] ??= {})[userId] ??= none());
+  totals.questions = questionsOf(totals) + questions;
   totals.answers++;
   if (searched) totals.searches = (totals.searches ?? 0) + 1;
   totals.tokens += tokens;

@@ -11,6 +11,7 @@ import { removeMessage, saveMessage, savedMessages } from "./context.ts";
 import { describeLimits } from "./limit.ts";
 import { setFlag, type Flag } from "./members.ts";
 import { replyTo } from "./reply.ts";
+import { readTags } from "./tags.ts";
 import { usageReport } from "./usage.ts";
 
 const answerThis = "Answer this";
@@ -96,10 +97,15 @@ export async function handleInteraction(interaction: Interaction) {
 
   const message = interaction.targetMessage;
   if (interaction.commandName === answerThis) {
+    const tags = readTags(message.content);
+    if ("error" in tags) {
+      await interaction.reply(ephemeral(tags.error));
+      return;
+    }
     // The answer goes in a reply to the message. Until it's posted, only whoever picked the command sees the bot
     // thinking. Like the team's questions, these have no limit.
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    await replyTo(message, interaction.user.id);
+    await replyTo(message, interaction.user.id, tags);
     await interaction.deleteReply();
     return;
   }

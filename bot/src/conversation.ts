@@ -1,7 +1,10 @@
 import { MessageReferenceType, type Attachment, type Message } from "discord.js";
+import type { Tags } from "./tags.ts";
 
-// How many messages before the mention are sent along, so a question asked over several messages reads as one.
+// How many messages before the mention are sent along, so a question asked over several messages reads as one. [tldr]
+// reads the most Discord sends at once, to have more to sum up.
 const historyLength = 10;
+const tldrHistoryLength = 100;
 // Long earlier messages are cut, so ten of them can't cost more than the question itself.
 const maxEarlierLength = 400;
 // Text files, such as Unishade.log, are read from the newest messages first, this many in all.
@@ -35,7 +38,9 @@ const isImage = (attachment: Attachment) => /^image\/(png|jpeg|webp)$/.test(atta
 
 // A message without text, such as another bot's post, is read from its embeds. Attachments are listed by name.
 function textOf(message: Message<true>): string {
-  const text = message.cleanContent || message.embeds.flatMap((embed) => [embed.title, embed.description]).filter(Boolean).join("\n");
+  let text = message.cleanContent || message.embeds.flatMap((embed) => [embed.title, embed.description]).filter(Boolean).join("\n");
+  // The line under the bot's own replies, such as "Done in 12s", isn't part of the answer, and the model would copy it.
+  if (message.author.id === message.client.user.id) text = text.replace(/(^|\n)-# [^\n]*$/, "");
   return [text, ...message.attachments.map((attachment) => `[file: ${attachment.name}]`)].filter(Boolean).join(" ");
 }
 
@@ -54,15 +59,13 @@ async function download(attachment: Attachment): Promise<string> {
 // The message that mentions the bot, with the one it replies to, and apart from it the background to follow it by:
 // where it was posted, what came before, and attached files. Kept apart, the model answers the mention and not
 // whatever question is still open further up. Images are the URLs of its pictures, which the model fetches itself.
-// Web is whether the message asks for a web search.
-export type Conversation = { background: string; mention: string; images: string[]; web: boolean };
+// Tags are the ones in the message.
+export type Conversation = { background: string; mention: string; images: string[]; tags: Tags };
 
-export const asksForWeb = (message: Message) => /\[web\]/i.test(message.content);
-
-export async function conversation(message: Message<true>): Promise<Conversation> {
+export async function conversation(message: Message<true>, tags: Tags): Promise<Conversation> {
   const { channel } = message;
   const [earlier, replied, starter] = await Promise.all([
-    channel.messages.fetch({ limit: historyLength, before: message.id }),
+    channel.messages.fetch({ limit: tags.tldr ? tldrHistoryLength : historyLength, before: message.id }),
     // A deleted message can't be fetched, and the question still stands without it.
     message.reference?.type === MessageReferenceType.Default ? message.fetchReference().catch(() => null) : null,
     channel.isThread() ? channel.fetchStarterMessage().catch(() => null) : null,
@@ -99,6 +102,6 @@ export async function conversation(message: Message<true>): Promise<Conversation
       .flatMap((each) => (each ? [...each.attachments.filter(isImage).values()] : []))
       .slice(0, maxImages)
       .map((attachment) => attachment.url),
-    web: asksForWeb(message),
+    tags,
   };
 }
