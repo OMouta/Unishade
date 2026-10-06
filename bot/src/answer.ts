@@ -23,7 +23,7 @@ const webInstructions = `The message has [web] in it, so you can search the web.
 const rateInstructions = `The message has [rate] in it. Rate the look of their screenshot out of 10, then say what would make it better, naming the effect and the setting where you can tell. Be honest, and have some fun with it. If there's no screenshot, ask for one.`;
 const tldrInstructions = `The message has [tldr] in it. Sum up the conversation in the background in a few bullets: what was asked, what was tried or found, and what's still open.`;
 
-type Answer = { text: string; tokens: number; cost: number; searched: boolean };
+export type Answer = { text: string; model: string; tokens: number; cost: number; searched: boolean };
 // Cost is in dollars, searches included. It all comes in the last chunk.
 type Usage = { total_tokens?: number; cost?: number; server_tool_use_details?: { web_search_requests?: number } };
 
@@ -119,5 +119,5 @@ async function ask(model: string, { background, mention, images, tags }: Convers
   if (finish === "length") throw new Error(`The answer hit the output limit: ${JSON.stringify(usage)}`);
   text = text.trim();
   if (!text) throw new Error(`OpenRouter sent no answer: ${JSON.stringify({ finish, usage })}`);
-  return { text, tokens: usage?.total_tokens ?? 0, cost: usage?.cost ?? 0, searched: !!usage?.server_tool_use_details?.web_search_requests };
+  return { text, model, tokens: usage?.total_tokens ?? 0, cost: usage?.cost ?? 0, searched: !!usage?.server_tool_use_details?.web_search_requests };
 }

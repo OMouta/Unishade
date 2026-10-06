@@ -1,4 +1,4 @@
-import { PermissionFlagsBits, type GuildMember } from "discord.js";
+import { PermissionFlagsBits, type GuildMember, type GuildTextBasedChannel } from "discord.js";
 import { hasFlag } from "./members.ts";
 import { usedToday } from "./usage.ts";
 
@@ -10,6 +10,10 @@ const tier2RoleIds = roleIds(process.env.TIER2_ROLE_IDS);
 const tier1RoleIds = roleIds(process.env.TIER1_ROLE_IDS);
 // Tier 0, everyone else, is answered only in this channel and its threads, or anywhere when it's not set.
 export const channelId = process.env.CHANNEL_ID;
+
+export function inChannel(channel: GuildTextBasedChannel): boolean {
+  return !channelId || channel.id === channelId || (channel.isThread() && channel.parentId === channelId);
+}
 
 export type Tier = 0 | 1 | 2;
 const limits: Record<Tier, { perMinute: number; perDay: number }> = {
@@ -34,11 +38,11 @@ const nextDay = (now: number) => `<t:${(Math.floor(now / day) + 1) * (day / 1000
 const recent = new Map<string, number[]>();
 const warned = new Set<string>();
 
-// "answer" while the person is under their limits. Over one, a reply saying which the first time, and "ignore" after
-// that, so someone who keeps going gets one reply and not one per message. The day is counted from the usage records,
-// so it survives a restart and a failed answer doesn't use one up. Questions is the most this one can count as, with
-// its tags.
-export function limit(userId: string, tier: Tier, questions: number, now = Date.now()): "answer" | "ignore" | { warn: string } {
+// "answer" while the person is under their limits. Over one, what to tell them, with again set when they were told
+// already since their last answer, so a mention that keeps going gets one reply and not one per message. The day is
+// counted from the usage records, so it survives a restart and a failed answer doesn't use one up. Questions is the
+// most this one can count as, with its tags.
+export function limit(userId: string, tier: Tier, questions: number, now = Date.now()): "answer" | { warn: string; again: boolean } {
   const { perMinute, perDay } = limits[tier];
   const times = (recent.get(userId) ?? []).filter((time) => now - time < 60_000);
   recent.set(userId, times);
@@ -52,9 +56,9 @@ export function limit(userId: string, tier: Tier, questions: number, now = Date.
     warned.delete(userId);
     return "answer";
   }
-  if (warned.has(userId)) return "ignore";
+  const again = warned.has(userId);
   warned.add(userId);
-  return { warn: warning };
+  return { warn: warning, again };
 }
 
 // What /limits tells a member about themselves.

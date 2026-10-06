@@ -36,8 +36,8 @@ export function recordAnswer(userId: string, { tokens, cost, searched }: { token
   writeFileSync(file, JSON.stringify(days, null, 2));
 }
 
-const usd = (amount: number) => (amount === 0 ? "$0" : `$${amount < 1 ? amount.toPrecision(2) : amount.toFixed(2)}`);
-const count = (amount: number) => amount.toLocaleString("en-US");
+export const usd = (amount: number) => (amount === 0 ? "$0" : `$${amount < 1 ? amount.toPrecision(2) : amount.toFixed(2)}`);
+export const count = (amount: number) => amount.toLocaleString("en-US");
 const describe = ({ answers, searches, tokens, cost }: Totals) =>
   `${count(answers)} answers${searches ? ` (${count(searches)} searched the web)` : ""}, ${count(tokens)} tokens, ${usd(cost)}`;
 

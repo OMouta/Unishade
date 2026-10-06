@@ -2,6 +2,8 @@
 
 The Discord bot for the Unishade server. Mention it and it answers anything, in English. For Unishade questions it goes by the docs and by messages the admins picked. Members can ask 3 questions a minute and 20 a day, in the channel in `CHANNEL_ID`. Members with a role in `TIER1_ROLE_IDS` can ask 4 a minute and 30 a day, and members with a role in `TIER2_ROLE_IDS` 5 a minute and 100 a day, both in any channel. Server admins and members with a role in `TEAM_ROLE_IDS` have no limit. Days are UTC. `/limits` shows anyone their own.
 
+`/ask` asks with a slash command instead. It takes a file, such as a log or a screenshot, and the tags below as options.
+
 To have the bot answer a message that doesn't mention it, right-click the message and pick **Apps > Answer this**. Only members who can manage the server see it, and it has no limit.
 
 The reply shows up right away with a line under it while the bot works. When it's done, the line says how long it took and which tags it used.
@@ -27,6 +29,14 @@ With the question, the bot also reads the 10 messages before it, the message it 
 
 Right-click a member and pick **Apps > Exclude from AI** to have the bot ignore them, or **Remove limits** to treat them like the team. **Include in AI** and **Restore limits** undo these. Only members who can manage the server see them.
 
+## Pausing
+
+`/pause` stops the bot answering anyone, the team included, until someone runs it again or the bot restarts. While it's paused, its status shows Do Not Disturb and mentions get no reply. Only members who can manage the server see `/pause`, and Server Settings > Integrations can give it to the team's roles.
+
+## Log
+
+With `LOG_CHANNEL_ID` set, every answer goes to that channel: who asked and where, the question, the answer or why it failed, the tags, the model, tokens and cost. So does who paused or unpaused the bot.
+
 ## Usage
 
 `/usage` shows what the OpenRouter key spent today, this week and this month, what's left of its limit and of the account's credits, and how many free model requests it made today. It also counts the bot's answers and web searches today and over the last 30 days, and lists the 5 members it answered most. Only members who can manage the server see it.
@@ -39,4 +49,4 @@ pnpm install
 pnpm start
 ```
 
-Set `DISCORD_TOKEN` to the bot's token and `OPENROUTER_API_KEY` to an OpenRouter API key, either in the environment or in `bot/.env`. `OPENROUTER_MODEL` picks the model, `openai/gpt-oss-20b` if it's not set. List several separated by commas, and when one fails, such as a free model at its daily limit, the next one answers. `CHANNEL_ID` is the channel members can ask in, threads in it included. Without it, they can ask anywhere. `TIER1_ROLE_IDS`, `TIER2_ROLE_IDS` and `TEAM_ROLE_IDS` take role IDs separated by commas. The bot also needs **Message Content Intent** and **Server Members Intent** turned on in the Discord Developer Portal.
+Set `DISCORD_TOKEN` to the bot's token and `OPENROUTER_API_KEY` to an OpenRouter API key, either in the environment or in `bot/.env`. `OPENROUTER_MODEL` picks the model, `openai/gpt-oss-20b` if it's not set. List several separated by commas, and when one fails, such as a free model at its daily limit, the next one answers. `CHANNEL_ID` is the channel members can ask in, threads in it included. Without it, they can ask anywhere. `TIER1_ROLE_IDS`, `TIER2_ROLE_IDS` and `TEAM_ROLE_IDS` take role IDs separated by commas. `LOG_CHANNEL_ID` is the channel for the log. The bot also needs **Message Content Intent** and **Server Members Intent** turned on in the Discord Developer Portal.

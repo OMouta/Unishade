@@ -4,8 +4,9 @@ export type Tags = { web: boolean; rate: boolean; tldr: boolean; think?: Effort 
 
 const switches = ["web", "rate", "tldr"] as const;
 // Reasoning effort as OpenRouter takes it, but for "none", which openai/gpt-oss-20b rejects.
-const efforts = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export const efforts = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 type Effort = (typeof efforts)[number];
+export const effortOf = (level: string) => efforts.find((each) => each === level);
 
 // A level that doesn't exist is an error, so a typo doesn't quietly get the default. [thinking] or [website] aren't
 // tags at all.
@@ -14,7 +15,7 @@ export function readTags(text: string): Tags | { error: string } {
   for (const [, name, level] of text.matchAll(/\[(web|rate|tldr|think)(?:\s+([^\]]*))?\]/gi)) {
     const wanted = level?.trim().toLowerCase();
     if (name.toLowerCase() === "think") {
-      const effort = efforts.find((each) => each === (wanted || "high"));
+      const effort = effortOf(wanted || "high");
       if (!effort) return { error: `That's not a think level. Use ${efforts.slice(0, -1).join(", ")} or max, or plain [think] for high.` };
       tags.think = effort;
       continue;

@@ -1,32 +1,31 @@
 import { Client, Events, GatewayIntentBits, Partials, type Message } from "discord.js";
-import { commands, handleInteraction } from "./commands.ts";
+import { commands, handleInteraction, isPaused } from "./commands.ts";
 import { removeMessage } from "./context.ts";
-import { channelId, limit, tierOf } from "./limit.ts";
+import { channelId, inChannel, limit, tierOf } from "./limit.ts";
 import { hasFlag } from "./members.ts";
 import { replyTo } from "./reply.ts";
 import { questionsFor, readTags } from "./tags.ts";
 
 const token = process.env.DISCORD_TOKEN;
 if (!token) throw new Error("DISCORD_TOKEN is not set");
-function inChannel(message: Message<true>): boolean {
-  const { channel } = message;
-  return !channelId || channel.id === channelId || (channel.isThread() && channel.parentId === channelId);
-}
 
 async function handleMessage(message: Message) {
   if (message.author.bot || message.system || !message.inGuild()) return;
   // A reply to one of the bot's messages mentions it too, unless the person turned the ping off.
   if (!message.mentions.has(message.client.user, { ignoreEveryone: true, ignoreRoles: true })) return;
-  if (hasFlag("excluded", message.author.id)) return;
+  // Paused, the bot's status says so, and it doesn't reply to each mention, which could be a spam wave.
+  if (hasFlag("excluded", message.author.id) || isPaused()) return;
 
   const tags = readTags(message.content);
   const tier = message.member ? tierOf(message.member) : 0;
   if (tier !== "team") {
     const verdict = limit(message.author.id, tier, "error" in tags ? 1 : questionsFor(tags, tags.web));
-    if (typeof verdict === "object") await message.reply(verdict.warn);
-    if (verdict !== "answer") return;
+    if (verdict !== "answer") {
+      if (!verdict.again) await message.reply(verdict.warn);
+      return;
+    }
     // Checked after the limit, so pinging the bot elsewhere over and over doesn't get a reply every time.
-    if (tier === 0 && !inChannel(message)) {
+    if (tier === 0 && !inChannel(message.channel)) {
       await message.reply(`Ask me in <#${channelId}>.`);
       return;
     }
