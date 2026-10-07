@@ -1,8 +1,9 @@
 import type { AttachmentPayload, PollData } from "discord.js";
 import type { Tags } from "./tags.ts";
 
-// What some tags make of the answer: [shader] attaches its code block as a .fx file, [poll] turns its poll block into a
-// Discord poll, and [music] keeps only the Spotify and SoundCloud links that lead somewhere.
+// What some tags make of the answer: [shader] attaches its code block as a .fx file, [bug] turns its report into a link
+// to a filled-in GitHub issue, [poll] turns its poll block into a Discord poll, and [music] keeps only the Spotify and
+// SoundCloud links that lead somewhere.
 export type Extras = { text: string; files: AttachmentPayload[]; poll?: PollData };
 
 // Code blocks, and while the answer comes in, the one that isn't closed yet.
@@ -10,14 +11,19 @@ const codeBlocks = /```[\s\S]*?(?:```|$)/g;
 // Spotify and SoundCloud links, raw or inside [text](link).
 const musicLinks = /https:\/\/(?:open\.spotify\.com|(?:on\.)?soundcloud\.com)\/[^\s)>\]]+/g;
 
-// The shader and the poll aren't shown, so they're left out while the answer comes in.
-export const shownWhileAnswering = (text: string, tags: Tags) => (tags.shader || tags.poll ? text.replace(codeBlocks, "") : text);
+// The shader, the bug report and the poll aren't shown, so they're left out while the answer comes in.
+export const shownWhileAnswering = (text: string, tags: Tags) => (tags.shader || tags.bug || tags.poll ? text.replace(codeBlocks, "") : text);
 
 export async function extras(answer: string, tags: Tags): Promise<Extras> {
   const result: Extras = { text: answer, files: [] };
+  let reported = false;
   for (const [block, language, code] of answer.matchAll(/```(\w*)[^\n]*\n([\s\S]*?)```/g)) {
-    // Asked for both, the poll is the block marked as one.
-    if (tags.poll && !result.poll && (language === "poll" || !tags.shader)) {
+    // Asked for more than one, the bug report and the poll are the blocks marked as them.
+    if (tags.bug && !reported && (language === "bug" || (!tags.shader && !tags.poll))) {
+      const link = reportLink(code);
+      result.text = result.text.replace(block, link ? `[Open the bug report on GitHub](${link})` : "");
+      reported = !!link;
+    } else if (tags.poll && !result.poll && (language === "poll" || !tags.shader)) {
       result.poll = pollOf(code);
       result.text = result.text.replace(block, "");
     } else if (tags.shader && !result.files.length) {
@@ -26,6 +32,7 @@ export async function extras(answer: string, tags: Tags): Promise<Extras> {
       result.text = result.text.replace(block, "");
     }
   }
+  if (tags.bug && !reported) result.text += "\n\nThe bug report didn't come out right. Try asking again.";
   if (tags.poll && !result.poll) result.text += "\n\nThe poll didn't come out right. Try asking again.";
   if (tags.music) result.text = await withoutDeadLinks(result.text);
   result.text = result.text.replace(/\n{3,}/g, "\n\n").trim();
@@ -43,6 +50,35 @@ function pollOf(block: string): PollData | undefined {
     duration: 24,
     allowMultiselect: false,
   };
+}
+
+// GitHub fills in the bug report form from the link, each text field by its ID in .github/ISSUE_TEMPLATE/bug_report.yml.
+const reportFields = ["title", "what", "game", "version", "reshade", "windows", "gpu", "console"] as const;
+const newIssue = "https://github.com/OMouta/Unishade/issues/new?template=bug_report.yml";
+// Discord takes 2000 characters a message, and the link shares them with the line the model writes, the question /ask
+// quotes and the line under the reply.
+const maxLinkLength = 1400;
+
+// The link to the report in the model's JSON, or undefined when it isn't one.
+function reportLink(json: string): string | undefined {
+  let report: unknown;
+  try {
+    report = JSON.parse(json);
+  } catch {
+    return undefined;
+  }
+  if (typeof report !== "object" || report === null) return undefined;
+  const fields: Record<string, string> = {};
+  for (const field of reportFields) {
+    const value: unknown = (report as Record<string, unknown>)[field];
+    if (typeof value === "string" && value.trim()) fields[field] = value.trim();
+  }
+  if (!fields.title || !fields.what) return undefined;
+  const link = () => `${newIssue}&${new URLSearchParams(fields)}`;
+  // Too long, the log loses lines from its start, and then the description is cut short.
+  while (link().length > maxLinkLength && fields.console) fields.console = fields.console.split("\n").slice(1).join("\n");
+  while (link().length > maxLinkLength && fields.what.length > 100) fields.what = `${fields.what.slice(0, -50).trimEnd()}…`;
+  return link().length <= maxLinkLength ? link() : undefined;
 }
 
 // The model can write a link that looks right and leads nowhere. Spotify's and SoundCloud's oEmbed endpoints answer 404

@@ -1,6 +1,6 @@
 // Tags someone puts in a question to change how the bot answers it, such as [web], or [think medium] for the one that
 // takes a level. /tags lists them.
-export const switches = ["web", "music", "rate", "shader", "tldr", "poll", "touchgrass"] as const;
+export const switches = ["web", "music", "rate", "shader", "tldr", "bug", "poll", "touchgrass"] as const;
 type Switch = (typeof switches)[number];
 export type Tags = Record<Switch, boolean> & { think?: Effort };
 
@@ -11,6 +11,7 @@ const about: Record<Switch, { does: string; counts: string }> = {
   rate: { does: "rates your screenshot out of 10", counts: "×1" },
   shader: { does: "writes a ReShade shader you can load", counts: "×1" },
   tldr: { does: "sums up the channel or thread", counts: "×2" },
+  bug: { does: "writes a bug report you can open on GitHub", counts: "×1" },
   poll: { does: "starts a poll", counts: "×1" },
   touchgrass: { does: "checks whether you should go outside", counts: "×1" },
 };
@@ -23,7 +24,7 @@ export const effortOf = (level: string) => efforts.find((each) => each === level
 // A level that doesn't exist is an error, so a typo doesn't quietly get the default. [thinking] or [website] aren't
 // tags at all.
 export function readTags(text: string): Tags | { error: string } {
-  const tags: Tags = { web: false, music: false, rate: false, shader: false, tldr: false, poll: false, touchgrass: false };
+  const tags: Tags = { web: false, music: false, rate: false, shader: false, tldr: false, bug: false, poll: false, touchgrass: false };
   for (const [, name, level] of text.matchAll(new RegExp(`\\[(${switches.join("|")}|think)(?:\\s+([^\\]]*))?\\]`, "gi"))) {
     const wanted = level?.trim().toLowerCase();
     if (name.toLowerCase() === "think") {

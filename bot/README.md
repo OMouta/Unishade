@@ -17,6 +17,7 @@ Put these in a question to change how the bot answers it. `/tags` lists them for
 - `[rate]` has it rate an attached screenshot out of 10 and say what to change.
 - `[shader]` has it write a ReShade FX shader for what you describe, attached to the reply as a `.fx` file.
 - `[tldr]` has it sum up the channel or thread, reading the last 100 messages instead of 10.
+- `[bug]` has it write a bug report from the conversation and `Unishade.log`, and link to a new GitHub issue with the bug report form filled in.
 - `[poll]` has it turn the question into a Discord poll, posted under the reply and open for a day.
 - `[touchgrass]` has it look at how much you've used the bot and stage an intervention.
 - `[think]` has it reason harder. `[think medium]` picks the level: `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Plain `[think]` is `high`, and without the tag it's `low`. Any other level gets an error reply, not an answer.
