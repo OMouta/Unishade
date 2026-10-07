@@ -4,7 +4,7 @@ import { removeMessage } from "./context.ts";
 import { channelId, inChannel, limit, tierOf } from "./limit.ts";
 import { hasFlag } from "./members.ts";
 import { replyTo } from "./reply.ts";
-import { questionsFor, readTags } from "./tags.ts";
+import { maySearch, questionsFor, readTags } from "./tags.ts";
 
 const token = process.env.DISCORD_TOKEN;
 if (!token) throw new Error("DISCORD_TOKEN is not set");
@@ -19,7 +19,7 @@ async function handleMessage(message: Message) {
   const tags = readTags(message.content);
   const tier = message.member ? tierOf(message.member) : 0;
   if (tier !== "team") {
-    const verdict = limit(message.author.id, tier, "error" in tags ? 1 : questionsFor(tags, tags.web));
+    const verdict = limit(message.author.id, tier, "error" in tags ? 1 : questionsFor(tags, maySearch(tags)));
     if (verdict !== "answer") {
       if (!verdict.again) await message.reply(verdict.warn);
       return;

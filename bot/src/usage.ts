@@ -23,6 +23,23 @@ export function usedToday(userId: string): number {
   return totals ? questionsOf(totals) : 0;
 }
 
+// How much someone has used the bot, for [touchgrass].
+export function habitsOf(userId: string): string {
+  const today = dayOf(Date.now());
+  const weekStart = dayOf(Date.now() - 6 * 86_400_000);
+  const habits = { today: 0, week: 0, month: 0, days: 0, tokens: 0 };
+  for (const [day, members] of Object.entries(days)) {
+    const totals = members[userId];
+    if (!totals || day < oldestKept()) continue;
+    if (day === today) habits.today = totals.answers;
+    if (day >= weekStart) habits.week += totals.answers;
+    habits.month += totals.answers;
+    habits.days++;
+    habits.tokens += totals.tokens;
+  }
+  return `${count(habits.today)} answers today, ${count(habits.week)} in the last 7 days and ${count(habits.month)} in the last ${keptDays}, on ${habits.days} different days, which took ${count(habits.tokens)} tokens`;
+}
+
 export function recordAnswer(userId: string, { tokens, cost, searched }: { tokens: number; cost: number; searched: boolean }, questions: number) {
   const totals = ((days[dayOf(Date.now())] ??= {})[userId] ??= none());
   totals.questions = questionsOf(totals) + questions;

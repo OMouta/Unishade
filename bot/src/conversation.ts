@@ -1,5 +1,6 @@
 import { Message, MessageReferenceType, type Attachment, type GuildMember, type GuildTextBasedChannel, type User } from "discord.js";
 import type { Tags } from "./tags.ts";
+import { habitsOf } from "./usage.ts";
 
 // How many messages before the mention are sent along, so a question asked over several messages reads as one. [tldr]
 // reads the most Discord sends at once, to have more to sum up.
@@ -88,8 +89,9 @@ export async function conversation(question: Message<true> | Ask, tags: Tags): P
 
   const asked =
     question instanceof Message
-      ? { name: nameOf(question), text: textOf(question), attachments: [...question.attachments.values()] }
+      ? { id: question.author.id, name: nameOf(question), text: textOf(question), attachments: [...question.attachments.values()] }
       : {
+          id: question.member.id,
           name: nameWithRoles(question.member.user, question.member),
           text: [question.text, question.file && `[file: ${question.file.name}]`].filter(Boolean).join(" "),
           attachments: question.file ? [question.file] : [],
@@ -102,6 +104,7 @@ export async function conversation(question: Message<true> | Ask, tags: Tags): P
     const lines = [...earlier.values()].reverse().map((previous) => `${nameOf(previous)}: ${cut(textOf(previous))}`);
     background.push(`Earlier messages, oldest first:\n${lines.join("\n")}`);
   }
+  if (tags.touchgrass) background.push(`How much ${asked.name} has asked you: ${habitsOf(asked.id)}.`);
 
   // Keyed by ID, since the message replied to can be one of the earlier ones too.
   const attached = [

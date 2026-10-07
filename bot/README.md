@@ -10,14 +10,18 @@ The reply shows up right away with a line under it while the bot works. When it'
 
 ## Tags
 
-Put these in a question to change how the bot answers it:
+Put these in a question to change how the bot answers it. `/tags` lists them for anyone.
 
 - `[web]` lets it search the web.
+- `[music]` has it recommend up to three songs, found by searching Spotify and SoundCloud. The bot checks each link before posting it and drops any that lead nowhere, and these replies show the songs' previews.
 - `[rate]` has it rate an attached screenshot out of 10 and say what to change.
+- `[shader]` has it write a ReShade FX shader for what you describe, attached to the reply as a `.fx` file.
 - `[tldr]` has it sum up the channel or thread, reading the last 100 messages instead of 10.
+- `[poll]` has it turn the question into a Discord poll, posted under the reply and open for a day.
+- `[touchgrass]` has it look at how much you've used the bot and stage an intervention.
 - `[think]` has it reason harder. `[think medium]` picks the level: `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Plain `[think]` is `high`, and without the tag it's `low`. Any other level gets an error reply, not an answer.
 
-`[tldr]` counts as one more question, and so does `[web]` when the bot searches.
+`[tldr]` counts as one more question, and so do `[web]` and `[music]` when the bot searches.
 
 ## Context
 

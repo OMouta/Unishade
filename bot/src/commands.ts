@@ -14,7 +14,7 @@ import { channelId, describeLimits, inChannel, limit, tierOf } from "./limit.ts"
 import { logNote } from "./log.ts";
 import { hasFlag, setFlag, type Flag } from "./members.ts";
 import { replyTo, respond } from "./reply.ts";
-import { effortOf, efforts, questionsFor, readTags, type Tags } from "./tags.ts";
+import { effortOf, efforts, maySearch, optionDescription, questionsFor, readTags, switches, tagList, type Tags } from "./tags.ts";
 import { usageReport } from "./usage.ts";
 
 const answerThis = "Answer this";
@@ -36,28 +36,32 @@ const contextMenuCommand = (name: string, type: ApplicationCommandType.Message |
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .setContexts(InteractionContextType.Guild);
 
-// Discord shows these, all but /limits and /ask, to members who can manage the server. Server Settings > Integrations
-// changes who that is.
+const askCommand = new SlashCommandBuilder()
+  .setName("ask")
+  .setDescription("Ask the bot a question")
+  .setContexts(InteractionContextType.Guild)
+  .addStringOption((option) => option.setName("question").setDescription("What to ask").setRequired(true).setMaxLength(1000))
+  .addAttachmentOption((option) => option.setName("file").setDescription("A log or screenshot to go with it"));
+for (const tag of switches) askCommand.addBooleanOption((option) => option.setName(tag).setDescription(optionDescription(tag)));
+askCommand.addStringOption((option) =>
+  option
+    .setName("think")
+    .setDescription("How hard it thinks")
+    .addChoices(...efforts.map((effort) => ({ name: effort, value: effort }))),
+);
+
+// Discord shows these, all but /limits, /tags and /ask, to members who can manage the server. Server Settings >
+// Integrations changes who that is.
 export const commands = [
   new SlashCommandBuilder()
     .setName("limits")
     .setDescription("See how many questions you can ask the bot")
     .setContexts(InteractionContextType.Guild),
   new SlashCommandBuilder()
-    .setName("ask")
-    .setDescription("Ask the bot a question")
-    .setContexts(InteractionContextType.Guild)
-    .addStringOption((option) => option.setName("question").setDescription("What to ask").setRequired(true).setMaxLength(1000))
-    .addAttachmentOption((option) => option.setName("file").setDescription("A log or screenshot to go with it"))
-    .addBooleanOption((option) => option.setName("web").setDescription("Let it search the web. Counts as 2 when it does"))
-    .addBooleanOption((option) => option.setName("rate").setDescription("Rate the screenshot out of 10"))
-    .addBooleanOption((option) => option.setName("tldr").setDescription("Sum up this channel. Counts as 2"))
-    .addStringOption((option) =>
-      option
-        .setName("think")
-        .setDescription("How hard it thinks")
-        .addChoices(...efforts.map((effort) => ({ name: effort, value: effort }))),
-    ),
+    .setName("tags")
+    .setDescription("See the tags that change how the bot answers")
+    .setContexts(InteractionContextType.Guild),
+  askCommand,
   new SlashCommandBuilder()
     .setName("pause")
     .setDescription("Stop the bot answering anyone, or start it again")
@@ -120,17 +124,13 @@ async function ask(interaction: ChatInputCommandInteraction<"cached">) {
     return;
   }
   // The options add to any tags typed in the question.
-  const tags: Tags = {
-    web: typed.web || !!options.getBoolean("web"),
-    rate: typed.rate || !!options.getBoolean("rate"),
-    tldr: typed.tldr || !!options.getBoolean("tldr"),
-    think: effortOf(options.getString("think") ?? "") ?? typed.think,
-  };
+  const tags: Tags = { ...typed, think: effortOf(options.getString("think") ?? "") ?? typed.think };
+  for (const tag of switches) if (options.getBoolean(tag)) tags[tag] = true;
 
   const tier = tierOf(member);
   if (tier !== "team") {
     // Nobody else sees these replies, so they come every time and not just once.
-    const verdict = limit(member.id, tier, questionsFor(tags, tags.web));
+    const verdict = limit(member.id, tier, questionsFor(tags, maySearch(tags)));
     if (verdict !== "answer") {
       await interaction.reply(ephemeral(verdict.warn));
       return;
@@ -142,7 +142,7 @@ async function ask(interaction: ChatInputCommandInteraction<"cached">) {
   }
   await interaction.deferReply();
   const question = { id: interaction.id, channel, member, text, file: options.getAttachment("file") };
-  await respond(question, member.id, tags, (edit) => interaction.editReply(edit));
+  await respond(question, member.id, tags, { show: (edit) => interaction.editReply(edit), follow: (poll) => interaction.followUp(poll) });
 }
 
 function list(): string {
@@ -166,6 +166,10 @@ export async function handleInteraction(interaction: Interaction) {
     }
     if (interaction.commandName === "limits") {
       await interaction.reply(ephemeral(describeLimits(interaction.member)));
+      return;
+    }
+    if (interaction.commandName === "tags") {
+      await interaction.reply(ephemeral(tagList));
       return;
     }
     if (interaction.commandName === "ask") {
