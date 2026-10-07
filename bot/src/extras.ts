@@ -16,13 +16,12 @@ export const shownWhileAnswering = (text: string, tags: Tags) => (tags.shader ||
 
 export async function extras(answer: string, tags: Tags): Promise<Extras> {
   const result: Extras = { text: answer, files: [] };
-  let reported = false;
+  let report: { link?: string } | undefined;
   for (const [block, language, code] of answer.matchAll(/```(\w*)[^\n]*\n([\s\S]*?)```/g)) {
     // Asked for more than one, the bug report and the poll are the blocks marked as them.
-    if (tags.bug && !reported && (language === "bug" || (!tags.shader && !tags.poll))) {
-      const link = reportLink(code);
-      result.text = result.text.replace(block, link ? `[Open the bug report on GitHub](${link})` : "");
-      reported = !!link;
+    if (tags.bug && !report?.link && (language === "bug" || (!tags.shader && !tags.poll))) {
+      report = { link: reportLink(code) };
+      result.text = result.text.replace(block, "");
     } else if (tags.poll && !result.poll && (language === "poll" || !tags.shader)) {
       result.poll = pollOf(code);
       result.text = result.text.replace(block, "");
@@ -32,7 +31,9 @@ export async function extras(answer: string, tags: Tags): Promise<Extras> {
       result.text = result.text.replace(block, "");
     }
   }
-  if (tags.bug && !reported) result.text += "\n\nThe bug report didn't come out right. Try asking again.";
+  // The link goes at the end, apart from whatever the model wrote around the block. Without a block, the model asked for
+  // what it needs, such as the log, and that stands.
+  if (report) result.text += report.link ? `\n\n[Open the bug report on GitHub](${report.link})` : "\n\nThe bug report didn't come out right. Try asking again.";
   if (tags.poll && !result.poll) result.text += "\n\nThe poll didn't come out right. Try asking again.";
   if (tags.music) result.text = await withoutDeadLinks(result.text);
   result.text = result.text.replace(/\n{3,}/g, "\n\n").trim();
@@ -73,11 +74,11 @@ function reportLink(json: string): string | undefined {
     const value: unknown = (report as Record<string, unknown>)[field];
     if (typeof value === "string" && value.trim()) fields[field] = value.trim();
   }
-  if (!fields.title || !fields.what) return undefined;
+  if (!fields.title) return undefined;
   const link = () => `${newIssue}&${new URLSearchParams(fields)}`;
   // Too long, the log loses lines from its start, and then the description is cut short.
   while (link().length > maxLinkLength && fields.console) fields.console = fields.console.split("\n").slice(1).join("\n");
-  while (link().length > maxLinkLength && fields.what.length > 100) fields.what = `${fields.what.slice(0, -50).trimEnd()}…`;
+  while (link().length > maxLinkLength && (fields.what ?? "").length > 100) fields.what = `${fields.what.slice(0, -50).trimEnd()}…`;
   return link().length <= maxLinkLength ? link() : undefined;
 }
 
