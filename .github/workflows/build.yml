@@ -3,9 +3,15 @@ name: Build and release
 on:
   push:
     branches: ['**']
-    tags: ['v*']
   pull_request:
+  # Manual runs are signed by SignPath. With release on, they're signed with the release certificate and published as
+  # the version in CMakeLists.txt. Otherwise they're signed with the test certificate, to try the signing.
   workflow_dispatch:
+    inputs:
+      release:
+        description: Publish a release
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -13,18 +19,105 @@ permissions:
 jobs:
   build:
     runs-on: windows-2022
+    # SignPath reads the run's jobs and downloads the unsigned files with the workflow's token.
+    permissions:
+      actions: read
+      contents: read
+    env:
+      SIGNPATH_ORGANIZATION_ID: 163ddba1-cfa2-4731-ab5b-79be8ba21487
+      SIGNPATH_PROJECT: Unishade
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      # project(Unishade VERSION x.y.z) sets the version the files report and names the release. A release is checked
+      # here, so a mistake fails before anyone is asked to approve the signing.
+      - name: Read the version
+        id: version
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          RELEASE: ${{ inputs.release }}
+        run: |
+          version=$(sed -nE 's/.*project\(Unishade VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt | sort -u)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$RELEASE" != true ]; then
+            exit 0
+          fi
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::Releases are made from main, not $GITHUB_REF."
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "::error::v$version is already released. Raise project(Unishade VERSION $version) in CMakeLists.txt."
+            exit 1
+          fi
       - name: Configure
         run: cmake -S . -B build -A x64 -DBUILD_TESTING=ON
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+      # Setup embeds Unishade.exe and UnishadeUi.dll, so they're signed before Setup is built, and Setup after.
+      - name: Upload the program for signing
+        id: unsigned-program
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unsigned-program
+          path: |
+            build/Release/Unishade.exe
+            build/Release/UnishadeUi.dll
+          if-no-files-found: error
+      - name: Sign the program
+        if: github.event_name == 'workflow_dispatch'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT }}
+          signing-policy-slug: ${{ inputs.release && 'release-signing' || 'test-signing' }}
+          artifact-configuration-slug: app
+          github-artifact-id: ${{ steps.unsigned-program.outputs.artifact-id }}
+          parameters: |
+            version: ${{ toJSON(steps.version.outputs.version) }}
+          # Release signing waits for an approver.
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: build/Release
       - name: Build installer
         run: cmake --build build --config Release --target installer
+      # Building Setup must not have relinked them, or Setup would embed unsigned copies.
+      - name: Check Setup embedded the signed program
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          foreach ($file in 'build/Release/Unishade.exe', 'build/Release/UnishadeUi.dll') {
+            if (-not (Get-AuthenticodeSignature $file).SignerCertificate) { throw "$file isn't signed anymore." }
+          }
+      - name: Upload Setup for signing
+        id: unsigned-setup
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unsigned-setup
+          path: build/installer/Unishade-Setup-*.exe
+          if-no-files-found: error
+      - name: Sign Setup
+        if: github.event_name == 'workflow_dispatch'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT }}
+          signing-policy-slug: ${{ inputs.release && 'release-signing' || 'test-signing' }}
+          artifact-configuration-slug: setup
+          github-artifact-id: ${{ steps.unsigned-setup.outputs.artifact-id }}
+          parameters: |
+            version: ${{ toJSON(steps.version.outputs.version) }}
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: build/installer
       # Installs into fresh folders under build/installer-tests with --portable, so nothing is registered on the runner.
       # It downloads ReShade and every effect package, and the presets from this commit, so a pull request that changes
       # a preset is tested with it.
@@ -150,7 +243,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch' && inputs.release
     needs: [build, build-linux, build-macos]
     runs-on: ubuntu-latest
     permissions:
@@ -160,16 +253,6 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      # The tag names the release, and CMakeLists.txt sets the version the files report, so they must agree.
-      - name: Check the version
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          version=$(sed -nE 's/.*project\(Unishade VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt | sort -u)
-          if [ "$RELEASE_TAG" != "v$version" ]; then
-            echo "::error::The tag $RELEASE_TAG doesn't match project(Unishade VERSION $version) in CMakeLists.txt. Tag vX.Y.Z for version X.Y.Z."
-            exit 1
-          fi
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: Unishade-windows-x64
@@ -186,7 +269,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: v${{ needs.build.outputs.version }}
         run: |
           mkdir upload
           cp release/build/Release/Unishade.exe release/build/Release/UnishadeUi.dll "release/build/installer/Unishade-Setup-${RELEASE_TAG#v}.exe" release/LICENSE \
@@ -195,10 +278,11 @@ jobs:
           (cd upload && sha256sum -- * > ../SHA256SUMS.txt)
           mv SHA256SUMS.txt upload/
 
-          previous_tag=$(git describe --tags --match 'v*' --abbrev=0 "$RELEASE_TAG^" 2>/dev/null || true)
-          range="$RELEASE_TAG"
+          # The release creates its tag, so the newest tag here is the previous release's.
+          previous_tag=$(git describe --tags --match 'v*' --abbrev=0 HEAD 2>/dev/null || true)
+          range=HEAD
           if [ -n "$previous_tag" ]; then
-            range="$previous_tag..$RELEASE_TAG"
+            range="$previous_tag..HEAD"
           fi
           git log --format='- %s (%h)' "$range" > release-notes.md
           cat >> release-notes.md <<'NOTES'
@@ -206,8 +290,10 @@ jobs:
           The macOS and Linux builds are experimental.
 
           SHA256SUMS.txt lists the SHA-256 of each file. To check a download, run `sha256sum -c SHA256SUMS.txt --ignore-missing` in the folder you downloaded to, or compare the output of `Get-FileHash <file>` in PowerShell, or `shasum -a 256 <file>` on a Mac.
+
+          Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). [Code signing policy](https://unishade.me/code-signing/)
           NOTES
-          gh release create "$RELEASE_TAG" upload/* --verify-tag --title "$RELEASE_TAG" --notes-file release-notes.md
+          gh release create "$RELEASE_TAG" upload/* --target "$GITHUB_SHA" --title "$RELEASE_TAG" --notes-file release-notes.md
       # Cloudflare builds the site from main, and a release changes nothing there. A release made with the workflow's token
       # doesn't start other workflows either, so the website workflow's release trigger doesn't fire. The deploy hook
       # asks Cloudflare to build the site again, to point its download buttons at the new files.

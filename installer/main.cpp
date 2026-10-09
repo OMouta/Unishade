@@ -682,6 +682,9 @@ void Sidebar(std::initializer_list<const char*> steps, int current)
         ++index;
     }
 
+    ImGui::SetCursorPos(ImVec2(S(30), height - S(70)));
+    if (Link("Privacy policy", kDim, 13.5f))
+        ShellExecuteW(nullptr, L"open", L"https://unishade.me/privacy/", nullptr, nullptr, SW_SHOWNORMAL);
     ImGui::SetCursorPos(ImVec2(S(30), height - S(46)));
     if (Link("Credits and licenses", kDim, 13.5f))
         ImGui::OpenPopup("Credits");

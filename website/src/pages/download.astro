@@ -1,4 +1,6 @@
 ---
+import { Image } from 'astro:assets';
+import signpath from '../assets/signpath.png';
 import Base from '../layouts/Base.astro';
 import { links } from '../links';
 import { megabytes, release, type Download } from '../release';
@@ -73,6 +75,13 @@ const others = [
             )
           }
           <a href={links.releases}>{release.version ? 'Older versions' : 'All versions'}</a>
+        </p>
+        <p class="signing dim">
+          <Image src={signpath} alt="" width={28} layout="fixed" class="signing-logo" />
+          <span>
+            Free code signing provided by <a href={links.signpath}>SignPath.io</a>, certificate by{' '}
+            <a href={links.signpathFoundation}>SignPath Foundation</a>. <a href="/code-signing/">Code signing policy</a>
+          </span>
         </p>
       </section>
     </div>
@@ -231,6 +240,22 @@ const others = [
   dd {
     margin: 0;
     overflow-wrap: anywhere;
+  }
+
+  .signing {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-size: 0.95rem;
+  }
+
+  .signing-logo {
+    flex: none;
+    width: 28px;
+    height: auto;
   }
 
   .platforms {

@@ -140,6 +140,7 @@ target_compile_definitions(setup_libraries PRIVATE IMGUI_IMPL_WIN32_DISABLE_GAME
 set(UI_SOURCES src/ui/launcher_module.cpp src/ui/launcher_ui.cpp src/ui/kit.cpp src/ui/soft_renderer.cpp)
 add_library(UnishadeUi SHARED
     ${UI_SOURCES}
+    src/ui/UnishadeUi.rc
     "${IMGUI_DIR}/imgui.cpp"
     "${IMGUI_DIR}/imgui_draw.cpp"
     "${IMGUI_DIR}/imgui_tables.cpp"
@@ -148,6 +149,8 @@ add_library(UnishadeUi SHARED
 target_include_directories(UnishadeUi PRIVATE src "${IMGUI_DIR}" "${IMGUI_DIR}/backends")
 # 32-bit characters, so emoji outside the first 65536 code points show too.
 target_compile_definitions(UnishadeUi PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_UI_EXPORTS IMGUI_IMPL_WIN32_DISABLE_GAMEPAD IMGUI_USE_WCHAR32)
+target_compile_definitions(UnishadeUi PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(UnishadeUi PRIVATE UNISHADE_VERSION_RESOURCE=${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0)
 target_compile_options(UnishadeUi PRIVATE /EHsc)
 set_source_files_properties(${UI_SOURCES} PROPERTIES COMPILE_OPTIONS "/W4;/permissive-")
 target_link_libraries(UnishadeUi PRIVATE dwmapi imm32)

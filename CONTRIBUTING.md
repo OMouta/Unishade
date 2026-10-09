@@ -34,9 +34,9 @@ ctest --test-dir build -C Release --output-on-failure
 
 The EXE is at `build\Release\Unishade.exe`. See `installer/README.md` for building and testing the installer, and [src/posix](src/posix/README.md) for macOS and Linux.
 
-GitHub Actions builds and tests the Windows, Linux and macOS versions for pushes and pull requests, and runs `tests/installer_tests.ps1` against the new Setup. You can also run **Build and release** manually from the Actions tab. Successful builds provide `Unishade-windows-x64` (the EXE and Setup), `Unishade-linux-x64` and `Unishade-macOS` artifacts.
+GitHub Actions builds and tests the Windows, Linux and macOS versions for pushes and pull requests, and runs `tests/installer_tests.ps1` against the new Setup. You can also run **Build and release** manually from the Actions tab, which signs the Windows files through [SignPath](https://unishade.me/code-signing/) with the test certificate. Successful builds provide `Unishade-windows-x64` (the EXE and Setup), `Unishade-linux-x64` and `Unishade-macOS` artifacts.
 
-To publish a release, push a tag `vX.Y.Z` that matches `project(Unishade VERSION X.Y.Z)` in `CMakeLists.txt`; the workflow refuses any other. After the builds and tests pass, it creates a GitHub release with Setup, the EXE, the macOS and Linux archives, `LICENSE` and `SHA256SUMS.txt`, which lists the SHA-256 of each file, and then rebuilds the website. Branch pushes and manual builds do not publish releases.
+To publish a release, run **Build and release** manually on `main` with **Publish a release** checked. It releases the version in `project(Unishade VERSION X.Y.Z)` in `CMakeLists.txt` as `vX.Y.Z`, and refuses a version that's already released. The Windows files are signed with the release certificate, and each signing request waits for an approver in SignPath. After the builds and tests pass, it creates the tag and a GitHub release with Setup, the EXE, the macOS and Linux archives, `LICENSE` and `SHA256SUMS.txt`, which lists the SHA-256 of each file, and then rebuilds the website. Pushes and pull requests do not publish releases.
 
 ## Website
 
