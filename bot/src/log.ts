@@ -5,8 +5,9 @@ import { count, usd } from "./usage.ts";
 // Every answer the bot gives or fails to give goes to this channel for the team, and so does who paused it. Nothing is
 // logged when it's not set.
 const channelId = process.env.LOG_CHANNEL_ID;
+export const logging = !!channelId;
 
-async function send(client: Client, options: MessageCreateOptions) {
+export async function log(client: Client, options: MessageCreateOptions) {
   if (!channelId) return;
   const channel = await client.channels.fetch(channelId);
   if (!channel?.isSendable()) throw new Error(`Can't post in the log channel ${channelId}`);
@@ -14,7 +15,7 @@ async function send(client: Client, options: MessageCreateOptions) {
   await channel.send({ ...options, allowedMentions: { parse: [] } });
 }
 
-export const logNote = (client: Client, text: string) => send(client, { content: text });
+export const logNote = (client: Client, text: string) => log(client, { content: text });
 
 export type Entry = {
   asker: User;
@@ -29,7 +30,7 @@ export type Entry = {
   result: Answer | { error: string };
 };
 
-const clip = (text: string, length: number) => (text.length > length ? `${text.slice(0, length - 1)}…` : text);
+export const clip = (text: string, length: number) => (text.length > length ? `${text.slice(0, length - 1)}…` : text);
 const quote = (text: string) => text.split("\n").map((line) => `> ${line}`).join("\n");
 
 export async function logAnswer({ asker, channel, question, tags, url, seconds, result }: Entry) {
@@ -53,5 +54,5 @@ export async function logAnswer({ asker, channel, question, tags, url, seconds, 
     })
     .setTimestamp();
   if (failed) embed.setColor(0xed4245);
-  return send(channel.client, { embeds: [embed] });
+  return log(channel.client, { embeds: [embed] });
 }

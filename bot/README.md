@@ -40,6 +40,12 @@ The bot always reads the docs in `website/src/content/docs`. To give it more, su
 
 With the question, the bot also reads the 10 messages before it, the message it replies to, the first message of the thread, and the two newest text files attached in all of those, such as `Unishade.log`. Pictures in the message and in the one it replies to go along too, when the model takes images.
 
+## Feedback
+
+With `LOG_CHANNEL_ID` set, anyone can right-click an answer and pick **Apps > Report answer**. That posts the question and the answer to the log with **Add a correction**, which opens a form for what the bot should know and adds it to the context.
+
+When a private thread is solved, the bot sums it up in the log with **Add to context** and **Discard**. **Add to context** opens the summary in a form, so the team can fix it before it goes in. **Remove from context** on the log message takes either out again.
+
 ## Members
 
 Right-click a member and pick **Apps > Exclude from AI** to have the bot ignore them, or **Remove limits** to treat them like the team. **Include in AI** and **Restore limits** undo these. Only members who can manage the server see them.

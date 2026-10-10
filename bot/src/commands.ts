@@ -12,20 +12,22 @@ import {
 } from "discord.js";
 import { removeMessage, saveMessage, savedMessages } from "./context.ts";
 import { channelId, describeLimits, inChannel, limit, tierOf } from "./limit.ts";
-import { logNote } from "./log.ts";
+import { logging, logNote } from "./log.ts";
 import { hasFlag, setFlag, type Flag } from "./members.ts";
 import { replyTo, respond } from "./reply.ts";
+import { reportAnswer, reviewButtons, saveFromForm } from "./review.ts";
 import { supportButtons } from "./support.ts";
 import { effortOf, efforts, maySearch, optionDescription, questionsFor, readTags, switches, tagList, type Tags } from "./tags.ts";
 import { supportThread } from "./threads.ts";
 import { usageReport } from "./usage.ts";
 
 // By the part of their custom ID before the colon. What comes after, such as a user ID, is passed along.
-const buttons: Record<string, (interaction: ButtonInteraction<"cached">, value: string) => Promise<void>> = supportButtons;
+const buttons: Record<string, (interaction: ButtonInteraction<"cached">, value: string) => Promise<void>> = { ...supportButtons, ...reviewButtons };
 
 const answerThis = "Answer this";
 const add = "Add to context";
 const remove = "Remove from context";
+const report = "Report answer";
 
 // Right-click a member to set or clear one of their flags. The reply says where they stand now.
 const memberCommands: Record<string, { flag: Flag; on: boolean; reply: (name: string) => string }> = {
@@ -56,8 +58,8 @@ askCommand.addStringOption((option) =>
     .addChoices(...efforts.map((effort) => ({ name: effort, value: effort }))),
 );
 
-// Discord shows these, all but /limits, /tags and /ask, to members who can manage the server. Server Settings >
-// Integrations changes who that is.
+// Discord shows these, all but /limits, /tags, /ask and Report answer, to members who can manage the server. Server
+// Settings > Integrations changes who that is.
 export const commands = [
   new SlashCommandBuilder()
     .setName("limits")
@@ -76,6 +78,10 @@ export const commands = [
   contextMenuCommand(answerThis, ApplicationCommandType.Message),
   contextMenuCommand(add, ApplicationCommandType.Message),
   contextMenuCommand(remove, ApplicationCommandType.Message),
+  // Reports go to the log, so without one there's nowhere to send them.
+  ...(logging
+    ? [new ContextMenuCommandBuilder().setName(report).setType(ApplicationCommandType.Message).setContexts(InteractionContextType.Guild)]
+    : []),
   ...Object.keys(memberCommands).map((name) => contextMenuCommand(name, ApplicationCommandType.User)),
   new SlashCommandBuilder()
     .setName("context")
@@ -170,6 +176,10 @@ export async function handleInteraction(interaction: Interaction) {
     await buttons[action]?.(interaction, value);
     return;
   }
+  if (interaction.isModalSubmit()) {
+    await saveFromForm(interaction);
+    return;
+  }
 
   if (interaction.isChatInputCommand()) {
     if (interaction.commandName === "context") {
@@ -206,6 +216,10 @@ export async function handleInteraction(interaction: Interaction) {
   }
   if (!interaction.isMessageContextMenuCommand()) return;
 
+  if (interaction.commandName === report) {
+    await reportAnswer(interaction);
+    return;
+  }
   const message = interaction.targetMessage;
   if (interaction.commandName === answerThis) {
     if (paused) {

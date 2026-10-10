@@ -47,6 +47,13 @@ async function describe(message: Message<true>): Promise<string> {
   return nameWithRoles(message.author, member);
 }
 
+// Names the authors of messages, with one lookup per author however many messages they wrote.
+async function namer(messages: Message<true>[]): Promise<(message: Message<true>) => string> {
+  const authors = new Map(messages.map((each) => [each.author.id, each]));
+  const names = new Map(await Promise.all([...authors].map(async ([id, each]) => [id, await describe(each)] as const)));
+  return (each) => names.get(each.author.id) ?? each.author.displayName;
+}
+
 // A thread made from a message starts with that one. A private thread has none, and its first message stands in, past
 // the notes Discord posts, such as who was added.
 async function firstMessage(thread: ThreadChannel): Promise<Message<true> | null> {
@@ -100,12 +107,7 @@ export async function conversation(question: Message<true> | Ask, tags: Tags): P
     message?.reference?.type === MessageReferenceType.Default ? message.fetchReference().catch(() => null) : null,
     channel.isThread() ? firstMessage(channel) : null,
   ]);
-  // Newest first, which is also the order files are read in.
-  const messages = [message, replied, ...earlier.values(), starter].filter((each) => each != null);
-  // One lookup per author, however many messages they wrote.
-  const authors = new Map(messages.map((each) => [each.author.id, each]));
-  const names = new Map(await Promise.all([...authors].map(async ([id, each]) => [id, await describe(each)] as const)));
-  const nameOf = (each: Message<true>) => names.get(each.author.id) ?? each.author.displayName;
+  const nameOf = await namer([message, replied, ...earlier.values(), starter].filter((each) => each != null));
 
   const asked =
     question instanceof Message
@@ -148,6 +150,13 @@ export async function conversation(question: Message<true> | Ask, tags: Tags): P
     tags,
     supportThread: !!supportThread(channel.id),
   };
+}
+
+// A thread's messages, oldest first, for summing it up. Files are listed by name and not read.
+export async function transcript(thread: ThreadChannel): Promise<string> {
+  const messages = [...(await thread.messages.fetch({ limit: tldrHistoryLength })).values()].filter((each) => !each.system).reverse();
+  const nameOf = await namer(messages);
+  return messages.map((each) => `${nameOf(each)}: ${textOf(each).slice(0, 1500)}`).join("\n\n");
 }
 
 // An answer the bot posted, without the line under it, and the question it was for: the message it replies to, or the

@@ -40,17 +40,39 @@ export type Answer = { text: string; model: string; tokens: number; cost: number
 // Cost is in dollars, searches included. It all comes in the last chunk.
 type Usage = { total_tokens?: number; cost?: number; server_tool_use_details?: { web_search_requests?: number } };
 
-// onText gets the answer so far each time more of it comes in. When a model fails partway, the next one starts over.
-export async function answer(conversation: Conversation, onText: (text: string) => void): Promise<Answer> {
+// Asks the models in order until one answers. When a model fails partway, the next one starts over.
+async function firstAnswer(ask: (model: string) => Promise<Answer>): Promise<Answer> {
   for (const model of models.slice(0, -1)) {
     try {
-      return await ask(model, conversation, onText);
+      return await ask(model);
     } catch (error) {
       console.error(`${model} couldn't answer, so the next model is asked:`, error);
     }
   }
-  return ask(models[models.length - 1], conversation, onText);
+  return ask(models[models.length - 1]);
 }
+
+// onText gets the answer so far each time more of it comes in.
+export const answer = (conversation: Conversation, onText: (text: string) => void) => firstAnswer((model) => ask(model, conversation, onText));
+
+const summaryInstructions = `Below is a support thread from the Unishade Discord server, where you and the team helped someone with a problem. Unishade is an open-source app that runs ReShade effects on a game from outside the game's process. Write it up as a note for your reference material, so you can answer the same problem next time: the problem in a sentence or two, with the game, error or log lines that tell it apart, then what fixed it. If nothing did, say what was tried. Leave out names and anything personal. Plain text, under 800 characters.`;
+
+// For the team to add to the context when a private thread is solved.
+export const summarize = (transcript: string) =>
+  firstAnswer((model) =>
+    complete(
+      model,
+      {
+        messages: [
+          { role: "system", content: summaryInstructions },
+          { role: "user", content: transcript },
+        ],
+        reasoning: { effort: "low", exclude: true },
+        max_completion_tokens: 4000,
+      },
+      () => {},
+    ),
+  );
 
 async function loadImageModels(): Promise<Set<string>> {
   const response = await fetch("https://openrouter.ai/api/v1/models", { signal: AbortSignal.timeout(30_000) });
@@ -78,18 +100,12 @@ async function ask(model: string, { background, mention, images, tags, supportTh
     images.length && (await takesImages(model))
       ? [{ type: "text", text: mention }, ...images.map((url) => ({ type: "image_url", image_url: { url } }))]
       : mention;
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-    // A request that never finishes would otherwise leave the reply working forever.
-    signal: AbortSignal.timeout(5 * 60_000),
-    body: JSON.stringify({
-      model,
+  const system = [instructions, supportThread ? inThread : offerThread, ...forTags, `Today is ${today}.`, renderContext()];
+  return complete(
+    model,
+    {
       messages: [
-        {
-          role: "system",
-          content: [instructions, supportThread ? inThread : offerThread, ...forTags, `Today is ${today}.`, renderContext()].join("\n\n"),
-        },
+        { role: "system", content: system.join("\n\n") },
         { role: "user", content: `<background>\n${background}\n</background>` },
         { role: "user", content },
       ],
@@ -108,8 +124,19 @@ async function ask(model: string, { background, mention, images, tags, supportTh
       // Reasoning counts toward this. Some models spend close to 1000 tokens on it before the answer starts, and models
       // that budget it from this give [think high] about 80%. A shader needs more room too.
       max_completion_tokens: tags.think || tags.shader ? 16_000 : 4000,
-      stream: true,
-    }),
+    },
+    onText,
+  );
+}
+
+// Streams one model's answer to the request, which is the body OpenRouter takes but for the model.
+async function complete(model: string, request: object, onText: (text: string) => void): Promise<Answer> {
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+    // A request that never finishes would otherwise leave the reply working forever.
+    signal: AbortSignal.timeout(5 * 60_000),
+    body: JSON.stringify({ model, ...request, stream: true }),
   });
   if (!response.ok || !response.body) throw new Error(`OpenRouter answered ${response.status}: ${await response.text()}`);
 

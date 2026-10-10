@@ -1,7 +1,8 @@
 import { ButtonBuilder, ButtonStyle, ChannelType, MessageFlags, type ButtonInteraction } from "discord.js";
 import { exchangeOf } from "./conversation.ts";
 import { channelId, teamRoleIds, tierOf } from "./limit.ts";
-import { logNote } from "./log.ts";
+import { logging, logNote } from "./log.ts";
+import { reviewSolved } from "./review.ts";
 import { addThread, callHuman, forgetThread, supportThread, threadOf, type SupportThread } from "./threads.ts";
 
 // Private threads for someone's problem, with only them and the team in it. The bot offers one under an answer, and in
@@ -99,6 +100,7 @@ async function solve(interaction: ButtonInteraction<"cached">) {
   await interaction.reply("Solved, so I'm closing the thread.");
   // Locked, only the team can open it again.
   await channel.edit({ archived: true, locked: true });
+  if (logging) await reviewSolved(channel, interaction.user);
 }
 
 export const supportButtons = { thread: openThread, human: getHuman, solved: solve };
