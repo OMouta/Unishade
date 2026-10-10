@@ -10,9 +10,12 @@ import { addThread, callHuman, forgetThread, supportThread, threadOf, type Suppo
 
 const ephemeral = (content: string) => ({ content, flags: MessageFlags.Ephemeral }) as const;
 
-// Under an answer that offers a private thread. Only the person who asked can use it.
+// Under an answer that offers a private thread. Only the person who asked can use it, and it goes once they have.
 export const openThreadButton = (asker: string) =>
   new ButtonBuilder().setCustomId(`thread:${asker}`).setLabel("Open a private thread").setStyle(ButtonStyle.Primary);
+
+// Who is having a thread opened right now, so pressing the button twice quickly doesn't open two.
+const opening = new Set<string>();
 
 // Under each answer in a private thread. Get a human goes once someone has pressed it.
 export const threadButtons = (thread: SupportThread) => [
@@ -35,32 +38,44 @@ async function openThread(interaction: ButtonInteraction<"cached">, asker: strin
     }
     forgetThread(open);
   }
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  if (opening.has(asker)) {
+    await interaction.deferUpdate();
+    return;
+  }
   // In the channel the answer is in, or its thread's, when it's one of the support channels or there are none. Otherwise
   // in the first support channel.
   const here = interaction.channel?.isThread() ? interaction.channel.parent : interaction.channel;
   const parent =
     !channelIds.length || (here && channelIds.includes(here.id)) ? here : await interaction.client.channels.fetch(channelIds[0]).catch(() => null);
   if (parent?.type !== ChannelType.GuildText) {
-    await interaction.editReply("I can't open private threads here.");
+    await interaction.reply(ephemeral("I can't open private threads here."));
     return;
   }
-  const { question } = await exchangeOf(interaction.message);
-  const name = [interaction.member.displayName, question.replace(/\s+/g, " ")].filter(Boolean).join(": ");
-  let thread;
+  opening.add(asker);
   try {
-    thread = await parent.threads.create({ name: name.slice(0, 100), type: ChannelType.PrivateThread, invitable: false });
-    await thread.members.add(asker);
-  } catch (error) {
-    await interaction.editReply("I couldn't open a private thread. Someone on the team can check my permissions.");
-    throw error;
+    // The button goes as soon as it's pressed, and comes back only if the thread can't be opened.
+    const buttons = interaction.message.components;
+    await interaction.update({ components: [] });
+    const { question } = await exchangeOf(interaction.message);
+    const name = [interaction.member.displayName, question.replace(/\s+/g, " ")].filter(Boolean).join(": ");
+    let thread;
+    try {
+      thread = await parent.threads.create({ name: name.slice(0, 100), type: ChannelType.PrivateThread, invitable: false });
+      await thread.members.add(asker);
+    } catch (error) {
+      await interaction.editReply({ components: buttons });
+      await interaction.followUp(ephemeral("I couldn't open a private thread. Someone on the team can check my permissions."));
+      throw error;
+    }
+    addThread(thread.id, asker);
+    // The bot reads a thread's first message with every question, so the question it was opened for stays in view.
+    const intro = `<@${asker}> Only you and the team can see this thread. Send logs and screenshots here, and ask without mentioning me.`;
+    await thread.send({ content: question ? `${intro}\n\n>>> ${question.slice(0, 1500)}` : intro, allowedMentions: { users: [asker] } });
+    await interaction.followUp(ephemeral(`Here's your thread: ${thread}`));
+    await logNote(interaction.client, `<@${asker}> opened a private thread: ${thread}`);
+  } finally {
+    opening.delete(asker);
   }
-  addThread(thread.id, asker);
-  // The bot reads a thread's first message with every question, so the question it was opened for stays in view.
-  const intro = `<@${asker}> Only you and the team can see this thread. Send logs and screenshots here, and ask without mentioning me.`;
-  await thread.send({ content: question ? `${intro}\n\n>>> ${question.slice(0, 1500)}` : intro, allowedMentions: { users: [asker] } });
-  await interaction.editReply(`Here's your thread: ${thread}`);
-  await logNote(interaction.client, `<@${asker}> opened a private thread: ${thread}`);
 }
 
 // The person the thread is for and the team can use its buttons. Gives back the thread when this one can.

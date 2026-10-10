@@ -26,7 +26,7 @@ Put these in a question to change how the bot answers it. `/tags` lists them for
 
 ## Private threads
 
-When someone needs to share `Unishade.log`, or their problem will take some back and forth, the bot can offer a private thread with a button under its answer. Only the person who asked can press it. The thread opens where they asked when that's one of the channels in `CHANNEL_ID` or it's not set, and in the first of them otherwise. Only they and members with **Manage Threads** see it. Each member gets one open thread at a time.
+When someone needs to share `Unishade.log`, or their problem will take some back and forth, the bot can offer a private thread with a button under its answer. Only the person who asked can press it, and it goes away once they have. The thread opens where they asked when that's one of the channels in `CHANNEL_ID` or it's not set, and in the first of them otherwise. Only they and members with **Manage Threads** see it. Each member gets one open thread at a time.
 
 In the thread, the bot answers them without a mention. It waits until they've stopped writing for 4 seconds, so a question split over several messages gets one answer. These answers don't count toward the hour or the day, and a thread gets 40 at most.
 
