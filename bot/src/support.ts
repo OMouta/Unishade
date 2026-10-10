@@ -1,6 +1,6 @@
 import { ButtonBuilder, ButtonStyle, ChannelType, MessageFlags, type ButtonInteraction } from "discord.js";
 import { exchangeOf } from "./conversation.ts";
-import { channelId, teamRoleIds, tierOf } from "./limit.ts";
+import { channelIds, teamRoleIds, tierOf } from "./limit.ts";
 import { logging, logNote } from "./log.ts";
 import { reviewSolved } from "./review.ts";
 import { addThread, callHuman, forgetThread, supportThread, threadOf, type SupportThread } from "./threads.ts";
@@ -36,9 +36,11 @@ async function openThread(interaction: ButtonInteraction<"cached">, asker: strin
     forgetThread(open);
   }
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  // In the support channel, or without one, the channel the answer is in.
-  const here = interaction.channel;
-  const parent = channelId ? await interaction.client.channels.fetch(channelId).catch(() => null) : here?.isThread() ? here.parent : here;
+  // In the channel the answer is in, or its thread's, when it's one of the support channels or there are none. Otherwise
+  // in the first support channel.
+  const here = interaction.channel?.isThread() ? interaction.channel.parent : interaction.channel;
+  const parent =
+    !channelIds.length || (here && channelIds.includes(here.id)) ? here : await interaction.client.channels.fetch(channelIds[0]).catch(() => null);
   if (parent?.type !== ChannelType.GuildText) {
     await interaction.editReply("I can't open private threads here.");
     return;

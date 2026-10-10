@@ -3,17 +3,22 @@ import { hasFlag } from "./members.ts";
 import type { SupportThread } from "./threads.ts";
 import { usedToday } from "./usage.ts";
 
-const roleIds = (list: string | undefined) => list?.split(",").map((id) => id.trim()).filter(Boolean) ?? [];
+const ids = (list: string | undefined) => list?.split(",").map((id) => id.trim()).filter(Boolean) ?? [];
 // Role IDs separated by commas. The team, like admins, has no limit, and tiers 1 and 2 have higher limits. All three
 // can ask in any channel. Someone with roles in several gets the highest.
-export const teamRoleIds = roleIds(process.env.TEAM_ROLE_IDS);
-const tier2RoleIds = roleIds(process.env.TIER2_ROLE_IDS);
-const tier1RoleIds = roleIds(process.env.TIER1_ROLE_IDS);
-// Tier 0, everyone else, is answered only in this channel and its threads, or anywhere when it's not set.
-export const channelId = process.env.CHANNEL_ID;
+export const teamRoleIds = ids(process.env.TEAM_ROLE_IDS);
+const tier2RoleIds = ids(process.env.TIER2_ROLE_IDS);
+const tier1RoleIds = ids(process.env.TIER1_ROLE_IDS);
+// Channel IDs separated by commas. Tier 0, everyone else, is answered only in these and their threads, or anywhere when
+// there are none.
+export const channelIds = ids(process.env.CHANNEL_ID);
+// Where tier 0 can ask, such as "<#1>, <#2> or <#3>".
+const mentions = channelIds.map((id) => `<#${id}>`);
+export const channelList = mentions.length > 1 ? `${mentions.slice(0, -1).join(", ")} or ${mentions.at(-1)}` : (mentions[0] ?? "");
 
 export function inChannel(channel: GuildTextBasedChannel): boolean {
-  return !channelId || channel.id === channelId || (channel.isThread() && channel.parentId === channelId);
+  if (!channelIds.length || channelIds.includes(channel.id)) return true;
+  return channel.isThread() && !!channel.parentId && channelIds.includes(channel.parentId);
 }
 
 export type Tier = 0 | 1 | 2;
@@ -72,6 +77,6 @@ export function describeLimits(member: GuildMember, now = Date.now()): string {
   const tier = tierOf(member);
   if (tier === "team") return "You can ask as often as you like, in any channel.";
   const { perMinute, perDay } = limits[tier];
-  const where = tier === 0 && channelId ? `in <#${channelId}>` : "in any channel";
+  const where = tier === 0 && channelIds.length ? `in ${channelList}` : "in any channel";
   return `You can ask ${perMinute} questions a minute and ${perDay} a day, ${where}. You've used ${usedToday(member.id)} today, and the count resets ${nextDay(now)}. [tldr] and a web search from [web] each count as one more question. Answers in a private thread with me don't count toward the day, up to ${perThread} a thread.`;
 }

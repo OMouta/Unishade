@@ -11,7 +11,7 @@ import {
   type Interaction,
 } from "discord.js";
 import { removeMessage, saveMessage, savedMessages } from "./context.ts";
-import { channelId, describeLimits, inChannel, limit, tierOf } from "./limit.ts";
+import { channelList, describeLimits, inChannel, limit, tierOf } from "./limit.ts";
 import { logging, logNote } from "./log.ts";
 import { hasFlag, setFlag, type Flag } from "./members.ts";
 import { replyTo, respond } from "./reply.ts";
@@ -148,7 +148,7 @@ async function ask(interaction: ChatInputCommandInteraction<"cached">) {
       return;
     }
     if (tier === 0 && !inChannel(channel)) {
-      await interaction.reply(ephemeral(`Ask me in <#${channelId}>.`));
+      await interaction.reply(ephemeral(`Ask me in ${channelList}.`));
       return;
     }
   }

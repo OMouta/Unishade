@@ -1,6 +1,6 @@
 # Unishade bot (Unibot)
 
-The Discord bot for the Unishade server. Mention it and it answers anything, in English. For Unishade questions it goes by the docs and by messages the admins picked. Members can ask 5 questions a minute and 50 a day, in the channel in `CHANNEL_ID`. Members with a role in `TIER1_ROLE_IDS` can ask 6 a minute and 80 a day, and members with a role in `TIER2_ROLE_IDS` 8 a minute and 200 a day, both in any channel. Server admins and members with a role in `TEAM_ROLE_IDS` have no limit. Days are UTC. `/limits` shows anyone their own.
+The Discord bot for the Unishade server. Mention it and it answers anything, in English. For Unishade questions it goes by the docs and by messages the admins picked. Members can ask 5 questions a minute and 50 a day, in the channels in `CHANNEL_ID`. Members with a role in `TIER1_ROLE_IDS` can ask 6 a minute and 80 a day, and members with a role in `TIER2_ROLE_IDS` 8 a minute and 200 a day, both in any channel. Server admins and members with a role in `TEAM_ROLE_IDS` have no limit. Days are UTC. `/limits` shows anyone their own.
 
 `/ask` asks with a slash command instead. It takes a file, such as a log or a screenshot, and the tags below as options.
 
@@ -26,7 +26,7 @@ Put these in a question to change how the bot answers it. `/tags` lists them for
 
 ## Private threads
 
-When someone needs to share `Unishade.log`, or their problem will take some back and forth, the bot can offer a private thread with a button under its answer. Only the person who asked can press it. The thread opens in the channel in `CHANNEL_ID`, or where they asked when that's not set. Only they and members with **Manage Threads** see it. Each member gets one open thread at a time.
+When someone needs to share `Unishade.log`, or their problem will take some back and forth, the bot can offer a private thread with a button under its answer. Only the person who asked can press it. The thread opens where they asked when that's one of the channels in `CHANNEL_ID` or it's not set, and in the first of them otherwise. Only they and members with **Manage Threads** see it. Each member gets one open thread at a time.
 
 In the thread, the bot answers them without a mention. It waits until they've stopped writing for 4 seconds, so a question split over several messages gets one answer. These answers don't count toward the day, and a thread gets 40 at most.
 
@@ -70,4 +70,4 @@ pnpm install
 pnpm start
 ```
 
-Set `DISCORD_TOKEN` to the bot's token and `OPENROUTER_API_KEY` to an OpenRouter API key, either in the environment or in `bot/.env`. `OPENROUTER_MODEL` picks the model, `openai/gpt-oss-20b` if it's not set. List several separated by commas, and when one fails, such as a free model at its daily limit, the next one answers. `CHANNEL_ID` is the channel members can ask in, threads in it included. Without it, they can ask anywhere. `TIER1_ROLE_IDS`, `TIER2_ROLE_IDS` and `TEAM_ROLE_IDS` take role IDs separated by commas. `LOG_CHANNEL_ID` is the channel for the log. The bot also needs **Message Content Intent** and **Server Members Intent** turned on in the Discord Developer Portal.
+Set `DISCORD_TOKEN` to the bot's token and `OPENROUTER_API_KEY` to an OpenRouter API key, either in the environment or in `bot/.env`. `OPENROUTER_MODEL` picks the model, `openai/gpt-oss-20b` if it's not set. List several separated by commas, and when one fails, such as a free model at its daily limit, the next one answers. `CHANNEL_ID` takes the IDs of the channels members can ask in, separated by commas, threads in them included. Without it, they can ask anywhere. `TIER1_ROLE_IDS`, `TIER2_ROLE_IDS` and `TEAM_ROLE_IDS` take role IDs separated by commas. `LOG_CHANNEL_ID` is the channel for the log. The bot also needs **Message Content Intent** and **Server Members Intent** turned on in the Discord Developer Portal.
