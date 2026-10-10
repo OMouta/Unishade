@@ -18,6 +18,7 @@
 #include <atomic>
 #include <chrono>
 #include <optional>
+#include <thread>
 #include <utility>
 
 using winrt::Windows::Foundation::Metadata::ApiInformation;
@@ -35,6 +36,123 @@ bool waitingForFrame = false;
 FrameStatistics::Clock::time_point capacityWaitStarted{};
 double capacityWaitMs = 0;
 winrt::com_ptr<ID3D11RenderTargetView> scaleTarget;
+
+enum class FrameStage : uint8_t { Idle, Swapchain, Resize, Prepare, Depth, Present, Capacity };
+// Time and stage share one atomic so the monitor cannot combine two different frames.
+std::atomic<uint64_t> frameStage = 0;
+std::atomic<uint64_t> capacityWaitStage = 0;
+void SetFrameStage(FrameStage stage)
+{
+    frameStage.store(stage == FrameStage::Idle ? 0 : (GetTickCount64() << 8) | static_cast<uint8_t>(stage), std::memory_order_relaxed);
+}
+
+struct FrameWork
+{
+    ~FrameWork() { SetFrameStage(FrameStage::Idle); }
+};
+
+struct GpuSample
+{
+    winrt::com_ptr<ID3D11Query> disjoint;
+    std::array<winrt::com_ptr<ID3D11Query>, 4> stamps;
+    bool pending = false;
+};
+std::array<GpuSample, 4> gpuSamples;
+bool gpuTimingFailed = false;
+
+void DisableGpuTimings(HRESULT error)
+{
+    Log(LogLevel::Info, L"GPU timestamp measurements unavailable: 0x%08X. Rendering continues without them.", static_cast<unsigned>(error));
+    gpuSamples = {};
+    gpuTimingFailed = true;
+}
+
+void CollectGpuTimings()
+{
+    for (auto& sample : gpuSamples)
+    {
+        if (!sample.pending)
+            continue;
+        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT clock{};
+        const HRESULT ready = g.context->GetData(sample.disjoint.get(), &clock, sizeof(clock), D3D11_ASYNC_GETDATA_DONOTFLUSH);
+        if (FAILED(ready))
+        {
+            DisableGpuTimings(ready);
+            return;
+        }
+        if (ready == S_FALSE)
+            continue;
+        if (clock.Disjoint || !clock.Frequency)
+        {
+            sample.pending = false;
+            continue;
+        }
+        std::array<UINT64, 4> stamps{};
+        bool complete = true;
+        for (size_t i = 0; i < stamps.size(); ++i)
+        {
+            const HRESULT result = g.context->GetData(sample.stamps[i].get(), &stamps[i], sizeof(stamps[i]), D3D11_ASYNC_GETDATA_DONOTFLUSH);
+            if (FAILED(result))
+            {
+                DisableGpuTimings(result);
+                return;
+            }
+            if (result == S_FALSE)
+            {
+                complete = false;
+                break;
+            }
+        }
+        if (complete)
+        {
+            sample.pending = false;
+            if (stamps[0] <= stamps[1] && stamps[1] <= stamps[2] && stamps[2] <= stamps[3])
+            {
+                const double milliseconds = 1000.0 / clock.Frequency;
+                g.frameStatistics.RecordGpu({ (stamps[1] - stamps[0]) * milliseconds, (stamps[2] - stamps[1]) * milliseconds,
+                                               (stamps[3] - stamps[2]) * milliseconds });
+            }
+        }
+    }
+}
+
+GpuSample* BeginGpuTiming()
+{
+    if (gpuTimingFailed)
+        return nullptr;
+    for (auto& sample : gpuSamples)
+    {
+        if (sample.pending)
+            continue;
+        if (!sample.disjoint)
+        {
+            D3D11_QUERY_DESC desc{ D3D11_QUERY_TIMESTAMP_DISJOINT, 0 };
+            HRESULT result = g.device->CreateQuery(&desc, sample.disjoint.put());
+            desc.Query = D3D11_QUERY_TIMESTAMP;
+            for (auto& stamp : sample.stamps)
+                if (SUCCEEDED(result))
+                    result = g.device->CreateQuery(&desc, stamp.put());
+            if (FAILED(result))
+            {
+                DisableGpuTimings(result);
+                return nullptr;
+            }
+        }
+        g.context->Begin(sample.disjoint.get());
+        g.context->End(sample.stamps[0].get());
+        return &sample;
+    }
+    // A full query ring drops a measurement, never a frame or a message-loop wake-up.
+    return nullptr;
+}
+
+double CaptureAgeMs(int64_t timestamp)
+{
+    static const LONGLONG frequency = [] { LARGE_INTEGER value{}; QueryPerformanceFrequency(&value); return value.QuadPart; }();
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    return std::max(0.0, static_cast<double>(now.QuadPart) / frequency * 1000 - static_cast<double>(timestamp) / 10000);
+}
 
 // Draws a texture over the whole target with one triangle. tonemap does it for an HDR frame.
 constexpr char kScaleShader[] = R"(
@@ -234,8 +352,11 @@ void ReleaseDevice()
     StopCapture();
     frameLatency.close();
     frameReady = waitingForFrame = false;
+    capacityWaitStage = 0;
     capacityWaitMs = 0;
     scaleTarget = nullptr;
+    gpuSamples = {};
+    gpuTimingFailed = false;
     g.swapchain = nullptr;
     scaler = {};
     ReleaseDepthDevice();
@@ -284,6 +405,7 @@ void StartCapture(HWND target)
 {
     const bool resumed = captureIdle.exchange(false);
     ResetDepthInput();
+    gpuSamples = {};
     auto interop = winrt::get_activation_factory<GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
     GraphicsCaptureItem item{ nullptr };
     winrt::check_hresult(interop->CreateForWindow(target, winrt::guid_of<GraphicsCaptureItem>(), winrt::put_abi(item)));
@@ -358,6 +480,7 @@ void StopCapture()
     SetEditMode(false);
     CloseCapture();
     waitingForFrame = false;
+    capacityWaitStage = 0;
     capacityWaitMs = 0;
     captureIdle = false;
     g.target = nullptr;
@@ -374,6 +497,7 @@ void SetCaptureIdle(bool idle)
     if (idle)
     {
         waitingForFrame = false;
+        capacityWaitStage = 0;
         capacityWaitMs = 0;
     }
     if (ApiInformation::IsPropertyPresent(kSessionClass, L"MinUpdateInterval"))
@@ -392,7 +516,10 @@ void SetCaptureIdle(bool idle)
 
 bool PresentLatestFrame()
 {
+    const FrameWork work;
+    SetFrameStage(FrameStage::Prepare);
     const auto started = FrameStatistics::Clock::now();
+    CollectGpuTimings();
     const int64_t frameTimestamp = g.latestFrame.SystemRelativeTime().count();
     winrt::com_ptr<ID3D11Texture2D> surface;
     auto access = g.latestFrame.Surface().as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
@@ -405,6 +532,7 @@ bool PresentLatestFrame()
 
     if (!g.swapchain)
     {
+        SetFrameStage(FrameStage::Swapchain);
         Log(LogLevel::Info, L"Creating swapchain: %ux%u, source=%ux%u, source_format=%u, output_format=%u, buffers=2, effect_resolution=%d%%.",
             width, height, size.Width, size.Height, size.Format, DXGI_FORMAT_B8G8R8A8_UNORM, EffectResolution());
         winrt::com_ptr<IDXGIAdapter> adapter;
@@ -441,7 +569,8 @@ bool PresentLatestFrame()
             }
         }
         frameReady = waitingForFrame = false;
-        Log(LogLevel::Info, L"Presentation pacing: waitable=%d, flags=0x%X, maximum_latency=1.",
+        Log(LogLevel::Info, L"Presentation pacing: waitable=%d, flags=0x%X, maximum_latency=1. "
+                           L"GPU spans include D3D11 work and queue idle time; DirectML runs separately. Depth observed time includes completion polling.",
             static_cast<bool>(frameLatency), desc.Flags);
         factory->MakeWindowAssociation(g.overlay, DXGI_MWA_NO_ALT_ENTER);
     }
@@ -458,6 +587,7 @@ bool PresentLatestFrame()
         }
         else if (desc.Width != width || desc.Height != height)
         {
+            SetFrameStage(FrameStage::Resize);
             Log(LogLevel::Info, L"Resizing swapchain: %ux%u -> %ux%u, source=%ux%u.", desc.Width, desc.Height, width, height, size.Width, size.Height);
             scaleTarget = nullptr;
             winrt::check_hresult(g.swapchain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, desc.Flags));
@@ -473,6 +603,7 @@ bool PresentLatestFrame()
             {
                 waitingForFrame = true;
                 capacityWaitStarted = FrameStatistics::Clock::now();
+                capacityWaitStage.store((GetTickCount64() << 8) | static_cast<uint8_t>(FrameStage::Capacity), std::memory_order_relaxed);
                 g.frameStatistics.RecordCapacityWait();
             }
             return false;
@@ -483,6 +614,11 @@ bool PresentLatestFrame()
     }
     frameReady = false;
     waitingForFrame = false;
+    SetFrameStage(FrameStage::Prepare);
+    GpuSample* gpu = BeginGpuTiming();
+    FrameStatistics::Timings timings;
+    timings.captureAgeMs = CaptureAgeMs(frameTimestamp);
+    timings.capacityWaitMs = std::exchange(capacityWaitMs, 0);
 
     winrt::com_ptr<ID3D11Texture2D> backBuffer;
     winrt::check_hresult(g.swapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), backBuffer.put_void()));
@@ -490,16 +626,49 @@ bool PresentLatestFrame()
         g.context->CopyResource(backBuffer.get(), surface.get());
     else
         DrawFrame(surface.get(), size, backBuffer.get(), width, height, frameTimestamp);
+    const auto prepared = FrameStatistics::Clock::now();
+    if (gpu)
+        g.context->End(gpu->stamps[1].get());
+    SetFrameStage(FrameStage::Depth);
     // Depth uses the same scaled SDR input as effects, including when the capture itself is SDR.
     UpdateDepth(backBuffer.get(), frameTimestamp);
+    const auto depthUpdated = FrameStatistics::Clock::now();
+    if (gpu)
+        g.context->End(gpu->stamps[2].get());
+    SetFrameStage(FrameStage::Present);
+    g.menuCpuMs = 0;
     const HRESULT presented = g.swapchain->Present(0, 0);
+    if (gpu)
+    {
+        g.context->End(gpu->stamps[3].get());
+        g.context->End(gpu->disjoint.get());
+        gpu->pending = true;
+    }
     if (FAILED(presented))
         Log(LogLevel::Error, L"Swapchain Present failed: 0x%08X, device_reason=0x%08X, output=%ux%u, source=%ux%u, source_format=%u.",
             static_cast<unsigned>(presented), static_cast<unsigned>(g.device->GetDeviceRemovedReason()), width, height, size.Width, size.Height, size.Format);
     winrt::check_hresult(presented);
     const auto finished = FrameStatistics::Clock::now();
-    g.frameStatistics.RecordPresent(frameTimestamp, std::chrono::duration<double, std::milli>(finished - started).count());
-    g.frameStatistics.Update(finished, g.capturedFrames.load(std::memory_order_relaxed));
+    SetFrameStage(FrameStage::Idle);
+    timings.prepareMs = std::chrono::duration<double, std::milli>(prepared - started).count();
+    timings.depthMs = std::chrono::duration<double, std::milli>(depthUpdated - prepared).count();
+    timings.presentMs = std::chrono::duration<double, std::milli>(finished - depthUpdated).count();
+    timings.menuMs = g.menuCpuMs;
+    const double elapsedMs = std::chrono::duration<double, std::milli>(finished - started).count();
+    g.frameStatistics.RecordPresent(frameTimestamp, elapsedMs, timings);
+    if (g.frameStatistics.Update(finished, g.capturedFrames.load(std::memory_order_relaxed)))
+        LogFrameTimings();
+    static ULONGLONG nextSlowLog = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (elapsedMs >= 100 && now >= nextSlowLog)
+    {
+        nextSlowLog = now + 5000;
+        Log(LogLevel::Info, L"Slow frame: cpu_ms=%.2f, prepare_ms=%.2f, depth_ms=%.2f, effects_present_ms=%.2f, menu_ms=%.2f, "
+                           L"capture_age_ms=%.2f, capacity_wait_ms=%.2f, source=%ux%u, output=%ux%u, menu=%d, loading=%d, compiling=%d.",
+            elapsedMs, timings.prepareMs, timings.depthMs, timings.presentMs, timings.menuMs, timings.captureAgeMs, timings.capacityWaitMs,
+            size.Width, size.Height, width, height, g.editMode || ReShadeMenuOpen(), ReShadeLoadingEffects(), ReShadeCompilingEffects());
+        LogGraphicsMemory();
+    }
     return true;
 }
 
@@ -514,4 +683,60 @@ void NotifyFrameReady()
     if (waitingForFrame)
         capacityWaitMs = std::chrono::duration<double, std::milli>(FrameStatistics::Clock::now() - capacityWaitStarted).count();
     waitingForFrame = false;
+    capacityWaitStage = 0;
+}
+
+void MonitorFrames(std::stop_token stop)
+{
+    InitThreadLog();
+    uint64_t reported = 0;
+    constexpr const wchar_t* stages[] = { L"idle", L"swapchain creation", L"swapchain resize", L"frame preparation", L"depth update",
+                                        L"ReShade effects/menu and DXGI Present", L"presentation capacity" };
+    while (!stop.stop_requested())
+    {
+        const uint64_t active = frameStage.load(std::memory_order_relaxed);
+        const uint64_t current = active ? active : capacityWaitStage.load(std::memory_order_relaxed);
+        if (current && current != reported && GetTickCount64() - (current >> 8) >= 2000)
+        {
+            reported = current;
+            Log(LogLevel::Info, L"Render stalled: stage=%ls, elapsed_ms=%llu. No render progress in this stage.",
+                stages[current & 0xff], GetTickCount64() - (current >> 8));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+}
+
+void LogFrameTimings()
+{
+    const auto& fps = g.frameStatistics;
+    Log(LogLevel::Info, L"Frame timings: capture_fps=%.1f, submitted_fps=%.1f, fresh_submitted_fps=%.1f, "
+                       L"cpu_ms=%.2f, cpu_peak_ms=%.2f, cpu_p95_ms=%.2f, cpu_p99_ms=%.2f, prepare_ms=%.2f, depth_update_ms=%.2f, "
+                       L"effects_present_ms=%.2f, menu_ms=%.2f, capture_age_ms=%.2f, capacity_wait_ms=%.2f, capacity_waits=%llu, "
+                       L"gpu_samples_ready=%d, gpu_span_ms=%.2f, gpu_peak_ms=%.2f, gpu_p95_ms=%.2f, gpu_p99_ms=%.2f, "
+                       L"gpu_prepare_ms=%.2f, gpu_depth_ms=%.2f, gpu_effects_present_ms=%.2f, "
+                       L"depth_completed_fps=%.1f, depth_observed_ms=%.2f, depth_observed_peak_ms=%.2f, depth_worker_submit_ms=%.2f.",
+        fps.captureFps, fps.programFps, fps.freshFps, fps.processingMs, fps.peakProcessingMs,
+        fps.p95ProcessingMs, fps.p99ProcessingMs, fps.cpu.prepareMs, fps.cpu.depthMs, fps.cpu.presentMs, fps.cpu.menuMs,
+        fps.cpu.captureAgeMs, fps.cpu.capacityWaitMs, fps.capacityWaits, fps.gpuReady, fps.gpuMs, fps.peakGpuMs, fps.p95GpuMs, fps.p99GpuMs,
+        fps.gpu.prepareMs, fps.gpu.depthMs, fps.gpu.effectsPresentMs, fps.depthFps, fps.depthObservedMs, fps.peakDepthObservedMs, fps.depthWorkerMs);
+}
+
+void LogGraphicsMemory()
+{
+    if (!g.device)
+        return;
+    winrt::com_ptr<IDXGIAdapter> adapter;
+    if (FAILED(g.device.as<IDXGIDevice>()->GetAdapter(adapter.put())))
+        return;
+    const auto memoryAdapter = adapter.try_as<IDXGIAdapter3>();
+    if (!memoryAdapter)
+        return;
+    for (const auto segment : { DXGI_MEMORY_SEGMENT_GROUP_LOCAL, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL })
+    {
+        DXGI_QUERY_VIDEO_MEMORY_INFO memory{};
+        if (SUCCEEDED(memoryAdapter->QueryVideoMemoryInfo(0, segment, &memory)))
+            Log(LogLevel::Info, L"GPU process memory: segment=%ls, usage=%llu MB, budget=%llu MB, over_budget=%d.",
+                segment == DXGI_MEMORY_SEGMENT_GROUP_LOCAL ? L"local" : L"non-local", memory.CurrentUsage / (1024 * 1024),
+                memory.Budget / (1024 * 1024), memory.CurrentUsage > memory.Budget);
+    }
 }

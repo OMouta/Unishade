@@ -77,6 +77,8 @@ struct State
     // Every frame captured from the game, counted on the capture worker. Statistics are sampled on the host thread.
     std::atomic<uint64_t> capturedFrames = 0;
     FrameStatistics frameStatistics;
+    // CPU time inside the host's ReShade overlay callback for the current present.
+    double menuCpuMs = 0;
 };
 
 extern State g;

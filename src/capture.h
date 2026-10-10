@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include <stop_token>
 
 // D3D11 device shared by the capture pool and the overlay swapchain.
 void CreateDevice();
@@ -32,3 +33,8 @@ bool PresentLatestFrame();
 // The message loop waits for capacity without blocking capture or window messages.
 HANDLE FrameLatencyEvent();
 void NotifyFrameReady();
+
+// Logs a render stage that stays blocked for two seconds, even if the host thread stops responding.
+void MonitorFrames(std::stop_token stop);
+void LogGraphicsMemory();
+void LogFrameTimings();

@@ -23,6 +23,7 @@
 #include <psapi.h>
 #include <map>
 #include <optional>
+#include <thread>
 #include <vector>
 
 State g;
@@ -85,7 +86,7 @@ void LogState()
     GetWindowThreadProcessId(foreground, &foregroundPid);
     const auto& fps = g.frameStatistics;
     Log(LogLevel::Info, L"State: target=%p, selected=%p, foreground=%p, foreground_pid=%lu, capture=%d, visible=%d, menu=%d, frame=%d, pool=%dx%d, captured=%llu, "
-                       L"capture_fps=%.1f, present_fps=%.1f, fresh_fps=%.1f, processing_ms=%.2f, peak_ms=%.2f, "
+                       L"capture_fps=%.1f, submitted_fps=%.1f, fresh_submitted_fps=%.1f, cpu_ms=%.2f, cpu_peak_ms=%.2f, "
                        L"effects_loading=%d, effects_compiling=%d, depth=%d, fps_limit=%d, effect_resolution=%d%%, "
                        L"working_set=%zu MB, peak_working_set=%zu MB.",
         g.target, g.selectedGame ? g.selectedGame->window : nullptr, foreground, foregroundPid,
@@ -93,6 +94,9 @@ void LogState()
         g.capturedFrames.load(std::memory_order_relaxed), fps.captureFps, fps.programFps, fps.freshFps, fps.processingMs, fps.peakProcessingMs,
         ReShadeLoadingEffects(), ReShadeCompilingEffects(), DepthEnabled(), FrameRateLimit(), EffectResolution(),
         memory.WorkingSetSize / (1024 * 1024), memory.PeakWorkingSetSize / (1024 * 1024));
+    LogFrameTimings();
+    LogGraphicsMemory();
+    LogDepthDiagnostics();
 }
 
 void ShowError(const std::wstring& message)
@@ -375,6 +379,7 @@ int Run()
     g.frameEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     winrt::check_bool(g.frameEvent != nullptr);
     CreateDevice();
+    const std::jthread frameMonitor(MonitorFrames);
     CheckSetup();
     InitDepth();
     RegisterHotkeys();

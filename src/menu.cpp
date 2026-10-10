@@ -27,6 +27,7 @@
 #include <atomic>
 #include <cctype>
 #include <cfloat>
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
@@ -3401,11 +3402,11 @@ void DrawToast(ULONGLONG elapsed)
 
 void DrawFpsGraph(const FrameStatistics& stats)
 {
-    Text("Game capture", kAccent, 11.5f, -1);
+    Text("Capture", kAccent, 11.5f, -1);
     ImGui::SameLine(0, S(14));
-    Text("Unishade", kWarning, 11.5f, -1);
+    Text("Submitted", kWarning, 11.5f, -1);
     ImGui::SameLine(0, S(14));
-    Text("Fresh output", kSuccess, 11.5f, -1);
+    Text("Fresh submitted", kSuccess, 11.5f, -1);
 
     const auto now = FrameStatistics::Clock::now();
     constexpr double seconds = 60;
@@ -3491,20 +3492,27 @@ void DrawDebugInfo()
                 ImGui::TextDisabled("%s", label);
                 ImGui::TableNextColumn();
             };
-            row("Game capture");
+            row("Capture");
             ImGui::Text("%.1f FPS", stats.captureFps);
-            row("Unishade");
+            row("Submitted");
             ImGui::Text("%.1f FPS", stats.programFps);
-            row("Fresh output");
+            row("Fresh submitted");
             ImGui::Text("%.1f FPS", stats.freshFps);
-            row("Frame loss");
+            row("Skipped captures");
             ImGui::Text("%.1f FPS / %.1f%%", stats.LostFps(), stats.LossPercent());
             row("Repeated frames");
             ImGui::Text("%.1f FPS", stats.RepeatedFps());
-            row("Processing avg");
+            row("CPU avg");
             ImGui::Text("%.2f ms", stats.processingMs);
-            row("Processing peak");
+            row("CPU peak");
             ImGui::Text("%.2f ms", stats.peakProcessingMs);
+            row("CPU p95 / p99");
+            ImGui::Text("%.2f / %.2f ms", stats.p95ProcessingMs, stats.p99ProcessingMs);
+            row("GPU span");
+            if (stats.gpuReady)
+                ImGui::Text("%.2f ms", stats.gpuMs);
+            else
+                ImGui::TextDisabled("Measuring...");
             ImGui::EndTable();
         }
     }
@@ -3741,6 +3749,7 @@ void OnOverlay(effect_runtime* runtime)
 {
     if (runtime != m.runtime)
         return;
+    const auto started = FrameStatistics::Clock::now();
     // The menu's look only applies to its own windows, so ReShade's is restored after, also after an error.
     ImGuiStyle& style = ImGui::GetStyle();
     const ImGuiStyle saved = style;
@@ -3750,6 +3759,7 @@ void OnOverlay(effect_runtime* runtime)
         DrawOverlay(menu);
     });
     style = saved;
+    g.menuCpuMs += std::chrono::duration<double, std::milli>(FrameStatistics::Clock::now() - started).count();
 }
 
 void OnInitRuntime(effect_runtime* runtime)
