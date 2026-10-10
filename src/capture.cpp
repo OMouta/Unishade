@@ -160,6 +160,7 @@ void CloseCapture()
         g.arrivedFrame = nullptr;
     }
     g.latestFrame = nullptr;
+    ResetDepthInput();
     if (g.session)
         g.session.Close();
     g.session = nullptr;
@@ -262,6 +263,7 @@ void RequestBorderlessCapture()
 void StartCapture(HWND target)
 {
     const bool resumed = captureIdle.exchange(false);
+    ResetDepthInput();
     auto interop = winrt::get_activation_factory<GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
     GraphicsCaptureItem item{ nullptr };
     winrt::check_hresult(interop->CreateForWindow(target, winrt::guid_of<GraphicsCaptureItem>(), winrt::put_abi(item)));
@@ -420,8 +422,8 @@ void PresentLatestFrame()
         g.context->CopyResource(backBuffer.get(), surface.get());
     else
         DrawFrame(surface.get(), size, backBuffer.get(), width, height);
-    // Depth is estimated from SDR, so an HDR frame is read once it was drawn as SDR.
-    UpdateDepth(g.hdrWhiteLevel ? backBuffer.get() : surface.get());
+    // Depth uses the same scaled SDR input as effects, including when the capture itself is SDR.
+    UpdateDepth(backBuffer.get(), frameTimestamp);
     const HRESULT presented = g.swapchain->Present(0, 0);
     if (FAILED(presented))
         Log(LogLevel::Error, L"Swapchain Present failed: 0x%08X, device_reason=0x%08X, output=%ux%u, source=%ux%u, source_format=%u.",

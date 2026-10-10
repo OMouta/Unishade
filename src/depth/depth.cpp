@@ -13,11 +13,13 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <initializer_list>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -186,6 +188,10 @@ struct Depth
     int size = 0;   // their longest side, as picked in the menu's Settings
     UINT sourceWidth = 0;
     UINT sourceHeight = 0;
+    std::optional<int64_t> lastInput;
+    FrameStatistics::Clock::time_point requestedAt{};
+    std::atomic<double> workerMs = 0;
+    bool slowRequestLogged = false;
     // Compiled once, so the shaders can be made again on a new device.
     std::array<winrt::com_ptr<ID3DBlob>, std::size(kEntryPoints)> code;
     std::array<winrt::com_ptr<ID3D11ComputeShader>, std::size(kEntryPoints)> shaders;
@@ -390,6 +396,7 @@ void Worker()
         }
         try
         {
+            const auto started = FrameStatistics::Clock::now();
             if (!d.d3d12)
                 CreateD3D12();
             if (d.width != loadedWidth || d.height != loadedHeight)
@@ -426,6 +433,7 @@ void Worker()
                 Copy(queue, output.get(), outputBuffer.get(), false);
                 winrt::check_hresult(queue->Signal(d.d3d12Fence.get(), d.inputValue + 1));
             }
+            d.workerMs = std::chrono::duration<double, std::milli>(FrameStatistics::Clock::now() - started).count();
         }
         catch (const std::exception& e)
         {
@@ -449,6 +457,8 @@ void Worker()
 void Request(uint64_t value)
 {
     d.inputValue = value;
+    d.requestedAt = FrameStatistics::Clock::now();
+    d.slowRequestLogged = false;
     d.busy = true;
     SetEvent(d.request);
 }
@@ -533,6 +543,7 @@ void ReleaseResources()
         shader = nullptr;
     d.sourceWidth = 0;
     d.sourceHeight = 0;
+    d.lastInput.reset();
 }
 
 // Turns depth off after an error. At a size other than the default it goes back to the default instead, since the size
@@ -562,6 +573,8 @@ void Resize(const D3D11_TEXTURE2D_DESC& frame)
     d.height = landscape ? shortSide : d.size;
     d.sourceWidth = frame.Width;
     d.sourceHeight = frame.Height;
+    d.lastInput.reset();
+    Log(LogLevel::Info, L"Depth resize: source=%ux%u, model=%dx%d, detail=%d.", frame.Width, frame.Height, d.width, d.height, d.size);
     ReleaseShared();
 
     D3D11_TEXTURE2D_DESC copy = frame;
@@ -713,7 +726,7 @@ bool InitDepth()
     return true;
 }
 
-void UpdateDepth(ID3D11Texture2D* frame)
+void UpdateDepth(ID3D11Texture2D* frame, int64_t frameTimestamp)
 {
     if (!d.enabled)
         return;
@@ -722,6 +735,11 @@ void UpdateDepth(ID3D11Texture2D* frame)
     {
         if (d.busy)
         {
+            if (!d.slowRequestLogged && FrameStatistics::Clock::now() - d.requestedAt >= std::chrono::seconds(2))
+            {
+                d.slowRequestLogged = true;
+                LogDepthDiagnostics();
+            }
             if (!d.done)
                 return;
             if (d.failed)
@@ -738,7 +756,11 @@ void UpdateDepth(ID3D11Texture2D* frame)
             d.busy = false;
             // Nothing is left to publish to after the device was lost.
             if (d.inputValue && d.texture)
+            {
                 Publish();
+                g.frameStatistics.RecordDepth(std::chrono::duration<double, std::milli>(FrameStatistics::Clock::now() - d.requestedAt).count(),
+                                              d.workerMs.load());
+            }
         }
 
         if (!d.shaders[0])
@@ -747,6 +769,9 @@ void UpdateDepth(ID3D11Texture2D* frame)
         frame->GetDesc(&desc);
         if (desc.Width != d.sourceWidth || desc.Height != d.sourceHeight || d.size != DepthSize())
             Resize(desc);
+        // Publish above even for repeated captures, then avoid another inference on unchanged input.
+        if (d.lastInput && *d.lastInput == frameTimestamp)
+            return;
         // The worker builds the model for each size, which tells what types it takes.
         if (d.modelWidth != d.width || d.modelHeight != d.height)
         {
@@ -761,6 +786,7 @@ void UpdateDepth(ID3D11Texture2D* frame)
         d.fenceValue += 2;
         winrt::check_hresult(g.context.as<ID3D11DeviceContext4>()->Signal(d.fence.get(), d.fenceValue - 1));
         Request(d.fenceValue - 1);
+        d.lastInput = frameTimestamp;
     }
     catch (const winrt::hresult_error& e)
     {
@@ -775,6 +801,22 @@ void UpdateDepth(ID3D11Texture2D* frame)
 bool DepthEnabled()
 {
     return d.enabled;
+}
+
+void ResetDepthInput()
+{
+    d.lastInput.reset();
+}
+
+void LogDepthDiagnostics()
+{
+    const double pendingMs = d.busy ? std::chrono::duration<double, std::milli>(FrameStatistics::Clock::now() - d.requestedAt).count() : 0;
+    // The worker may still be creating its fence during the first model-only request.
+    const bool fenceReady = !d.busy || d.done || d.inputValue;
+    Log(LogLevel::Info, L"Depth state: enabled=%d, busy=%d, worker_done=%d, pending_ms=%.2f, worker_submit_ms=%.2f, "
+                       L"input_fence=%llu, completed_fence=%llu, source=%ux%u, requested_model=%dx%d, resource_version=%u.",
+        d.enabled, d.busy.load(), d.done.load(), pendingMs, d.workerMs.load(), d.inputValue,
+        fenceReady && d.d3d12Fence ? d.d3d12Fence->GetCompletedValue() : 0, d.sourceWidth, d.sourceHeight, d.width, d.height, d.version);
 }
 
 void ReleaseDepthDevice()
