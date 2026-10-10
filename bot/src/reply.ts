@@ -1,9 +1,11 @@
-import { Message, MessageFlags, type AttachmentPayload, type MessageMentionOptions, type PollData } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, Message, MessageFlags, type AttachmentPayload, type MessageMentionOptions, type PollData } from "discord.js";
 import { answer, type Answer } from "./answer.ts";
 import { conversation, type Ask } from "./conversation.ts";
 import { extras, shownWhileAnswering, type Extras } from "./extras.ts";
 import { logAnswer } from "./log.ts";
+import { openThreadButton, threadButtons } from "./support.ts";
 import { questionsFor, tagNames, type Tags } from "./tags.ts";
+import { countAnswer, supportThread } from "./threads.ts";
 import { recordAnswer } from "./usage.ts";
 
 // Discord takes about 5 edits every 5 seconds in a channel, so the reply is edited this often at most. Each edit waits
@@ -41,7 +43,13 @@ const pick = (list: readonly string[]) => list[Math.floor(Math.random() * list.l
 
 // What the reply is posted and edited with. The answer comes from a model reading what users typed, so it pings nobody
 // but the person asking. Links don't unfurl, but for the songs from [music], where no flags lets them.
-type Edit = { content: string; allowedMentions: MessageMentionOptions; flags: MessageFlags.SuppressEmbeds | []; files?: AttachmentPayload[] };
+type Edit = {
+  content: string;
+  allowedMentions: MessageMentionOptions;
+  flags: MessageFlags.SuppressEmbeds | [];
+  files?: AttachmentPayload[];
+  components?: ActionRowBuilder<ButtonBuilder>[];
+};
 // show posts the reply the first time and edits it after, giving back the message. follow posts the poll from [poll]
 // under it, since a poll can't be edited into a message.
 type Reply = {
@@ -77,7 +85,7 @@ export async function respond(question: Message<true> | Ask, userId: string, tag
   // What's shown of the answer so far, and in the end, the finished one.
   let text = "";
   let shown: Message | undefined;
-  async function update(line: string, final?: { files: AttachmentPayload[] }) {
+  async function update(line: string, final?: Pick<Edit, "files" | "components">) {
     // Room for the line, and for closing a code block the answer is still in the middle of, which would take the line
     // in with it.
     let body = text.trim().slice(0, 2000 - asked.heading.length - line.length - 6);
@@ -105,13 +113,16 @@ export async function respond(question: Message<true> | Ask, userId: string, tag
   })();
 
   let result: Answer | { error: string };
-  let made: Extras = { text: "I couldn't answer that right now. Try again in a minute.", files: [] };
+  let made: Extras = { text: "I couldn't answer that right now. Try again in a minute.", files: [], offersThread: false };
   try {
     result = await answer(await conversation(question, tags), (sofar) => {
       text = shownWhileAnswering(sofar, tags);
     });
     made = await extras(result.text, tags);
-    recordAnswer(userId, result, questionsFor(tags, result.searched));
+    // In a private thread, answers count toward the thread and not the day.
+    const inThread = !!supportThread(question.channel.id);
+    recordAnswer(userId, result, inThread ? 0 : questionsFor(tags, result.searched));
+    if (inThread) countAnswer(question.channel.id);
   } catch (error) {
     console.error(`Could not answer ${question.id}:`, error);
     result = { error: error instanceof Error ? error.message : String(error) };
@@ -122,12 +133,18 @@ export async function respond(question: Message<true> | Ask, userId: string, tag
   wake();
   await animation;
   text = made.text;
+  // Looked up after answering, since someone may have pressed Get a human or Solved in the meantime.
+  const thread = supportThread(question.channel.id);
+  const buttons =
+    "error" in result
+      ? []
+      : [...(made.offersThread && !thread ? [openThreadButton(asked.user.id)] : []), ...(thread ? threadButtons(thread) : [])];
   // A failed answer gets no line.
   await update(
     "error" in result
       ? ""
       : [`-# Done in ${seconds}s`, names.length && `Tags: ${names.join(", ")}`, result.searched && "Searched the web"].filter(Boolean).join(" · "),
-    { files: made.files },
+    { files: made.files, components: buttons.length ? [new ActionRowBuilder<ButtonBuilder>().addComponents(buttons)] : [] },
   );
   if (made.poll) {
     await reply.follow({ poll: made.poll, allowedMentions: { parse: [] } }).catch((error) => console.error(`Could not post the poll for ${question.id}:`, error));

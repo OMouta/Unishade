@@ -24,6 +24,16 @@ Put these in a question to change how the bot answers it. `/tags` lists them for
 
 `[tldr]` counts as one more question, and so do `[web]` and `[music]` when the bot searches.
 
+## Private threads
+
+When someone needs to share `Unishade.log`, or their problem will take some back and forth, the bot can offer a private thread with a button under its answer. Only the person who asked can press it. The thread opens in the channel in `CHANNEL_ID`, or where they asked when that's not set. Only they and members with **Manage Threads** see it. Each member gets one open thread at a time.
+
+In the thread, the bot answers them without a mention. It waits until they've stopped writing for 4 seconds, so a question split over several messages gets one answer. These answers don't count toward the day, and a thread gets 40 at most.
+
+Under each answer in the thread, **Solved** closes and locks it, and **Get a human** pings the roles in `TEAM_ROLE_IDS`, which adds them to the thread. After that, the bot answers there only when someone mentions it. The person the thread is for and the team can press either.
+
+The bot needs **Create Private Threads**, **Send Messages in Threads** and **Manage Threads** in that channel.
+
 ## Context
 
 The bot always reads the docs in `website/src/content/docs`. To give it more, such as an announcement, right-click a message and pick **Apps > Add to context**. **Remove from context** takes it out again, and `/context` lists what's in. Only members who can manage the server see these.
@@ -40,7 +50,7 @@ Right-click a member and pick **Apps > Exclude from AI** to have the bot ignore 
 
 ## Log
 
-With `LOG_CHANNEL_ID` set, every answer goes to that channel: who asked and where, the question, the answer or why it failed, the tags, the model, tokens and cost. So does who paused or unpaused the bot.
+With `LOG_CHANNEL_ID` set, every answer goes to that channel: who asked and where, the question, the answer or why it failed, the tags, the model, tokens and cost. So does who paused or unpaused the bot, opened a private thread or asked for a human.
 
 ## Usage
 

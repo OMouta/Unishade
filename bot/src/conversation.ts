@@ -1,5 +1,15 @@
-import { Message, MessageReferenceType, type Attachment, type GuildMember, type GuildTextBasedChannel, type User } from "discord.js";
+import {
+  cleanContent,
+  Message,
+  MessageReferenceType,
+  type Attachment,
+  type GuildMember,
+  type GuildTextBasedChannel,
+  type ThreadChannel,
+  type User,
+} from "discord.js";
 import type { Tags } from "./tags.ts";
+import { supportThread } from "./threads.ts";
 import { habitsOf } from "./usage.ts";
 
 // How many messages before the mention are sent along, so a question asked over several messages reads as one. [tldr]
@@ -37,6 +47,15 @@ async function describe(message: Message<true>): Promise<string> {
   return nameWithRoles(message.author, member);
 }
 
+// A thread made from a message starts with that one. A private thread has none, and its first message stands in, past
+// the notes Discord posts, such as who was added.
+async function firstMessage(thread: ThreadChannel): Promise<Message<true> | null> {
+  const starter = await thread.fetchStarterMessage().catch(() => null);
+  if (starter) return starter;
+  const first = await thread.messages.fetch({ after: thread.id, limit: 5 }).catch(() => null);
+  return first?.filter((each) => !each.system).sort((a, b) => a.createdTimestamp - b.createdTimestamp).first() ?? null;
+}
+
 const isTextFile = (attachment: Attachment) =>
   attachment.size <= maxFileSize && (/\.(log|txt)$/i.test(attachment.name) || !!attachment.contentType?.startsWith("text/"));
 const isImage = (attachment: Attachment) => /^image\/(png|jpeg|webp)$/.test(attachment.contentType ?? "");
@@ -68,8 +87,9 @@ export type Ask = { id: string; channel: GuildTextBasedChannel; member: GuildMem
 // The question, which is the message that mentions the bot with the one it replies to, or the question from /ask, and
 // apart from it the background to follow it by: where it was asked, what came before, and attached files. Kept apart,
 // the model answers the question and not whatever is still open further up. Images are the URLs of its pictures, which
-// the model fetches itself. Tags are the ones it was asked with.
-export type Conversation = { background: string; mention: string; images: string[]; tags: Tags };
+// the model fetches itself. Tags are the ones it was asked with, and supportThread is whether it was asked in a private
+// thread the bot opened.
+export type Conversation = { background: string; mention: string; images: string[]; tags: Tags; supportThread: boolean };
 
 export async function conversation(question: Message<true> | Ask, tags: Tags): Promise<Conversation> {
   const message = question instanceof Message ? question : null;
@@ -78,7 +98,7 @@ export async function conversation(question: Message<true> | Ask, tags: Tags): P
     channel.messages.fetch({ limit: tags.tldr ? tldrHistoryLength : historyLength, before: question.id }),
     // A deleted message can't be fetched, and the question still stands without it.
     message?.reference?.type === MessageReferenceType.Default ? message.fetchReference().catch(() => null) : null,
-    channel.isThread() ? channel.fetchStarterMessage().catch(() => null) : null,
+    channel.isThread() ? firstMessage(channel) : null,
   ]);
   // Newest first, which is also the order files are read in.
   const messages = [message, replied, ...earlier.values(), starter].filter((each) => each != null);
@@ -99,7 +119,7 @@ export async function conversation(question: Message<true> | Ask, tags: Tags): P
 
   const background = [channel.isThread() ? `Thread "${channel.name}" in #${channel.parent?.name}` : `Channel: #${channel.name}`];
   // In a long thread, the question that opened it is further back than the earlier messages go.
-  if (starter && starter.id !== message?.id) background.push(`The thread starts with this message from ${nameOf(starter)}:\n${textOf(starter)}`);
+  if (starter && starter.id !== message?.id && !earlier.has(starter.id)) background.push(`The thread starts with this message from ${nameOf(starter)}:\n${textOf(starter)}`);
   if (earlier.size) {
     const lines = [...earlier.values()].reverse().map((previous) => `${nameOf(previous)}: ${cut(textOf(previous))}`);
     background.push(`Earlier messages, oldest first:\n${lines.join("\n")}`);
@@ -126,5 +146,19 @@ export async function conversation(question: Message<true> | Ask, tags: Tags): P
       .slice(0, maxImages)
       .map((attachment) => attachment.url),
     tags,
+    supportThread: !!supportThread(channel.id),
   };
+}
+
+// An answer the bot posted, without the line under it, and the question it was for: the message it replies to, or the
+// question /ask quotes above it.
+export async function exchangeOf(answer: Message<true>): Promise<{ question: string; answer: string }> {
+  const text = textOf(answer);
+  const replied = answer.reference ? await answer.fetchReference().catch(() => null) : null;
+  if (replied) {
+    const content = replied.content.replace(new RegExp(`<@!?${answer.client.user.id}>`, "g"), "");
+    return { question: cleanContent(content, replied.channel).trim(), answer: text };
+  }
+  const [, quoted = "", rest = text] = text.match(/^> (.*)\n([\s\S]*)$/) ?? [];
+  return { question: quoted, answer: rest };
 }

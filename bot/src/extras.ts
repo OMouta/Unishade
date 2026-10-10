@@ -3,19 +3,22 @@ import type { Tags } from "./tags.ts";
 
 // What some tags make of the answer: [shader] attaches its code block as a .fx file, [bug] turns its report into a link
 // to a filled-in GitHub issue, [poll] turns its poll block into a Discord poll, and [music] keeps only the Spotify and
-// SoundCloud links that lead somewhere.
-export type Extras = { text: string; files: AttachmentPayload[]; poll?: PollData };
+// SoundCloud links that lead somewhere. Without a tag, an answer can offer a private thread, which becomes a button.
+export type Extras = { text: string; files: AttachmentPayload[]; poll?: PollData; offersThread: boolean };
 
 // Code blocks, and while the answer comes in, the one that isn't closed yet.
 const codeBlocks = /```[\s\S]*?(?:```|$)/g;
 // Spotify and SoundCloud links, raw or inside [text](link).
 const musicLinks = /https:\/\/(?:open\.spotify\.com|(?:on\.)?soundcloud\.com)\/[^\s)>\]]+/g;
+const threadOffer = /\[private thread\]/gi;
 
-// The shader, the bug report and the poll aren't shown, so they're left out while the answer comes in.
-export const shownWhileAnswering = (text: string, tags: Tags) => (tags.shader || tags.bug || tags.poll ? text.replace(codeBlocks, "") : text);
+// The shader, the bug report, the poll and the thread offer aren't shown, so they're left out while the answer comes in.
+export const shownWhileAnswering = (text: string, tags: Tags) =>
+  (tags.shader || tags.bug || tags.poll ? text.replace(codeBlocks, "") : text).replace(threadOffer, "");
 
 export async function extras(answer: string, tags: Tags): Promise<Extras> {
-  const result: Extras = { text: answer, files: [] };
+  const text = answer.replace(threadOffer, "");
+  const result: Extras = { text, files: [], offersThread: text !== answer };
   let report: { link?: string } | undefined;
   for (const [block, language, code] of answer.matchAll(/```(\w*)[^\n]*\n([\s\S]*?)```/g)) {
     // Asked for more than one, the bug report and the poll are the blocks marked as them.

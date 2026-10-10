@@ -6,6 +6,7 @@ import {
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
+  type ButtonInteraction,
   type ChatInputCommandInteraction,
   type Interaction,
 } from "discord.js";
@@ -14,8 +15,13 @@ import { channelId, describeLimits, inChannel, limit, tierOf } from "./limit.ts"
 import { logNote } from "./log.ts";
 import { hasFlag, setFlag, type Flag } from "./members.ts";
 import { replyTo, respond } from "./reply.ts";
+import { supportButtons } from "./support.ts";
 import { effortOf, efforts, maySearch, optionDescription, questionsFor, readTags, switches, tagList, type Tags } from "./tags.ts";
+import { supportThread } from "./threads.ts";
 import { usageReport } from "./usage.ts";
+
+// By the part of their custom ID before the colon. What comes after, such as a user ID, is passed along.
+const buttons: Record<string, (interaction: ButtonInteraction<"cached">, value: string) => Promise<void>> = supportButtons;
 
 const answerThis = "Answer this";
 const add = "Add to context";
@@ -130,7 +136,7 @@ async function ask(interaction: ChatInputCommandInteraction<"cached">) {
   const tier = tierOf(member);
   if (tier !== "team") {
     // Nobody else sees these replies, so they come every time and not just once.
-    const verdict = limit(member.id, tier, questionsFor(tags, maySearch(tags)));
+    const verdict = limit(member.id, tier, questionsFor(tags, maySearch(tags)), supportThread(channel.id));
     if (verdict !== "answer") {
       await interaction.reply(ephemeral(verdict.warn));
       return;
@@ -158,6 +164,12 @@ function list(): string {
 
 export async function handleInteraction(interaction: Interaction) {
   if (!interaction.inCachedGuild()) return;
+
+  if (interaction.isButton()) {
+    const [action, value = ""] = interaction.customId.split(":");
+    await buttons[action]?.(interaction, value);
+    return;
+  }
 
   if (interaction.isChatInputCommand()) {
     if (interaction.commandName === "context") {

@@ -5,21 +5,48 @@ import { channelId, inChannel, limit, tierOf } from "./limit.ts";
 import { hasFlag } from "./members.ts";
 import { replyTo } from "./reply.ts";
 import { maySearch, questionsFor, readTags } from "./tags.ts";
+import { forgetThread, supportThread } from "./threads.ts";
 
 const token = process.env.DISCORD_TOKEN;
 if (!token) throw new Error("DISCORD_TOKEN is not set");
 
+// In their private thread, people often ask over several messages, so the bot waits until they've been quiet this long
+// and answers the last one, with the others before it.
+const quietTime = 4_000;
+const waiting = new Map<string, NodeJS.Timeout>();
+
 async function handleMessage(message: Message) {
   if (message.author.bot || message.system || !message.inGuild()) return;
   // A reply to one of the bot's messages mentions it too, unless the person turned the ping off.
-  if (!message.mentions.has(message.client.user, { ignoreEveryone: true, ignoreRoles: true })) return;
+  const mentioned = message.mentions.has(message.client.user, { ignoreEveryone: true, ignoreRoles: true });
+  // In their private thread, the person it's for doesn't have to mention the bot, until they ask for a human.
+  const thread = supportThread(message.channelId);
+  const asking = !!thread && !thread.human && message.author.id === thread.asker;
+  if (!mentioned && !asking) return;
   // Paused, the bot's status says so, and it doesn't reply to each mention, which could be a spam wave.
   if (hasFlag("excluded", message.author.id) || isPaused()) return;
 
+  if (asking) clearTimeout(waiting.get(message.channelId));
+  if (mentioned) {
+    await handleQuestion(message);
+    return;
+  }
+  waiting.set(
+    message.channelId,
+    setTimeout(() => {
+      waiting.delete(message.channelId);
+      handleQuestion(message).catch((error) => console.error(`Could not reply to message ${message.id}:`, error));
+    }, quietTime),
+  );
+  await message.channel.sendTyping();
+}
+
+async function handleQuestion(message: Message<true>) {
   const tags = readTags(message.content);
   const tier = message.member ? tierOf(message.member) : 0;
   if (tier !== "team") {
-    const verdict = limit(message.author.id, tier, "error" in tags ? 1 : questionsFor(tags, maySearch(tags)));
+    const questions = "error" in tags ? 1 : questionsFor(tags, maySearch(tags));
+    const verdict = limit(message.author.id, tier, questions, supportThread(message.channelId));
     if (verdict !== "answer") {
       if (!verdict.again) await message.reply(verdict.warn);
       return;
@@ -60,6 +87,9 @@ client.on(Events.InteractionCreate, (interaction) => {
 // A deleted message can't be picked for Remove from context any more, so it leaves the context with it.
 client.on(Events.MessageDelete, (message) => {
   removeMessage(message.id);
+});
+client.on(Events.ThreadDelete, (thread) => {
+  forgetThread(thread.id);
 });
 
 await client.login(token);
