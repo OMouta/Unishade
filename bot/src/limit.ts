@@ -1,4 +1,7 @@
 import { EmbedBuilder, PermissionFlagsBits, type GuildMember, type GuildTextBasedChannel } from "discord.js";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { dataDir } from "./context.ts";
 import { hasFlag } from "./members.ts";
 import type { SupportThread } from "./threads.ts";
 import { usedToday } from "./usage.ts";
@@ -22,14 +25,70 @@ export function inChannel(channel: GuildTextBasedChannel): boolean {
 }
 
 export type Tier = 0 | 1 | 2;
-const limits: Record<Tier, { perHour: number; perDay: number }> = {
+type Limits = { perHour: number; perDay: number };
+const defaultLimits: Record<Tier, Limits> = {
   0: { perHour: 15, perDay: 50 },
   1: { perHour: 25, perDay: 80 },
   2: { perHour: 60, perDay: 200 },
 };
 // In a private thread every message gets an answer, so those count toward the thread instead of the hour and the day,
 // this many.
-const perThread = 40;
+const defaultPerThread = 40;
+
+// What the team changed with /limit-settings, kept across restarts. Only what they changed is saved, so the defaults
+// above still apply to the rest. A boost multiplies the hour and day limits until it ends, or with no end, until it's
+// set back to 1.
+type Settings = { tiers: Partial<Record<Tier, Partial<Limits>>>; perThread?: number; boost?: { multiplier: number; until?: number } };
+const file = path.join(dataDir, "limits.json");
+const settings: Settings = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : { tiers: {} };
+
+function save() {
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(file, JSON.stringify(settings, null, 2));
+}
+
+const baseLimits = (tier: Tier): Limits => ({ ...defaultLimits[tier], ...settings.tiers[tier] });
+const threadLimit = () => settings.perThread ?? defaultPerThread;
+const activeBoost = (now: number) => (settings.boost && (!settings.boost.until || settings.boost.until > now) ? settings.boost : undefined);
+
+function limitsOf(tier: Tier, now: number): Limits {
+  const { perHour, perDay } = baseLimits(tier);
+  const multiplier = activeBoost(now)?.multiplier ?? 1;
+  return { perHour: Math.round(perHour * multiplier), perDay: Math.round(perDay * multiplier) };
+}
+
+// A multiplier of 1 ends the boost. Without days, it lasts until then.
+export function setBoost(multiplier: number, days: number | null, now = Date.now()) {
+  settings.boost = multiplier === 1 ? undefined : { multiplier, until: days ? now + days * day : undefined };
+  save();
+}
+
+export function setTierLimits(tier: Tier, change: Partial<Limits>) {
+  settings.tiers[tier] = { ...settings.tiers[tier], ...change };
+  save();
+}
+
+export function setThreadLimit(answers: number) {
+  settings.perThread = answers;
+  save();
+}
+
+export const tierNames: Record<Tier, string> = { 0: "Everyone", 1: "Tier 1", 2: "Tier 2" };
+
+// What /limit-settings shows the team after each change.
+export function describeSettings(now = Date.now()): string {
+  const boost = activeBoost(now);
+  const tiers = ([0, 1, 2] as const).map((tier) => {
+    const { perHour, perDay } = limitsOf(tier, now);
+    const base = baseLimits(tier);
+    return `${tierNames[tier]}: ${perHour} an hour, ${perDay} a day${boost ? ` (${base.perHour} and ${base.perDay} without the boost)` : ""}`;
+  });
+  return [
+    `Boost: ${boost ? `${boost.multiplier}×, ${boost.until ? `ends ${timestamp(boost.until, "f")}` : "until you set it back to 1"}` : "off"}`,
+    ...tiers,
+    `Private threads: ${threadLimit()} answers each`,
+  ].join("\n");
+}
 
 // Members an admin used Remove limits on count as the team.
 export function tierOf(member: GuildMember): Tier | "team" {
@@ -43,8 +102,8 @@ const hour = 3_600_000;
 const day = 86_400_000;
 // Days are UTC, like the usage records.
 const nextDay = (now: number) => (Math.floor(now / day) + 1) * day;
-// Discord shows it in each reader's time zone, such as "in 23 minutes".
-const timestamp = (time: number) => `<t:${Math.floor(time / 1000)}:R>`;
+// Discord shows it in each reader's time zone, such as "in 23 minutes", or with "f", the date and time.
+const timestamp = (time: number, style: "R" | "f" = "R") => `<t:${Math.floor(time / 1000)}:${style}>`;
 
 // Each person's hour starts with their first question in it, and resets an hour later. It counts each question as the
 // most it can count as when it's asked, so a burst of mentions can't all get through before the first is answered. Kept
@@ -71,7 +130,8 @@ export function firstWarning(userId: string): boolean {
 // answer doesn't use one up. Questions is the most this one can count as, with its tags. Thread is the private thread
 // it's asked in, if it is.
 export function limit(userId: string, tier: Tier, questions: number, thread?: SupportThread, now = Date.now()): "answer" | { warn: string; again: boolean } {
-  const { perHour, perDay } = limits[tier];
+  const { perHour, perDay } = limitsOf(tier, now);
+  const perThread = threadLimit();
   let warning: string | undefined;
   if (thread) {
     if (thread.answers >= perThread) warning = `I've given this thread all ${perThread} answers I can. Press Get a human under my last one to bring in the team.`;
@@ -106,15 +166,23 @@ export function describeLimits(member: GuildMember, thread?: SupportThread, now 
   if (hasFlag("excluded", member.id)) return { content: "The bot doesn't answer you." };
   const tier = tierOf(member);
   if (tier === "team") return { content: "You can ask as often as you like, in any channel." };
-  const { perHour, perDay } = limits[tier];
+  const { perHour, perDay } = limitsOf(tier, now);
+  const perThread = threadLimit();
+  const boost = activeBoost(now);
   const thisHour = hourOf(member.id, now);
   const hourUsed = thisHour?.used ?? 0;
   const today = usedToday(member.id);
   const where = tier === 0 && channelIds.length ? `You can ask in ${channelList}.` : "You can ask in any channel.";
+  const boosted = boost && `**${boost.multiplier}× limits**${boost.until ? ` until ${timestamp(boost.until, "f")}` : " for now"}.`;
   const embed = new EmbedBuilder()
     .setTitle("Your limits")
     .setDescription(
-      `${where} [tldr] and a web search from [web] each count as one more question. Answers in a private thread with me only count toward the thread.`,
+      [
+        boosted,
+        `${where} [tldr] and a web search from [web] each count as one more question. Answers in a private thread with me only count toward the thread.`,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
     )
     .addFields(
       {

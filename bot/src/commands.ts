@@ -11,7 +11,19 @@ import {
   type Interaction,
 } from "discord.js";
 import { removeMessage, saveMessage, savedMessages } from "./context.ts";
-import { channelList, describeLimits, inChannel, limit, tierOf } from "./limit.ts";
+import {
+  channelList,
+  describeLimits,
+  describeSettings,
+  inChannel,
+  limit,
+  setBoost,
+  setThreadLimit,
+  setTierLimits,
+  tierNames,
+  tierOf,
+  type Tier,
+} from "./limit.ts";
 import { logging, logNote } from "./log.ts";
 import { hasFlag, setFlag, type Flag } from "./members.ts";
 import { replyTo, respond } from "./reply.ts";
@@ -93,6 +105,41 @@ export const commands = [
     .setDescription("Show what the bot spent and who it answered")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .setContexts(InteractionContextType.Guild),
+  new SlashCommandBuilder()
+    .setName("limit-settings")
+    .setDescription("See or change how many questions members can ask")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .setContexts(InteractionContextType.Guild)
+    .addSubcommand((command) => command.setName("show").setDescription("See the limits"))
+    .addSubcommand((command) =>
+      command
+        .setName("boost")
+        .setDescription("Multiply everyone's hourly and daily limits")
+        .addNumberOption((option) =>
+          option.setName("multiplier").setDescription("Such as 2 for 2× limits, or 1 to end a boost").setRequired(true).setMinValue(1).setMaxValue(10),
+        )
+        .addIntegerOption((option) => option.setName("days").setDescription("How long it lasts. Without it, until you set it back to 1").setMinValue(1).setMaxValue(60)),
+    )
+    .addSubcommand((command) =>
+      command
+        .setName("set")
+        .setDescription("Change the limits for everyone or a tier")
+        .addIntegerOption((option) =>
+          option
+            .setName("who")
+            .setDescription("Whose limits")
+            .setRequired(true)
+            .addChoices(...([0, 1, 2] as const).map((tier) => ({ name: tierNames[tier], value: tier }))),
+        )
+        .addIntegerOption((option) => option.setName("hour").setDescription("Questions an hour").setMinValue(1).setMaxValue(10_000))
+        .addIntegerOption((option) => option.setName("day").setDescription("Questions a day").setMinValue(1).setMaxValue(10_000)),
+    )
+    .addSubcommand((command) =>
+      command
+        .setName("threads")
+        .setDescription("Change how many answers a private thread gets")
+        .addIntegerOption((option) => option.setName("answers").setDescription("Answers a thread").setRequired(true).setMinValue(1).setMaxValue(1000)),
+    ),
 ];
 
 const ephemeral = (content: string) => ({ content, flags: MessageFlags.Ephemeral }) as const;
@@ -111,6 +158,25 @@ async function togglePause(interaction: ChatInputCommandInteraction<"cached">) {
   );
   await interaction.reply(ephemeral(paused ? "Paused. The bot answers nobody until someone runs /pause again." : "The bot answers again."));
   await logNote(interaction.client, `<@${interaction.user.id}> ${paused ? "paused" : "unpaused"} the bot.`);
+}
+
+// Every subcommand but show changes something, saved across restarts, and goes to the log. All of them reply with the
+// limits as they are now.
+async function limitSettings(interaction: ChatInputCommandInteraction<"cached">) {
+  const { options } = interaction;
+  const subcommand = options.getSubcommand();
+  if (subcommand === "boost") setBoost(options.getNumber("multiplier", true), options.getInteger("days"));
+  if (subcommand === "threads") setThreadLimit(options.getInteger("answers", true));
+  if (subcommand === "set") {
+    const [perHour, perDay] = [options.getInteger("hour"), options.getInteger("day")];
+    if (perHour === null && perDay === null) {
+      await interaction.reply(ephemeral("Give an hour limit, a day limit or both."));
+      return;
+    }
+    setTierLimits(options.getInteger("who", true) as Tier, { ...(perHour !== null && { perHour }), ...(perDay !== null && { perDay }) });
+  }
+  await interaction.reply(ephemeral(describeSettings()));
+  if (subcommand !== "show") await logNote(interaction.client, `<@${interaction.user.id}> changed the limits:\n${describeSettings()}`);
 }
 
 // Like a mention, but it can take a file and its tags are options.
@@ -201,6 +267,10 @@ export async function handleInteraction(interaction: Interaction) {
     }
     if (interaction.commandName === "pause") {
       await togglePause(interaction);
+      return;
+    }
+    if (interaction.commandName === "limit-settings") {
+      await limitSettings(interaction);
       return;
     }
     // Asking OpenRouter can take longer than the 3 seconds Discord waits for a reply.

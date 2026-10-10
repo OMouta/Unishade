@@ -54,6 +54,10 @@ Right-click a member and pick **Apps > Exclude from AI** to have the bot ignore 
 
 `/pause` stops the bot answering anyone, the team included, until someone runs it again or the bot restarts. While it's paused, its status shows Do Not Disturb and mentions get no reply. Only members who can manage the server see `/pause`, and Server Settings > Integrations can give it to the team's roles.
 
+## Changing limits
+
+`/limit-settings boost` multiplies everyone's hourly and daily limits, such as `multiplier: 2` for a 2x week. Give it `days` to have it end on its own, or set it back to 1 to end it. While it's on, `/limits` tells members. `/limit-settings set` changes the hourly or daily limit for everyone or a tier, `/limit-settings threads` changes how many answers a private thread gets, and `/limit-settings show` lists the limits. Changes last across restarts and go to the log. Only members who can manage the server see the command.
+
 ## Log
 
 With `LOG_CHANNEL_ID` set, every answer goes to that channel: who asked and where, the question, the answer or why it failed, the tags, the model, tokens and cost. So does who paused or unpaused the bot, opened a private thread or asked for a human.
