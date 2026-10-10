@@ -12,6 +12,7 @@
 #include <windows.graphics.capture.interop.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
 #include <d3dcompiler.h>
+#include <dxgi1_4.h>
 
 #include <algorithm>
 #include <atomic>
@@ -28,6 +29,11 @@ constexpr wchar_t kSessionClass[] = L"Windows.Graphics.Capture.GraphicsCaptureSe
 std::atomic<bool> borderRequired = false;
 std::atomic<bool> captureIdle = false;
 
+winrt::handle frameLatency;
+bool frameReady = false;
+bool waitingForFrame = false;
+FrameStatistics::Clock::time_point capacityWaitStarted{};
+double capacityWaitMs = 0;
 winrt::com_ptr<ID3D11RenderTargetView> scaleTarget;
 
 // Draws a texture over the whole target with one triangle. tonemap does it for an HDR frame.
@@ -226,6 +232,9 @@ void ReleaseDevice()
 {
     Log(LogLevel::Info, L"Releasing capture, swapchain, depth resources and graphics device.");
     StopCapture();
+    frameLatency.close();
+    frameReady = waitingForFrame = false;
+    capacityWaitMs = 0;
     scaleTarget = nullptr;
     g.swapchain = nullptr;
     scaler = {};
@@ -348,6 +357,8 @@ void StopCapture()
         Log(LogLevel::Info, L"Stopping capture: hwnd=%p, captured_frames=%llu.", g.target, g.capturedFrames.load(std::memory_order_relaxed));
     SetEditMode(false);
     CloseCapture();
+    waitingForFrame = false;
+    capacityWaitMs = 0;
     captureIdle = false;
     g.target = nullptr;
     g.activeGame.reset();
@@ -360,6 +371,11 @@ void SetCaptureIdle(bool idle)
     if (!g.target || captureIdle == idle)
         return;
     Log(LogLevel::Info, L"Capture idle=%d, hwnd=%p.", idle, g.target);
+    if (idle)
+    {
+        waitingForFrame = false;
+        capacityWaitMs = 0;
+    }
     if (ApiInformation::IsPropertyPresent(kSessionClass, L"MinUpdateInterval"))
     {
         captureIdle = idle;
@@ -374,7 +390,7 @@ void SetCaptureIdle(bool idle)
         StartCapture(g.target);
 }
 
-void PresentLatestFrame()
+bool PresentLatestFrame()
 {
     const auto started = FrameStatistics::Clock::now();
     const int64_t frameTimestamp = g.latestFrame.SystemRelativeTime().count();
@@ -406,7 +422,27 @@ void PresentLatestFrame()
         desc.Scaling = DXGI_SCALING_STRETCH;
         desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
         desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
-        winrt::check_hresult(factory->CreateSwapChainForHwnd(g.device.get(), g.overlay, &desc, nullptr, nullptr, g.swapchain.put()));
+        desc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+        HRESULT created = factory->CreateSwapChainForHwnd(g.device.get(), g.overlay, &desc, nullptr, nullptr, g.swapchain.put());
+        if (created == E_INVALIDARG || created == DXGI_ERROR_UNSUPPORTED)
+        {
+            Log(LogLevel::Info, L"Waitable swapchain unavailable (0x%08X); using device frame latency instead.", static_cast<unsigned>(created));
+            desc.Flags = 0;
+            g.swapchain = nullptr;
+            created = factory->CreateSwapChainForHwnd(g.device.get(), g.overlay, &desc, nullptr, nullptr, g.swapchain.put());
+        }
+        winrt::check_hresult(created);
+        if (desc.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT)
+        {
+            if (auto swapchain = g.swapchain.try_as<IDXGISwapChain2>())
+            {
+                winrt::check_hresult(swapchain->SetMaximumFrameLatency(1));
+                frameLatency.attach(swapchain->GetFrameLatencyWaitableObject());
+            }
+        }
+        frameReady = waitingForFrame = false;
+        Log(LogLevel::Info, L"Presentation pacing: waitable=%d, flags=0x%X, maximum_latency=1.",
+            static_cast<bool>(frameLatency), desc.Flags);
         factory->MakeWindowAssociation(g.overlay, DXGI_MWA_NO_ALT_ENTER);
     }
     else
@@ -424,9 +460,29 @@ void PresentLatestFrame()
         {
             Log(LogLevel::Info, L"Resizing swapchain: %ux%u -> %ux%u, source=%ux%u.", desc.Width, desc.Height, width, height, size.Width, size.Height);
             scaleTarget = nullptr;
-            winrt::check_hresult(g.swapchain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0));
+            winrt::check_hresult(g.swapchain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, desc.Flags));
         }
     }
+
+    if (frameLatency && !frameReady)
+    {
+        const DWORD ready = WaitForSingleObject(frameLatency.get(), 0);
+        if (ready == WAIT_TIMEOUT)
+        {
+            if (!waitingForFrame)
+            {
+                waitingForFrame = true;
+                capacityWaitStarted = FrameStatistics::Clock::now();
+                g.frameStatistics.RecordCapacityWait();
+            }
+            return false;
+        }
+        if (ready == WAIT_FAILED)
+            winrt::throw_last_error();
+        NotifyFrameReady();
+    }
+    frameReady = false;
+    waitingForFrame = false;
 
     winrt::com_ptr<ID3D11Texture2D> backBuffer;
     winrt::check_hresult(g.swapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), backBuffer.put_void()));
@@ -444,4 +500,18 @@ void PresentLatestFrame()
     const auto finished = FrameStatistics::Clock::now();
     g.frameStatistics.RecordPresent(frameTimestamp, std::chrono::duration<double, std::milli>(finished - started).count());
     g.frameStatistics.Update(finished, g.capturedFrames.load(std::memory_order_relaxed));
+    return true;
+}
+
+HANDLE FrameLatencyEvent()
+{
+    return waitingForFrame && !frameReady ? frameLatency.get() : nullptr;
+}
+
+void NotifyFrameReady()
+{
+    frameReady = true;
+    if (waitingForFrame)
+        capacityWaitMs = std::chrono::duration<double, std::milli>(FrameStatistics::Clock::now() - capacityWaitStarted).count();
+    waitingForFrame = false;
 }

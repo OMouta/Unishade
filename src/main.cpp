@@ -327,7 +327,7 @@ void ShowFrames()
 
     // Opening or closing a menu and showing the overlay change the picture without a new frame.
     const bool interactive = g.editMode || ReShadeMenuOpen();
-    if (interactive != loop.wasInteractive || (g.overlayVisible && !loop.wasVisible))
+    if (fresh || interactive != loop.wasInteractive || (g.overlayVisible && !loop.wasVisible))
         loop.presentPending = true;
     loop.wasInteractive = interactive;
     loop.wasVisible = g.overlayVisible;
@@ -337,16 +337,16 @@ void ShowFrames()
     const ULONGLONG now = GetTickCount64();
     if (fresh || interactive || loop.presentPending || ReShadeLoadingEffects() || now < loop.fastUntil || now >= loop.nextRepeat)
     {
-        // A frame rate limit holds back whatever comes too soon, the menu included. A frame held back is shown with
-        // the next one, or on the next repeat when the game stops drawing.
-        if (const int limit = FrameRateLimit())
-        {
-            using namespace std::chrono;
-            const nanoseconds time = FrameStatistics::Clock::now().time_since_epoch();
-            if (!loop.frameLimit.Allow(time.count(), nanoseconds(seconds(1)).count() / limit))
-                return;
-        }
-        PresentLatestFrame();
+        // Only advance the FPS schedule after submission. GPU capacity may hold this frame back too.
+        const int limit = FrameRateLimit();
+        const int64_t time = std::chrono::duration_cast<std::chrono::nanoseconds>(FrameStatistics::Clock::now().time_since_epoch()).count();
+        const int64_t interval = limit ? 1'000'000'000 / limit : 0;
+        if (limit && !loop.frameLimit.Ready(time, interval))
+            return;
+        if (!PresentLatestFrame())
+            return;
+        if (limit)
+            loop.frameLimit.Allow(time, interval);
         loop.presentPending = false;
         loop.nextRepeat = now + kRepeatInterval;
     }
@@ -458,7 +458,11 @@ int Run()
             }
         }
 
-        const DWORD wait = MsgWaitForMultipleObjects(1, &g.frameEvent, FALSE, g.overlayVisible ? 16 : 250, QS_ALLINPUT);
+        const HANDLE capacity = g.overlayVisible ? FrameLatencyEvent() : nullptr;
+        const HANDLE events[] = { g.frameEvent, capacity };
+        const DWORD wait = MsgWaitForMultipleObjects(capacity ? 2 : 1, events, FALSE, g.overlayVisible ? 16 : 250, QS_ALLINPUT);
+        if (capacity && wait == WAIT_OBJECT_0 + 1)
+            NotifyFrameReady();
         if (wait == WAIT_FAILED)
         {
             const DWORD error = GetLastError();

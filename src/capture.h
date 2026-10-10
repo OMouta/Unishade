@@ -26,4 +26,9 @@ void StopCapture();
 void SetCaptureIdle(bool idle);
 
 // Copies the newest captured frame into the overlay swapchain, creating or resizing it as needed.
-void PresentLatestFrame();
+// Returns false while the presentation queue is full, leaving the newest frame pending.
+bool PresentLatestFrame();
+
+// The message loop waits for capacity without blocking capture or window messages.
+HANDLE FrameLatencyEvent();
+void NotifyFrameReady();
