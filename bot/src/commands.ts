@@ -141,14 +141,15 @@ async function ask(interaction: ChatInputCommandInteraction<"cached">) {
 
   const tier = tierOf(member);
   if (tier !== "team") {
-    // Nobody else sees these replies, so they come every time and not just once.
+    // Nobody else sees these replies, so they come every time and not just once. Before the limit, so it doesn't use up
+    // a question.
+    if (tier === 0 && !inChannel(channel)) {
+      await interaction.reply(ephemeral(`Ask me in ${channelList}.`));
+      return;
+    }
     const verdict = limit(member.id, tier, questionsFor(tags, maySearch(tags)), supportThread(channel.id));
     if (verdict !== "answer") {
       await interaction.reply(ephemeral(verdict.warn));
-      return;
-    }
-    if (tier === 0 && !inChannel(channel)) {
-      await interaction.reply(ephemeral(`Ask me in ${channelList}.`));
       return;
     }
   }
@@ -187,7 +188,7 @@ export async function handleInteraction(interaction: Interaction) {
       return;
     }
     if (interaction.commandName === "limits") {
-      await interaction.reply(ephemeral(describeLimits(interaction.member)));
+      await interaction.reply({ ...describeLimits(interaction.member, supportThread(interaction.channelId)), flags: MessageFlags.Ephemeral });
       return;
     }
     if (interaction.commandName === "tags") {

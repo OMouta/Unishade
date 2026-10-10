@@ -41,7 +41,7 @@ export function readTags(text: string): Tags | { error: string } {
 
 export const maySearch = (tags: Tags) => tags.web || tags.music;
 
-// What an answer counts toward the daily limit: one, plus one for a web search and one for [tldr]. Asked before the
+// What an answer counts toward the limits: one, plus one for a web search and one for [tldr]. Asked before the
 // answer, with searched as whether it may search.
 export const questionsFor = (tags: Tags, searched: boolean) => 1 + Number(searched) + Number(tags.tldr);
 
@@ -53,7 +53,7 @@ export const optionDescription = (tag: Switch) => `${capitalized(about[tag].does
 
 // What /tags says.
 export const tagList = [
-  "Put these in a question when you mention me, or pick them in /ask. They stack, like `[web] [think max]`, and ×2 means the answer counts as 2 of your daily questions.",
+  "Put these in a question when you mention me, or pick them in /ask. They stack, like `[web] [think max]`, and ×2 means the answer counts as 2 questions.",
   ...switches.map((tag) => `\`[${tag}]\` ${about[tag].does} · ${about[tag].counts}`),
   "`[think]` thinks harder, and `[think low]` to `[think max]` set how hard · ×1",
 ].join("\n");

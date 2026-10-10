@@ -1,7 +1,7 @@
 import { Client, Events, GatewayIntentBits, Partials, type Message } from "discord.js";
 import { commands, handleInteraction, isPaused } from "./commands.ts";
 import { removeMessage } from "./context.ts";
-import { channelList, inChannel, limit, tierOf } from "./limit.ts";
+import { channelList, firstWarning, inChannel, limit, tierOf } from "./limit.ts";
 import { hasFlag } from "./members.ts";
 import { replyTo } from "./reply.ts";
 import { maySearch, questionsFor, readTags } from "./tags.ts";
@@ -45,19 +45,20 @@ async function handleQuestion(message: Message<true>) {
   const tags = readTags(message.content);
   const tier = message.member ? tierOf(message.member) : 0;
   if (tier !== "team") {
+    // Before the limit, so it doesn't use up a question, and said once until their next answer, so pinging the bot
+    // elsewhere over and over doesn't get a reply every time.
+    if (tier === 0 && !inChannel(message.channel)) {
+      if (firstWarning(message.author.id)) await message.reply(`Ask me in ${channelList}.`);
+      return;
+    }
     const questions = "error" in tags ? 1 : questionsFor(tags, maySearch(tags));
     const verdict = limit(message.author.id, tier, questions, supportThread(message.channelId));
     if (verdict !== "answer") {
       if (!verdict.again) await message.reply(verdict.warn);
       return;
     }
-    // Checked after the limit, so pinging the bot elsewhere over and over doesn't get a reply every time.
-    if (tier === 0 && !inChannel(message.channel)) {
-      await message.reply(`Ask me in ${channelList}.`);
-      return;
-    }
   }
-  // After the limit too, for the same reason.
+  // After the limit, so a bad tag over and over doesn't get a reply every time.
   if ("error" in tags) {
     await message.reply(tags.error);
     return;

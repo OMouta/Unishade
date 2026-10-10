@@ -1,6 +1,6 @@
 # Unishade bot (Unibot)
 
-The Discord bot for the Unishade server. Mention it and it answers anything, in English. For Unishade questions it goes by the docs and by messages the admins picked. Members can ask 5 questions a minute and 50 a day, in the channels in `CHANNEL_ID`. Members with a role in `TIER1_ROLE_IDS` can ask 6 a minute and 80 a day, and members with a role in `TIER2_ROLE_IDS` 8 a minute and 200 a day, both in any channel. Server admins and members with a role in `TEAM_ROLE_IDS` have no limit. Days are UTC. `/limits` shows anyone their own.
+The Discord bot for the Unishade server. Mention it and it answers anything, in English. For Unishade questions it goes by the docs and by messages the admins picked. Members can ask 15 questions an hour and 50 a day, in the channels in `CHANNEL_ID`. Members with a role in `TIER1_ROLE_IDS` can ask 25 an hour and 80 a day, and members with a role in `TIER2_ROLE_IDS` 60 an hour and 200 a day, both in any channel. Server admins and members with a role in `TEAM_ROLE_IDS` have no limit. A member's hour starts with their first question and resets an hour later, and days are UTC. `/limits` shows anyone a bar for each, with when it resets.
 
 `/ask` asks with a slash command instead. It takes a file, such as a log or a screenshot, and the tags below as options.
 
@@ -28,7 +28,7 @@ Put these in a question to change how the bot answers it. `/tags` lists them for
 
 When someone needs to share `Unishade.log`, or their problem will take some back and forth, the bot can offer a private thread with a button under its answer. Only the person who asked can press it. The thread opens where they asked when that's one of the channels in `CHANNEL_ID` or it's not set, and in the first of them otherwise. Only they and members with **Manage Threads** see it. Each member gets one open thread at a time.
 
-In the thread, the bot answers them without a mention. It waits until they've stopped writing for 4 seconds, so a question split over several messages gets one answer. These answers don't count toward the day, and a thread gets 40 at most.
+In the thread, the bot answers them without a mention. It waits until they've stopped writing for 4 seconds, so a question split over several messages gets one answer. These answers don't count toward the hour or the day, and a thread gets 40 at most.
 
 Under each answer in the thread, **Solved** closes and locks it, and **Get a human** pings the roles in `TEAM_ROLE_IDS`, which adds them to the thread. After that, the bot answers there only when someone mentions it. The person the thread is for and the team can press either.
 
