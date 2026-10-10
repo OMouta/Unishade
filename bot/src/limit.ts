@@ -17,9 +17,9 @@ export function inChannel(channel: GuildTextBasedChannel): boolean {
 
 export type Tier = 0 | 1 | 2;
 const limits: Record<Tier, { perMinute: number; perDay: number }> = {
-  0: { perMinute: 3, perDay: 20 },
-  1: { perMinute: 4, perDay: 30 },
-  2: { perMinute: 5, perDay: 100 },
+  0: { perMinute: 5, perDay: 50 },
+  1: { perMinute: 6, perDay: 80 },
+  2: { perMinute: 8, perDay: 200 },
 };
 
 // Members an admin used Remove limits on count as the team.

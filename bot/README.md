@@ -1,6 +1,6 @@
 # Unishade bot (Unibot)
 
-The Discord bot for the Unishade server. Mention it and it answers anything, in English. For Unishade questions it goes by the docs and by messages the admins picked. Members can ask 3 questions a minute and 20 a day, in the channel in `CHANNEL_ID`. Members with a role in `TIER1_ROLE_IDS` can ask 4 a minute and 30 a day, and members with a role in `TIER2_ROLE_IDS` 5 a minute and 100 a day, both in any channel. Server admins and members with a role in `TEAM_ROLE_IDS` have no limit. Days are UTC. `/limits` shows anyone their own.
+The Discord bot for the Unishade server. Mention it and it answers anything, in English. For Unishade questions it goes by the docs and by messages the admins picked. Members can ask 5 questions a minute and 50 a day, in the channel in `CHANNEL_ID`. Members with a role in `TIER1_ROLE_IDS` can ask 6 a minute and 80 a day, and members with a role in `TIER2_ROLE_IDS` 8 a minute and 200 a day, both in any channel. Server admins and members with a role in `TEAM_ROLE_IDS` have no limit. Days are UTC. `/limits` shows anyone their own.
 
 `/ask` asks with a slash command instead. It takes a file, such as a log or a screenshot, and the tags below as options.
 
