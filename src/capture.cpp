@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <optional>
 #include <utility>
 
 using winrt::Windows::Foundation::Metadata::ApiInformation;
@@ -26,6 +27,8 @@ constexpr wchar_t kSessionClass[] = L"Windows.Graphics.Capture.GraphicsCaptureSe
 // Set when Windows does not allow capture without its border, so capture keeps it instead of failing to start.
 std::atomic<bool> borderRequired = false;
 std::atomic<bool> captureIdle = false;
+
+winrt::com_ptr<ID3D11RenderTargetView> scaleTarget;
 
 // Draws a texture over the whole target with one triangle. tonemap does it for an HDR frame.
 constexpr char kScaleShader[] = R"(
@@ -72,12 +75,13 @@ struct Scaler
     winrt::com_ptr<ID3D11SamplerState> sampler;
     winrt::com_ptr<ID3D11Texture2D> frame;
     winrt::com_ptr<ID3D11ShaderResourceView> view;
+    std::optional<int64_t> lastInput;
 };
 Scaler scaler;
 
 // Draws the frame into a back buffer of another size, or an HDR frame as SDR. Capture's textures are not promised to
 // be readable by shaders, so the frame is copied into one that is.
-void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& size, ID3D11Texture2D* backBuffer, UINT width, UINT height)
+void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& size, ID3D11Texture2D* backBuffer, UINT width, UINT height, int64_t frameTimestamp)
 {
     if (!scaler.sampler)
     {
@@ -118,18 +122,23 @@ void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& size, ID3D11T
         scaler.frame = nullptr;
         winrt::check_hresult(g.device->CreateTexture2D(&copy, nullptr, scaler.frame.put()));
         winrt::check_hresult(g.device->CreateShaderResourceView(scaler.frame.get(), nullptr, scaler.view.put()));
+        scaler.lastInput.reset();
     }
-    g.context->CopyResource(scaler.frame.get(), frame);
+    if (!scaler.lastInput || *scaler.lastInput != frameTimestamp)
+    {
+        g.context->CopyResource(scaler.frame.get(), frame);
+        scaler.lastInput = frameTimestamp;
+    }
     if (g.hdrWhiteLevel)
     {
         const float sdrWhite[4] = { *g.hdrWhiteLevel / 80 };
         g.context->UpdateSubresource(scaler.sdrWhite.get(), 0, nullptr, sdrWhite, 0, 0);
     }
 
-    winrt::com_ptr<ID3D11RenderTargetView> target;
-    winrt::check_hresult(g.device->CreateRenderTargetView(backBuffer, nullptr, target.put()));
+    if (!scaleTarget)
+        winrt::check_hresult(g.device->CreateRenderTargetView(backBuffer, nullptr, scaleTarget.put()));
     const D3D11_VIEWPORT viewport{ 0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1 };
-    ID3D11RenderTargetView* targets[] = { target.get() };
+    ID3D11RenderTargetView* targets[] = { scaleTarget.get() };
     ID3D11ShaderResourceView* views[] = { scaler.view.get() };
     ID3D11SamplerState* samplers[] = { scaler.sampler.get() };
     ID3D11Buffer* constants[] = { scaler.sdrWhite.get() };
@@ -160,6 +169,7 @@ void CloseCapture()
         g.arrivedFrame = nullptr;
     }
     g.latestFrame = nullptr;
+    scaler.lastInput.reset();
     ResetDepthInput();
     if (g.session)
         g.session.Close();
@@ -216,6 +226,7 @@ void ReleaseDevice()
 {
     Log(LogLevel::Info, L"Releasing capture, swapchain, depth resources and graphics device.");
     StopCapture();
+    scaleTarget = nullptr;
     g.swapchain = nullptr;
     scaler = {};
     ReleaseDepthDevice();
@@ -412,6 +423,7 @@ void PresentLatestFrame()
         else if (desc.Width != width || desc.Height != height)
         {
             Log(LogLevel::Info, L"Resizing swapchain: %ux%u -> %ux%u, source=%ux%u.", desc.Width, desc.Height, width, height, size.Width, size.Height);
+            scaleTarget = nullptr;
             winrt::check_hresult(g.swapchain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0));
         }
     }
@@ -421,7 +433,7 @@ void PresentLatestFrame()
     if (width == size.Width && height == size.Height && !g.hdrWhiteLevel)
         g.context->CopyResource(backBuffer.get(), surface.get());
     else
-        DrawFrame(surface.get(), size, backBuffer.get(), width, height);
+        DrawFrame(surface.get(), size, backBuffer.get(), width, height, frameTimestamp);
     // Depth uses the same scaled SDR input as effects, including when the capture itself is SDR.
     UpdateDepth(backBuffer.get(), frameTimestamp);
     const HRESULT presented = g.swapchain->Present(0, 0);
