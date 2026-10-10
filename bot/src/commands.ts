@@ -17,6 +17,7 @@ import {
   describeSettings,
   inChannel,
   limit,
+  resetUsage,
   setBoost,
   setThreadLimit,
   setTierLimits,
@@ -139,6 +140,12 @@ export const commands = [
         .setName("threads")
         .setDescription("Change how many answers a private thread gets")
         .addIntegerOption((option) => option.setName("answers").setDescription("Answers a thread").setRequired(true).setMinValue(1).setMaxValue(1000)),
+    )
+    .addSubcommand((command) =>
+      command
+        .setName("reset")
+        .setDescription("Let a member ask a full hour and day of questions again")
+        .addUserOption((option) => option.setName("member").setDescription("Who. Without it, everyone")),
     ),
 ];
 
@@ -160,11 +167,22 @@ async function togglePause(interaction: ChatInputCommandInteraction<"cached">) {
   await logNote(interaction.client, `<@${interaction.user.id}> ${paused ? "paused" : "unpaused"} the bot.`);
 }
 
-// Every subcommand but show changes something, saved across restarts, and goes to the log. All of them reply with the
+// Every subcommand but show changes something, saved across restarts, and goes to the log. All but reset reply with the
 // limits as they are now.
 async function limitSettings(interaction: ChatInputCommandInteraction<"cached">) {
   const { options } = interaction;
   const subcommand = options.getSubcommand();
+  if (subcommand === "reset") {
+    const member = options.getUser("member");
+    resetUsage(member?.id);
+    await interaction.reply({
+      content: `${member ? `<@${member.id}> has` : "Everyone has"} a full hour and day of questions again.`,
+      flags: MessageFlags.Ephemeral,
+      allowedMentions: { parse: [] },
+    });
+    await logNote(interaction.client, `<@${interaction.user.id}> reset ${member ? `<@${member.id}>'s` : "everyone's"} limits.`);
+    return;
+  }
   if (subcommand === "boost") setBoost(options.getNumber("multiplier", true), options.getInteger("days"));
   if (subcommand === "threads") setThreadLimit(options.getInteger("answers", true));
   if (subcommand === "set") {

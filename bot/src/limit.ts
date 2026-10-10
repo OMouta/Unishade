@@ -4,7 +4,7 @@ import path from "node:path";
 import { dataDir } from "./context.ts";
 import { hasFlag } from "./members.ts";
 import type { SupportThread } from "./threads.ts";
-import { usedToday } from "./usage.ts";
+import { resetToday, usedToday } from "./usage.ts";
 
 const ids = (list: string | undefined) => list?.split(",").map((id) => id.trim()).filter(Boolean) ?? [];
 // Role IDs separated by commas. The team, like admins, has no limit, and tiers 1 and 2 have higher limits. All three
@@ -112,6 +112,13 @@ const hours = new Map<string, { start: number; used: number }>();
 function hourOf(userId: string, now: number) {
   const current = hours.get(userId);
   return current && now - current.start < hour ? current : undefined;
+}
+
+// With /limit-settings reset, someone can ask a full hour and day again, or everyone can without a user ID.
+export function resetUsage(userId?: string) {
+  if (userId) hours.delete(userId);
+  else hours.clear();
+  resetToday(userId);
 }
 
 // Who has been told they can't ask since their last answer.

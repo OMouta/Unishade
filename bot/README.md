@@ -56,7 +56,7 @@ Right-click a member and pick **Apps > Exclude from AI** to have the bot ignore 
 
 ## Changing limits
 
-`/limit-settings boost` multiplies everyone's hourly and daily limits, such as `multiplier: 2` for a 2x week. Give it `days` to have it end on its own, or set it back to 1 to end it. While it's on, `/limits` tells members. `/limit-settings set` changes the hourly or daily limit for everyone or a tier, `/limit-settings threads` changes how many answers a private thread gets, and `/limit-settings show` lists the limits. Changes last across restarts and go to the log. Only members who can manage the server see the command.
+`/limit-settings boost` multiplies everyone's hourly and daily limits, such as `multiplier: 2` for a 2x week. Give it `days` to have it end on its own, or set it back to 1 to end it. While it's on, `/limits` tells members. `/limit-settings set` changes the hourly or daily limit for everyone or a tier, `/limit-settings threads` changes how many answers a private thread gets, and `/limit-settings show` lists the limits. `/limit-settings reset` gives a member a full hour and day of questions again, or everyone without a member. Changes last across restarts and go to the log. Only members who can manage the server see the command.
 
 ## Log
 

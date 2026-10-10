@@ -49,6 +49,17 @@ export function recordAnswer(userId: string, { tokens, cost, searched }: { token
   totals.cost += cost;
   const oldest = oldestKept();
   for (const day of Object.keys(days)) if (day < oldest) delete days[day];
+  save();
+}
+
+// Today's questions start over for someone, or for everyone without a user ID. What the answers cost stays for /usage.
+export function resetToday(userId?: string) {
+  const today = days[dayOf(Date.now())] ?? {};
+  for (const [id, totals] of Object.entries(today)) if (!userId || id === userId) totals.questions = 0;
+  save();
+}
+
+function save() {
   mkdirSync(dataDir, { recursive: true });
   writeFileSync(file, JSON.stringify(days, null, 2));
 }
