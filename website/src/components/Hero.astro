@@ -1,13 +1,13 @@
 ---
 import { Image } from 'astro:assets';
 import DownloadButton from './DownloadButton.astro';
-import before from '../assets/compare-before.jpg';
-import after from '../assets/compare-after.jpg';
+import before from '../assets/compare-before.png';
+import after from '../assets/compare-after.png';
 ---
 
 <!-- The same scene without and with effects, filling the window. The after picture shows right of the line. -->
 <section class="hero">
-  <Image src={before} widths={[800, 1400, 1920]} sizes="100vw" alt="A Roblox game without effects" class="shot" priority />
+  <Image src={before} widths={[800, 1400, 1920]} sizes="100vw" alt="A game without effects" class="shot" priority />
   <Image src={after} widths={[800, 1400, 1920]} sizes="100vw" alt="The same scene with Unishade's effects" class="shot after" priority />
 
   <input class="compare-range" type="range" min="0" max="100" value="50" aria-label="Compare before and after" />
@@ -232,7 +232,9 @@ import after from '../assets/compare-after.jpg';
     position: absolute;
     bottom: 12%;
     left: 50%;
-    display: flex;
+    /* Equal columns either side keep the grip on the line, though "Before" is wider than "After". */
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
     gap: 12px;
     padding: 8px 14px;
@@ -246,7 +248,12 @@ import after from '../assets/compare-after.jpg';
     font-stretch: 112%;
     line-height: 1;
     white-space: nowrap;
+    width: max-content;
     transform: translateX(-50%);
+  }
+
+  .compare-handle > :first-child {
+    justify-self: end;
   }
 
   .compare-grip {
