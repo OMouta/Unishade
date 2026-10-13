@@ -13,7 +13,7 @@ import { supportThread } from "./threads.ts";
 import { habitsOf } from "./usage.ts";
 
 // How many messages before the mention are sent along, so a question asked over several messages reads as one. [tldr]
-// reads the most Discord sends at once, to have more to sum up.
+// reads the most Discord sends at once, to have more to sum up, and [context 3] reads three times as many.
 const historyLength = 10;
 const tldrHistoryLength = 100;
 // Long earlier messages are cut, so ten of them can't cost more than the question itself.
@@ -102,7 +102,7 @@ export async function conversation(question: Message<true> | Ask, tags: Tags): P
   const message = question instanceof Message ? question : null;
   const { channel } = question;
   const [earlier, replied, starter] = await Promise.all([
-    channel.messages.fetch({ limit: tags.tldr ? tldrHistoryLength : historyLength, before: question.id }),
+    channel.messages.fetch({ limit: tags.context ? historyLength * tags.context : tags.tldr ? tldrHistoryLength : historyLength, before: question.id }),
     // A deleted message can't be fetched, and the question still stands without it.
     message?.reference?.type === MessageReferenceType.Default ? message.fetchReference().catch(() => null) : null,
     channel.isThread() ? firstMessage(channel) : null,

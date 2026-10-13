@@ -30,7 +30,7 @@ import { hasFlag, setFlag, type Flag } from "./members.ts";
 import { replyTo, respond } from "./reply.ts";
 import { reportAnswer, reviewButtons, saveFromForm } from "./review.ts";
 import { supportButtons } from "./support.ts";
-import { effortOf, efforts, maySearch, optionDescription, questionsFor, readTags, switches, tagList, type Tags } from "./tags.ts";
+import { effortOf, efforts, maxContext, maySearch, optionDescription, questionsFor, readTags, switches, tagList, type Tags } from "./tags.ts";
 import { supportThread } from "./threads.ts";
 import { usageReport } from "./usage.ts";
 
@@ -69,6 +69,9 @@ askCommand.addStringOption((option) =>
     .setName("think")
     .setDescription("How hard it thinks")
     .addChoices(...efforts.map((effort) => ({ name: effort, value: effort }))),
+);
+askCommand.addIntegerOption((option) =>
+  option.setName("context").setDescription("Reads this many times the 10 earlier messages (×2)").setMinValue(2).setMaxValue(maxContext),
 );
 
 // Discord shows these, all but /limits, /tags, /ask and Report answer, to members who can manage the server. Server
@@ -220,7 +223,7 @@ async function ask(interaction: ChatInputCommandInteraction<"cached">) {
     return;
   }
   // The options add to any tags typed in the question.
-  const tags: Tags = { ...typed, think: effortOf(options.getString("think") ?? "") ?? typed.think };
+  const tags: Tags = { ...typed, think: effortOf(options.getString("think") ?? "") ?? typed.think, context: options.getInteger("context") ?? typed.context };
   for (const tag of switches) if (options.getBoolean(tag)) tags[tag] = true;
 
   const tier = tierOf(member);

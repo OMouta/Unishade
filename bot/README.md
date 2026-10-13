@@ -21,8 +21,9 @@ Put these in a question to change how the bot answers it. `/tags` lists them for
 - `[poll]` has it turn the question into a Discord poll, posted under the reply and open for a day.
 - `[touchgrass]` has it look at how much you've used the bot and stage an intervention.
 - `[think]` has it reason harder. `[think medium]` picks the level: `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Plain `[think]` is `high`, and without the tag it's `low`. Any other level gets an error reply, not an answer.
+- `[context]` has it read the last 100 messages instead of 10, without summing them up. `[context 3]` reads 30, and the number can be 2 to 10.
 
-`[tldr]` counts as one more question, and so do `[web]` and `[music]` when the bot searches.
+`[tldr]` and `[context]` count as one more question, and so do `[web]` and `[music]` when the bot searches.
 
 ## Private threads
 

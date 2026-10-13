@@ -186,7 +186,7 @@ export function describeLimits(member: GuildMember, thread?: SupportThread, now 
     .setDescription(
       [
         boosted,
-        `${where} [tldr] and a web search from [web] each count as one more question. Answers in a private thread with me only count toward the thread.`,
+        `${where} [tldr] or [context] and a web search from [web] each count as one more question. Answers in a private thread with me only count toward the thread.`,
       ]
         .filter(Boolean)
         .join("\n\n"),
