@@ -3726,8 +3726,12 @@ void DrawOverlay(bool menu)
     if (!menu && !toast && !DebugInfoEnabled())
         return;
 
+    // Sized for the window the frame is scaled to, so the menu keeps its size at every effect resolution.
     const ImVec2 display = ImGui::GetIO().DisplaySize;
-    m.scale = menu_layout::Scale(display.x, display.y, MenuScale());
+    RECT window{};
+    m.scale = GetClientRect(g.overlay, &window) && window.bottom > 0 && display.y > 0
+                  ? menu_layout::FrameScale(static_cast<float>(window.right), static_cast<float>(window.bottom), display.y, MenuScale())
+                  : menu_layout::Scale(display.x, display.y, MenuScale());
     if (m.scale <= 0)
         return;
     ApplyStyle(ImGui::GetStyle());
