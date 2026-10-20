@@ -328,6 +328,25 @@ void CreateD3D12()
     winrt::check_hresult(d.list->Close());
 }
 
+// Releases what CreateD3D12 made, the proxy last. Release the model and anything made on the device before this.
+void ReleaseD3D12()
+{
+    d.list = nullptr;
+    d.allocator = nullptr;
+    d.d3d12Fence = nullptr;
+    if (d.fenceHandle)
+        CloseHandle(std::exchange(d.fenceHandle, nullptr));
+    d.d3d12 = nullptr;
+    d.d3d12Proxy = nullptr;
+}
+
+// True once a GPU reset or driver update removed the model's device. Call from the worker, or from the main thread while
+// the worker is idle.
+bool D3D12Removed()
+{
+    return d.d3d12 && FAILED(d.d3d12->GetDeviceRemovedReason());
+}
+
 winrt::com_ptr<ID3D12Resource> CreateD3D12Buffer(UINT64 size)
 {
     const D3D12_HEAP_PROPERTIES heap{ D3D12_HEAP_TYPE_DEFAULT };
@@ -397,6 +416,23 @@ void Worker()
         try
         {
             const auto started = FrameStatistics::Clock::now();
+            // While anything holds a removed device, every D3D12CreateDevice in this process fails, the DLSS5 add-on's too.
+            // Release it, then make a new one unless depth stopped. Same for a half-made device. Only on requests
+            // without input, because the main thread reads the fence during those.
+            if (!d.inputValue && d.d3d12 && (!d.enabled || !d.list || D3D12Removed()))
+            {
+                Log(LogLevel::Info, L"Releasing the depth D3D12 device: removed_reason=0x%08X, depth_enabled=%d.",
+                    static_cast<unsigned>(d.d3d12->GetDeviceRemovedReason()), d.enabled);
+                model.reset();
+                input = output = inputBuffer = outputBuffer = nullptr;
+                loadedWidth = loadedHeight = 0;
+                ReleaseD3D12();
+            }
+            if (!d.enabled)
+            {
+                d.done = true;
+                continue;
+            }
             if (!d.d3d12)
                 CreateD3D12();
             if (d.width != loadedWidth || d.height != loadedHeight)
@@ -435,19 +471,31 @@ void Worker()
             }
             d.workerMs = std::chrono::duration<double, std::milli>(FrameStatistics::Clock::now() - started).count();
         }
+        // A removed device doesn't stop depth. UpdateDepth notices it and asks for a new one.
         catch (const std::exception& e)
         {
-            Log(LogLevel::Error, L"Depth estimation stopped: %hs", e.what());
-            LogStackTrace();
-            d.failed = true;
+            if (D3D12Removed())
+                Log(LogLevel::Info, L"Depth run failed on a removed D3D12 device: %hs", e.what());
+            else
+            {
+                Log(LogLevel::Error, L"Depth estimation stopped: %hs", e.what());
+                LogStackTrace();
+                d.failed = true;
+            }
         }
         catch (const winrt::hresult_error& e)
         {
-            Log(LogLevel::Error, L"Depth estimation stopped: %ls (0x%08X)", e.message().c_str(), static_cast<unsigned>(e.code()));
-            Log(LogLevel::Info, L"Depth worker state: model=%dx%d, requested=%dx%d, input_fence=%llu, resource_version=%u.",
-                loadedWidth, loadedHeight, d.width, d.height, d.inputValue, d.version);
-            LogStackTrace();
-            d.failed = true;
+            if (D3D12Removed())
+                Log(LogLevel::Info, L"Depth run failed on a removed D3D12 device: %ls (0x%08X)", e.message().c_str(),
+                    static_cast<unsigned>(e.code()));
+            else
+            {
+                Log(LogLevel::Error, L"Depth estimation stopped: %ls (0x%08X)", e.message().c_str(), static_cast<unsigned>(e.code()));
+                Log(LogLevel::Info, L"Depth worker state: model=%dx%d, requested=%dx%d, input_fence=%llu, resource_version=%u.",
+                    loadedWidth, loadedHeight, d.width, d.height, d.inputValue, d.version);
+                LogStackTrace();
+                d.failed = true;
+            }
         }
         d.done = true;
     }
@@ -555,6 +603,8 @@ void Stop()
     if (DepthSize() == kDefaultDepthSize)
     {
         d.enabled = false;
+        // Have the worker release its D3D12 device. After a GPU reset, holding it makes every new one in this process fail.
+        Request(0);
         return;
     }
     SetDepthSize(kDefaultDepthSize);
@@ -744,23 +794,34 @@ void UpdateDepth(ID3D11Texture2D* frame, int64_t frameTimestamp)
                 return;
             if (d.failed)
             {
-                Stop();
+                // Clear these first, because Stop sends the worker another request.
                 d.done = false;
                 d.busy = false;
                 d.failed = false;
+                Stop();
                 return;
             }
+            // GetCompletedValue returns UINT64_MAX on a removed device.
             if (d.inputValue && d.d3d12Fence->GetCompletedValue() < d.inputValue + 1)
                 return;
             d.done = false;
             d.busy = false;
-            // Nothing is left to publish to after the device was lost.
-            if (d.inputValue && d.texture)
+            // Nothing is left to publish to after either device was lost.
+            if (d.inputValue && d.texture && !D3D12Removed())
             {
                 Publish();
                 g.frameStatistics.RecordDepth(std::chrono::duration<double, std::milli>(FrameStatistics::Clock::now() - d.requestedAt).count(),
                                               d.workerMs.load());
             }
+        }
+
+        // The shared textures and fence belong to the removed device. Asking for the model again makes the worker create a
+        // new device first. CreateShared opens its fence after that.
+        if (D3D12Removed())
+        {
+            ReleaseShared();
+            d.fence = nullptr;
+            d.modelWidth = d.modelHeight = 0;
         }
 
         if (!d.shaders[0])
@@ -832,12 +893,8 @@ void ShutdownDepth()
         SetEvent(d.request);
         d.worker.join();
     }
-    d.list = nullptr;
-    d.allocator = nullptr;
-    d.d3d12Fence = nullptr;
-    d.d3d12 = nullptr;
-    d.d3d12Proxy = nullptr;
-    for (HANDLE handle : { d.fenceHandle, d.inputHandle, d.outputHandle, d.request })
+    ReleaseD3D12();
+    for (HANDLE handle : { d.inputHandle, d.outputHandle, d.request })
         if (handle)
             CloseHandle(handle);
 }
