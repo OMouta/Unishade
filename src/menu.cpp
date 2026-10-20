@@ -2895,8 +2895,8 @@ void PerformanceSettings()
 
     ImGui::Dummy(ImVec2(0, S(8)));
     int clicked = ChoiceRow("Effect resolution",
-                            "Effects run on a smaller picture, stretched back to the game's size. Lower is faster and blurrier. The menu "
-                            "blurs too, and screenshots get smaller.",
+                            "Effects run on a smaller picture that FSR upscales to the game's size. Lower is faster and softer. The menu "
+                            "gets softer too, and screenshots get smaller.",
                             { "100%", "75%", "50%" }, ChoiceOf(kEffectResolutions, EffectResolution()));
     if (clicked >= 0)
         SetEffectResolution(kEffectResolutions[clicked]);

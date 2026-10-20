@@ -2,6 +2,7 @@
 #include "reshade_imgui.h"
 #include "state.h"
 #include "log.h"
+#include "upscale.h"
 
 // Shown in ReShade's add-on list.
 extern "C" __declspec(dllexport) const char* NAME = "Unishade";
@@ -71,6 +72,13 @@ void OnDestroyRuntime(reshade::api::effect_runtime* destroyed)
     compiling = false;
 }
 
+// Effects and the menu are drawn by now, and Present comes next.
+void OnPresent(reshade::api::effect_runtime* presented)
+{
+    if (presented == runtime)
+        UpscaleFrame();
+}
+
 bool OnOpenOverlay(reshade::api::effect_runtime*, bool open, reshade::api::input_source)
 {
     // The host's menu replaces ReShade's, which only opens from the host's menu.
@@ -108,6 +116,7 @@ bool InitAddon()
     reshade::register_event<reshade::addon_event::reshade_open_overlay>(OnOpenOverlay);
     reshade::register_event<reshade::addon_event::reshade_set_current_preset_path>(OnSetPresetPath);
     reshade::register_event<reshade::addon_event::reshade_reloaded_effects>(OnReloadedEffects);
+    reshade::register_event<reshade::addon_event::reshade_present>(OnPresent);
     return true;
 }
 

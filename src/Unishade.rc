@@ -2,6 +2,8 @@
 
 1 ICON "../assets/Unishade.ico"
 IDR_LOGO RCDATA "../assets/Unishade.png"
+IDR_FFX_A RCDATA FFX_A_HEADER
+IDR_FFX_FSR1 RCDATA FFX_FSR1_HEADER
 
 #include <winver.h>
 

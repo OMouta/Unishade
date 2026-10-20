@@ -2,6 +2,10 @@ Unishade
 Copyright 2026 Unishade contributors. MIT license.
 https://github.com/OMouta/Unishade
 
+Unishade includes:
+AMD FidelityFX Super Resolution 1, copyright 2021 Advanced Micro Devices, Inc. MIT license.
+https://github.com/GPUOpen-Effects/FidelityFX-FSR
+
 Unishade Setup includes:
 Dear ImGui, copyright 2014-2026 Omar Cornut. MIT license.
 https://github.com/ocornut/imgui

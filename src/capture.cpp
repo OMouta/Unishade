@@ -6,6 +6,7 @@
 #include "menu.h"
 #include "overlay.h"
 #include "state.h"
+#include "upscale.h"
 
 #include <winrt/Windows.Foundation.Metadata.h>
 #include <winrt/Windows.Security.Authorization.AppCapabilityAccess.h>
@@ -357,6 +358,7 @@ void ReleaseDevice()
     scaleTarget = nullptr;
     gpuSamples = {};
     gpuTimingFailed = false;
+    ReleaseUpscaler();
     g.swapchain = nullptr;
     scaler = {};
     ReleaseDepthDevice();
@@ -526,7 +528,7 @@ bool PresentLatestFrame()
     winrt::check_hresult(access->GetInterface(__uuidof(ID3D11Texture2D), surface.put_void()));
     D3D11_TEXTURE2D_DESC size{};
     surface->GetDesc(&size);
-    // Effects run at the swapchain's size. Windows stretches a smaller swapchain over the overlay's window.
+    // Effects run at the swapchain's size. FSR upscales a smaller swapchain to the overlay's window, or Windows stretches it.
     UINT width = std::max(size.Width * EffectResolution() / 100, 1u);
     UINT height = std::max(size.Height * EffectResolution() / 100, 1u);
 
@@ -637,6 +639,9 @@ bool PresentLatestFrame()
         g.context->End(gpu->stamps[2].get());
     SetFrameStage(FrameStage::Present);
     g.menuCpuMs = 0;
+    // With the add-on, OnPresent upscales after ReShade draws effects and the menu.
+    if (!AddonRegistered())
+        UpscaleFrame();
     const HRESULT presented = g.swapchain->Present(0, 0);
     if (gpu)
     {
