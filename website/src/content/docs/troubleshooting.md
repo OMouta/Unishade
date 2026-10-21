@@ -21,17 +21,14 @@ If you installed without Setup, install ReShade again with full add-on support, 
 
 ## A shortcut is in use by another program
 
-Pick another key for it in the menu's **Settings**, or close the other program. If it's the menu's key, the menu can't open, so change `ToggleKey` in the settings file and restart Unishade:
-
-- Windows: `RobloxShadeHost.ini` in Unishade's install folder. Unless you picked another folder in Setup, that's `%LOCALAPPDATA%\Programs\Unishade`. To open it, press **Win+R**, paste the path and press **Enter**. An install updated from RobloxShadeHost stays in RobloxShadeHost's folder.
-- macOS and Linux: `Unishade.ini` in the data folder, which the launcher's **Data folder** link opens.
+Pick another key for it in the Unishade window's **Settings > Shortcuts**, or close the other program.
 
 ## The game isn't detected
 
 - Run the game in windowed or borderless mode.
 - Check that the game is in the Unishade window's list and switched on.
 - If the game moved to another folder, remove it and [add it again](/docs/games/#add-a-game).
-- Try **Pick a window** in the Unishade window. On macOS and Linux, pick the game's window from the launcher's list.
+- Try **Pick a window** in the Unishade window.
 - On Linux, check that the game draws through X11 or XWayland. Games that draw to Wayland directly can't be captured.
 
 Some games block screen capture or overlays, and those may not work.
@@ -44,12 +41,12 @@ Windows only. Roblox replaces its folder when it updates, which deletes Unishade
 
 Effects cost frame rate. Turn off the heaviest ones or pick a lighter preset. On Windows, depth estimation costs some too.
 
-On Windows, **Settings > Performance**, in the menu or the Unishade window, can limit the frame rate and lower the effect resolution and depth detail. Each saved game keeps its own values.
+On Windows, **Performance** on a game's page in the Unishade window limits the frame rate and lowers the effect resolution and depth detail for that game. **Settings > Performance** in the menu changes the same values for the game you're playing.
 
 ## The log
 
 - Windows: **Open log** in the Unishade window opens `Unishade.log`. The previous run's log is `Unishade.old.log` in the same folder. Setup writes its own log to `%TEMP%\Unishade-Setup.log`.
-- macOS and Linux: the launcher's **Log** link opens `Unishade.log` in the data folder, next to `Unishade.old.log`.
+- macOS and Linux: **Open log** in the launcher opens `Unishade.log` in the data folder, next to `Unishade.old.log`.
 
 ## Get help
 

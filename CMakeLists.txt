@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 if(WIN32)
-    project(Unishade VERSION 0.6.1 LANGUAGES C CXX RC)
+    project(Unishade VERSION 0.6.2 LANGUAGES C CXX RC)
 else()
-    project(Unishade VERSION 0.6.1 LANGUAGES C CXX)
+    project(Unishade VERSION 0.6.2 LANGUAGES C CXX)
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -46,6 +46,18 @@ if(NOT EXISTS "${MINIZ_DIR}/miniz.c")
     file(ARCHIVE_EXTRACT INPUT "${CMAKE_BINARY_DIR}/miniz-3.1.2.zip" DESTINATION "${MINIZ_DIR}" PATTERNS miniz.c miniz.h)
 endif()
 
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(launcher_ui_tests tests/launcher_ui_tests.cpp src/ui/launcher_ui.cpp src/ui/kit.cpp
+        "${IMGUI_DIR}/imgui.cpp" "${IMGUI_DIR}/imgui_draw.cpp" "${IMGUI_DIR}/imgui_tables.cpp" "${IMGUI_DIR}/imgui_widgets.cpp")
+    target_include_directories(launcher_ui_tests PRIVATE src "${IMGUI_DIR}")
+    target_compile_definitions(launcher_ui_tests PRIVATE IMGUI_USE_WCHAR32)
+    if(WIN32)
+        target_compile_definitions(launcher_ui_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    endif()
+    add_test(NAME launcher_ui_tests COMMAND launcher_ui_tests)
+endif()
+
 # macOS and Linux have their own host in src/posix. ReShade itself only runs on Windows, so it uses ReShade's
 # effect compiler with Vulkan instead.
 if(NOT WIN32)
@@ -76,6 +88,13 @@ set(RESHADE_IMGUI_INCLUDE "${CMAKE_BINARY_DIR}/reshade-imgui")
 fetch_file("https://raw.githubusercontent.com/ocornut/imgui/v1.92.5-docking/imgui.h" 07562842049eaca4e47c3fcdcc9d8eafd442695b9856d6f6639e92e1bb6c737e "${RESHADE_IMGUI_INCLUDE}/imgui.h")
 fetch_file("https://raw.githubusercontent.com/ocornut/imgui/v1.92.5-docking/imconfig.h" 6e5687893594ebfaf8569280cfea83d025904a8a4e23bec073086f6c5bc8f7fb "${RESHADE_IMGUI_INCLUDE}/imconfig.h")
 
+# AMD's FSR 1 upscales effects that run below the game's resolution. The host embeds the headers and compiles the
+# shader when it first upscales.
+set(FSR_DIR "${CMAKE_BINARY_DIR}/fsr")
+set(FSR_URL "https://raw.githubusercontent.com/GPUOpen-Effects/FidelityFX-FSR/v1.0.2/ffx-fsr")
+fetch_file("${FSR_URL}/ffx_a.h" f60e2722fcd13989523b9164d776ab382b3692791767f3bf8bb19967f763f3fb "${FSR_DIR}/ffx_a.h")
+fetch_file("${FSR_URL}/ffx_fsr1.h" 93c3922362ea7fc99cbcc698ca30c98de4f8c246d1fbb0b09e015ddef38ce3a5 "${FSR_DIR}/ffx_fsr1.h")
+
 add_executable(Unishade WIN32
     src/Unishade.rc
     src/main.cpp
@@ -95,9 +114,11 @@ add_executable(Unishade WIN32
     src/setup_check.cpp
     src/sharing.cpp
     src/update.cpp
+    src/upscale.cpp
     src/net.cpp)
 target_include_directories(Unishade PRIVATE "${RESHADE_INCLUDE}" "${RESHADE_IMGUI_INCLUDE}" "${ONNXRUNTIME_INCLUDE}")
 target_compile_definitions(Unishade PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_definitions(Unishade PRIVATE FFX_A_HEADER="${FSR_DIR}/ffx_a.h" FFX_FSR1_HEADER="${FSR_DIR}/ffx_fsr1.h")
 target_compile_definitions(Unishade PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
 # src/net.cpp sends this for the update check.
 target_compile_definitions(Unishade PRIVATE UNISHADE_USER_AGENT="Unishade/${PROJECT_VERSION}")
@@ -106,7 +127,7 @@ set(UNISHADE_SHARING_API "https://api.unishade.me" CACHE STRING "Address of the 
 target_compile_definitions(Unishade PRIVATE UNISHADE_SHARING_API="${UNISHADE_SHARING_API}")
 target_compile_definitions(Unishade PRIVATE UNISHADE_VERSION_RESOURCE=${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0)
 target_compile_options(Unishade PRIVATE /W4 /permissive- /EHsc /bigobj)
-target_link_libraries(Unishade PRIVATE d3d11 d3d12 d3dcompiler dxgi dwmapi windowsapp gdi32 gdiplus version winhttp bcrypt shlwapi windowscodecs)
+target_link_libraries(Unishade PRIVATE d3d11 d3d12 d3dcompiler dxgi dcomp dwmapi windowsapp gdi32 version winhttp bcrypt shlwapi windowscodecs)
 
 # Setup's window uses Dear ImGui's Win32 and Direct3D 11 backends.
 fetch_file("${IMGUI_URL}/backends/imgui_impl_win32.h" 2736595b8de1e56871661d5d9b96deec567d35521746fbe2ade8f0543acdfd2b "${IMGUI_DIR}/backends/imgui_impl_win32.h")
@@ -127,13 +148,34 @@ target_compile_definitions(setup_libraries PUBLIC MINIZ_NO_STDIO MINIZ_NO_TIME)
 # Otherwise the backend loads XInput by its bare name, which could find a DLL next to Setup.
 target_compile_definitions(setup_libraries PRIVATE IMGUI_IMPL_WIN32_DISABLE_GAMEPAD)
 
+# The launcher's window, which Unishade.exe loads. It has a Dear ImGui of its own and draws on the CPU, since the
+# host's ImGui and graphics card belong to ReShade. See src/ui/launcher_module.h.
+set(UI_SOURCES src/ui/launcher_module.cpp src/ui/launcher_ui.cpp src/ui/kit.cpp src/ui/soft_renderer.cpp)
+add_library(UnishadeUi SHARED
+    ${UI_SOURCES}
+    src/ui/UnishadeUi.rc
+    "${IMGUI_DIR}/imgui.cpp"
+    "${IMGUI_DIR}/imgui_draw.cpp"
+    "${IMGUI_DIR}/imgui_tables.cpp"
+    "${IMGUI_DIR}/imgui_widgets.cpp"
+    "${IMGUI_DIR}/backends/imgui_impl_win32.cpp")
+target_include_directories(UnishadeUi PRIVATE src "${IMGUI_DIR}" "${IMGUI_DIR}/backends")
+# 32-bit characters, so emoji outside the first 65536 code points show too.
+target_compile_definitions(UnishadeUi PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_UI_EXPORTS IMGUI_IMPL_WIN32_DISABLE_GAMEPAD IMGUI_USE_WCHAR32)
+target_compile_definitions(UnishadeUi PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(UnishadeUi PRIVATE UNISHADE_VERSION_RESOURCE=${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0)
+target_compile_options(UnishadeUi PRIVATE /EHsc)
+set_source_files_properties(${UI_SOURCES} PROPERTIES COMPILE_OPTIONS "/W4;/permissive-")
+target_link_libraries(UnishadeUi PRIVATE dwmapi imm32)
+add_dependencies(Unishade UnishadeUi)
+
 # Built on request, like the Inno Setup installer it replaces: cmake --build build --config Release --target installer
 add_executable(installer WIN32 EXCLUDE_FROM_ALL
     installer/main.cpp
     installer/install.cpp
     src/net.cpp
     installer/setup.rc)
-# setup.rc embeds Unishade.exe, found through the include path.
+# setup.rc embeds Unishade.exe and UnishadeUi.dll, found through the include path.
 target_include_directories(installer PRIVATE "$<TARGET_FILE_DIR:Unishade>")
 target_compile_definitions(installer PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_definitions(installer PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
@@ -146,14 +188,19 @@ target_link_libraries(installer PRIVATE setup_libraries d3d11 dxgi d3dcompiler d
 # that are not KnownDLLs are delay-loaded, so they load after wWinMain has limited the search to System32.
 target_link_options(installer PRIVATE /DEPENDENTLOADFLAG:0x800 /DELAYLOAD:d3d11.dll /DELAYLOAD:d3dcompiler_47.dll
     /DELAYLOAD:dwmapi.dll /DELAYLOAD:winhttp.dll /DELAYLOAD:bcrypt.dll)
-add_dependencies(installer Unishade)
+add_dependencies(installer Unishade UnishadeUi)
 # The generator expression keeps multi-config generators from adding a Release folder.
 set_target_properties(installer PROPERTIES
     OUTPUT_NAME "Unishade-Setup-${PROJECT_VERSION}"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/installer$<0:>")
 
-include(CTest)
 if(BUILD_TESTING)
+    add_executable(log_tests tests/log_tests.cpp src/log.cpp)
+    target_compile_definitions(log_tests PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_VERSION="${PROJECT_VERSION}")
+    target_compile_options(log_tests PRIVATE /W4 /permissive- /EHsc)
+    add_test(NAME log_tests COMMAND log_tests)
+    set_tests_properties(log_tests PROPERTIES TIMEOUT 45)
+
     add_executable(frame_statistics_tests tests/frame_statistics_tests.cpp)
     target_compile_options(frame_statistics_tests PRIVATE /W4 /permissive- /EHsc)
     add_test(NAME frame_statistics_tests COMMAND frame_statistics_tests)

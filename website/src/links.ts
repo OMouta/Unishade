@@ -13,4 +13,6 @@ export const links = {
   // How to build the macOS and Linux version.
   build: `${github}/tree/main/src/posix#building`,
   reshade: 'https://reshade.me',
+  signpath: 'https://about.signpath.io/',
+  signpathFoundation: 'https://signpath.org/',
 };

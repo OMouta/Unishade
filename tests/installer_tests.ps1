@@ -49,6 +49,7 @@ function Assert-File([string]$Directory, [string]$Name, [bool]$Expected = $true)
 
 $hostOnly = Invoke-TestInstaller 'host-only' 'host'
 Assert-File $hostOnly 'Unishade.exe'
+Assert-File $hostOnly 'UnishadeUi.dll'
 Assert-File $hostOnly 'CREDITS.txt'
 Assert-File $hostOnly 'dxgi.dll' $false
 Assert-File $hostOnly 'nvngx_dlssnr.dll' $false

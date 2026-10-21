@@ -20,8 +20,10 @@
 #include "update.h"
 
 #include <algorithm>
+#include <psapi.h>
 #include <map>
 #include <optional>
+#include <thread>
 #include <vector>
 
 State g;
@@ -74,6 +76,29 @@ struct Loop
 };
 Loop loop;
 
+void LogState()
+{
+    LogReShadeDiagnostics();
+    PROCESS_MEMORY_COUNTERS memory{ sizeof(memory) };
+    GetProcessMemoryInfo(GetCurrentProcess(), &memory, sizeof(memory));
+    const HWND foreground = GetForegroundWindow();
+    DWORD foregroundPid = 0;
+    GetWindowThreadProcessId(foreground, &foregroundPid);
+    const auto& fps = g.frameStatistics;
+    Log(LogLevel::Info, L"State: target=%p, selected=%p, foreground=%p, foreground_pid=%lu, capture=%d, visible=%d, menu=%d, frame=%d, pool=%dx%d, captured=%llu, "
+                       L"capture_fps=%.1f, submitted_fps=%.1f, fresh_submitted_fps=%.1f, cpu_ms=%.2f, cpu_peak_ms=%.2f, "
+                       L"effects_loading=%d, effects_compiling=%d, depth=%d, fps_limit=%d, effect_resolution=%d%%, "
+                       L"working_set=%zu MB, peak_working_set=%zu MB.",
+        g.target, g.selectedGame ? g.selectedGame->window : nullptr, foreground, foregroundPid,
+        g.captureEnabled, g.overlayVisible, g.editMode, static_cast<bool>(g.latestFrame), g.poolSize.Width, g.poolSize.Height,
+        g.capturedFrames.load(std::memory_order_relaxed), fps.captureFps, fps.programFps, fps.freshFps, fps.processingMs, fps.peakProcessingMs,
+        ReShadeLoadingEffects(), ReShadeCompilingEffects(), DepthEnabled(), FrameRateLimit(), EffectResolution(),
+        memory.WorkingSetSize / (1024 * 1024), memory.PeakWorkingSetSize / (1024 * 1024));
+    LogFrameTimings();
+    LogGraphicsMemory();
+    LogDepthDiagnostics();
+}
+
 void ShowError(const std::wstring& message)
 {
     MessageBoxW(g.launcher, (message + L"\n\nMore details are in " + LogPath() + L".").c_str(), L"Unishade", MB_ICONERROR);
@@ -99,6 +124,8 @@ void LoadGames()
                                       L"the list replaces games.ini.",
                    e.what());
     }
+    for (const AutoGame& game : g.autoGames)
+        Log(LogLevel::Info, L"Saved game: %ls, executable=%ls, enabled=%d.", game.name.c_str(), game.executable.c_str(), game.enabled);
 }
 
 void GiveUpOnDevice(const wchar_t* reason)
@@ -119,6 +146,7 @@ void OnDeviceLost(HRESULT error)
     const HRESULT reason = g.device ? g.device->GetDeviceRemovedReason() : S_OK;
     Log(LogLevel::Warning, L"Lost the graphics device (0x%08X, reason 0x%08X). Starting again on a new one.", static_cast<unsigned>(error),
         static_cast<unsigned>(reason));
+    LogState();
     const HWND game = g.target;
     const bool editing = g.editMode;
     loop.reattach = g.activeGame;
@@ -152,6 +180,8 @@ bool EnsureDevice()
     }
     catch (const winrt::hresult_error& e)
     {
+        Log(LogLevel::Info, L"Device recovery failed: %ls (0x%08X), failing_for=%llu ms.", e.message().c_str(),
+            static_cast<unsigned>(e.code()), loop.deviceFailingSince ? now - loop.deviceFailingSince : 0);
         if (!loop.deviceFailingSince)
         {
             loop.deviceFailingSince = now;
@@ -193,6 +223,15 @@ void Attach(const GameWindow& game)
     if (g.target)
         StopCapture();
     g.activeGame = game;
+    Log(LogLevel::Info, L"Attaching: %ls, hwnd=%p, pid=%lu, manual=%d.", game.name.c_str(), game.window, game.processId, g.selectedGame.has_value());
+    try
+    {
+        Log(LogLevel::Info, L"Target executable: %ls.", ProcessExecutable(game.processId).c_str());
+    }
+    catch (const std::system_error& e)
+    {
+        Log(LogLevel::Info, L"Could not query target executable: %hs.", e.what());
+    }
     try
     {
         StartCapture(game.window);
@@ -210,6 +249,8 @@ void Attach(const GameWindow& game)
         CaptureRetry& retry = loop.captureRetries[game.window];
         retry.delay = retry.delay ? std::min(retry.delay * 2, kMaxCaptureRetry) : kFirstCaptureRetry;
         retry.at = now + retry.delay;
+        Log(LogLevel::Info, L"Capture attempt failed: hwnd=%p, attempt=%u, retry_in=%llu ms, error=0x%08X, %ls.", game.window,
+            retry.failures + 1, retry.delay, static_cast<unsigned>(e.code()), e.message().c_str());
         if (++retry.failures == 1)
             Log(LogLevel::Error, L"Could not capture %ls: %ls (0x%08X)", game.name.c_str(), e.message().c_str(), static_cast<unsigned>(e.code()));
         else if (retry.failures == 2)
@@ -290,7 +331,7 @@ void ShowFrames()
 
     // Opening or closing a menu and showing the overlay change the picture without a new frame.
     const bool interactive = g.editMode || ReShadeMenuOpen();
-    if (interactive != loop.wasInteractive || (g.overlayVisible && !loop.wasVisible))
+    if (fresh || interactive != loop.wasInteractive || (g.overlayVisible && !loop.wasVisible))
         loop.presentPending = true;
     loop.wasInteractive = interactive;
     loop.wasVisible = g.overlayVisible;
@@ -300,16 +341,16 @@ void ShowFrames()
     const ULONGLONG now = GetTickCount64();
     if (fresh || interactive || loop.presentPending || ReShadeLoadingEffects() || now < loop.fastUntil || now >= loop.nextRepeat)
     {
-        // A frame rate limit holds back whatever comes too soon, the menu included. A frame held back is shown with
-        // the next one, or on the next repeat when the game stops drawing.
-        if (const int limit = FrameRateLimit())
-        {
-            using namespace std::chrono;
-            const nanoseconds time = FrameStatistics::Clock::now().time_since_epoch();
-            if (!loop.frameLimit.Allow(time.count(), nanoseconds(seconds(1)).count() / limit))
-                return;
-        }
-        PresentLatestFrame();
+        // Only advance the FPS schedule after submission. GPU capacity may hold this frame back too.
+        const int limit = FrameRateLimit();
+        const int64_t time = std::chrono::duration_cast<std::chrono::nanoseconds>(FrameStatistics::Clock::now().time_since_epoch()).count();
+        const int64_t interval = limit ? 1'000'000'000 / limit : 0;
+        if (limit && !loop.frameLimit.Ready(time, interval))
+            return;
+        if (!PresentLatestFrame())
+            return;
+        if (limit)
+            loop.frameLimit.Allow(time, interval);
         loop.presentPending = false;
         loop.nextRepeat = now + kRepeatInterval;
     }
@@ -317,6 +358,7 @@ void ShowFrames()
 
 int Run()
 {
+    Log(LogLevel::Info, L"Checking Windows Graphics Capture support.");
     if (!GraphicsCaptureSession::IsSupported())
     {
         const wchar_t* message = L"Windows Graphics Capture is not available, and Unishade needs it to copy the game's picture. "
@@ -335,13 +377,17 @@ int Run()
     InitAddon();
     InitMenu();
     g.frameEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    winrt::check_bool(g.frameEvent != nullptr);
     CreateDevice();
+    const std::jthread frameMonitor(MonitorFrames);
     CheckSetup();
     InitDepth();
     RegisterHotkeys();
     CheckForUpdate();
     CreateLauncher();
     Log(LogLevel::Info, L"Waiting for a supported game...");
+
+    ULONGLONG nextStateLog = GetTickCount64();
 
     for (;;)
     {
@@ -350,6 +396,7 @@ int Run()
         {
             if (msg.message == WM_QUIT)
             {
+                Log(LogLevel::Info, L"Shutdown requested. Saving presets and stopping depth and the launcher.");
                 FlushPresets();
                 ShutdownDepth();
                 ShutdownAddon();
@@ -395,10 +442,17 @@ int Run()
         UpdateDiscord();
         UpdateLauncher();
 
+        if (const ULONGLONG now = GetTickCount64(); now >= nextStateLog)
+        {
+            LogState();
+            nextStateLog = now + 30000;
+        }
+
         if (g.target)
         {
             try
             {
+                SetCaptureIdle(!g.overlayVisible);
                 ShowFrames();
             }
             catch (const winrt::hresult_error& e)
@@ -409,7 +463,17 @@ int Run()
             }
         }
 
-        MsgWaitForMultipleObjects(1, &g.frameEvent, FALSE, g.overlayVisible ? 16 : 250, QS_ALLINPUT);
+        const HANDLE capacity = g.overlayVisible ? FrameLatencyEvent() : nullptr;
+        const HANDLE events[] = { g.frameEvent, capacity };
+        const DWORD wait = MsgWaitForMultipleObjects(capacity ? 2 : 1, events, FALSE, g.overlayVisible ? 16 : 250, QS_ALLINPUT);
+        if (capacity && wait == WAIT_OBJECT_0 + 1)
+            NotifyFrameReady();
+        if (wait == WAIT_FAILED)
+        {
+            const DWORD error = GetLastError();
+            Log(LogLevel::Error, L"Frame/message wait failed (Windows error %lu).", error);
+            winrt::throw_hresult(HRESULT_FROM_WIN32(error));
+        }
     }
 }
 } // namespace
@@ -420,35 +484,48 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     const HANDLE instance = CreateMutexW(nullptr, TRUE, L"Local\\RobloxShadeHost");
     if (GetLastError() == ERROR_ALREADY_EXISTS)
     {
+        // From the taskbar, or from the notification area, where it waits as it was, maximized or not.
         if (const HWND other = FindWindowW(kLauncherClass, nullptr))
         {
-            ShowWindow(other, SW_RESTORE);
+            ShowWindow(other, IsIconic(other) ? SW_RESTORE : SW_SHOW);
             SetForegroundWindow(other);
         }
         return 0;
     }
 
     InitLog();
-    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    winrt::init_apartment(winrt::apartment_type::multi_threaded);
     int result = 1;
     try
     {
+        if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
+            Log(LogLevel::Info, L"Could not set per-monitor DPI awareness (Windows error %lu).", GetLastError());
+        winrt::init_apartment(winrt::apartment_type::multi_threaded);
         result = Run();
     }
     catch (const winrt::hresult_error& e)
     {
         Log(LogLevel::Error, L"Unishade stopped: %ls (0x%08X)", e.message().c_str(), static_cast<unsigned>(e.code()));
+        LogState();
+        LogStackTrace();
         ShowError(L"Unishade stopped because of an error: " + std::wstring(e.message()));
     }
     catch (const std::exception& e)
     {
         Log(LogLevel::Error, L"Unishade stopped: %hs", e.what());
+        LogState();
+        LogStackTrace();
+        ShowError(L"Unishade stopped because of an error.");
+    }
+    catch (...)
+    {
+        Log(LogLevel::Error, L"Unishade stopped because of an unknown exception.");
+        LogStackTrace();
         ShowError(L"Unishade stopped because of an error.");
     }
     // Removes the tray icon after an error. After a normal exit the launcher is already gone.
     DestroyLauncher();
     CloseHandle(instance);
+    Log(LogLevel::Info, L"Session ended: exit_code=%d.", result);
     FlushLog();
     // Releasing the swapchain makes ReShade wait for the effects it is still compiling, which can take minutes
     // right after installing. ReShade writes settings and presets a second after they change, so the host exits

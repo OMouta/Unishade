@@ -1,13 +1,11 @@
 #pragma once
 
-// The host's window outside the game. Its Games tab shows whether the host is waiting for a game or running on
-// one, the saved games, and what needs attention. Its Settings tab has the menu's settings and whether the host
-// starts with Windows, and its Discord tab whether Discord shows the game. Minimizing it leaves the host running
-// from its notification area icon, and closing it quits the host. Drawn with GDI+, since ReShade would draw its
-// effects on any Direct3D window in this process.
+// The host's window outside the game: a sidebar of the saved games, a page for each with its presets and performance
+// settings, and pages for the settings and Discord. UnishadeUi.dll draws it, with the launcher every platform shares.
+// Closing it leaves the host running from its notification area icon, whose Quit ends it.
 void CreateLauncher();
 
-// Redraws the launcher when what it shows has changed, unless it is hidden or minimized. Called every loop.
+// Describes the launcher again when what it shows has changed, unless it is hidden or minimized. Called every loop.
 void UpdateLauncher();
 
 // Also removes the notification area icon. Does nothing more when called again.

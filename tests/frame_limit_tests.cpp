@@ -47,5 +47,11 @@ int main()
     Shown(paused, 240, 60, steady(240));
     const auto resumed = [](int frame) { return 10 * kSecond + frame * kSecond / 240; };
     ok &= Check(Shown(paused, 24, 60, resumed) <= 7, "a pause is not followed by a burst");
+
+    FrameLimit capacity;
+    ok &= Check(capacity.Ready(kSecond, kSecond / 60), "a new schedule allows its first frame");
+    ok &= Check(capacity.Ready(kSecond + 1, kSecond / 60), "checking a frame held by the GPU does not consume the FPS schedule");
+    ok &= Check(capacity.Allow(kSecond + 1, kSecond / 60), "a ready frame can be recorded after GPU capacity becomes available");
+    ok &= Check(!capacity.Ready(kSecond + 2, kSecond / 60), "a successful submission advances the FPS schedule");
     return ok ? 0 : 1;
 }

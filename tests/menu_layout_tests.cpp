@@ -65,6 +65,14 @@ int main()
     ok &= Check((menu_layout::kMargin * 2 + menu_layout::MinHeight()) * menu_layout::Scale(800, 200) > 200,
                 "short windows need scrolling");
 
+    // Effects below 100% draw the menu into a smaller frame that is scaled up to the window.
+    ok &= Check(Near(menu_layout::FrameScale(1920, 1080, 1080), 1), "a full-size frame keeps the window's scale");
+    ok &= Check(Near(menu_layout::FrameScale(1920, 1080, 810), 0.75f), "at 75% the menu keeps its size in the window");
+    ok &= Check(Near(menu_layout::FrameScale(1280, 720, 540), 0.5625f), "the window's smallest scale applies before the frame's");
+    ok &= Check(Near(menu_layout::FrameScale(1280, 720, 360), menu_layout::kMinFrameScale), "tiny frames keep text readable");
+    ok &= Check(Near(menu_layout::FrameScale(1920, 1080, 810, 1.5f), 1.125f), "the menu size from Settings applies on top");
+    ok &= Check(menu_layout::FrameScale(1920, 0, 810) == 0 && menu_layout::FrameScale(0, 1080, 810) == 0, "empty windows do not draw");
+
     ok &= Check(menu_layout::Scale(0, 1080) == 0 && menu_layout::Scale(1920, 0) == 0,
                 "empty viewports do not draw");
     ok &= Check(menu_layout::Scale(-1, 1080) == 0 && menu_layout::Scale(1920, -1) == 0,

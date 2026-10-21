@@ -357,6 +357,8 @@ struct Menu
     ULONGLONG lastScreenshot = 0;
     int presetStep = 0;
     ULONGLONG presetStepAt = 0;
+    // A preset the launcher picked for the game being played.
+    fs::path launcherPreset;
     // The key that keeps effects off, while the compare shortcut is held.
     UINT compareKey = 0;
 
@@ -800,6 +802,7 @@ std::vector<ScannedFolder> ScanLibrary(ScanCache& cache, unsigned generation)
 
 void ScanThread()
 {
+    InitThreadLog();
     // WIC and the shell's icon extraction both work in a single-threaded apartment.
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     ScanCache cache;
@@ -1686,6 +1689,7 @@ void OpenImportDialog()
         importDialog.process = m.gameProcess;
     }
     std::thread([] {
+        InitThreadLog();
         // The main thread's apartment is multithreaded, and the shell's dialogs need a single-threaded one.
         const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
         std::vector<fs::path> files = PickPresets();
@@ -3038,8 +3042,8 @@ void PerformanceSettings()
 
     ImGui::Dummy(ImVec2(0, S(8)));
     int clicked = ChoiceRow("Effect resolution",
-                            "Effects run on a smaller picture, stretched back to the game's size. Lower is faster and blurrier. The menu "
-                            "blurs too, and screenshots get smaller.",
+                            "Effects run on a smaller picture that FSR upscales to the game's size. Lower is faster and softer. The menu "
+                            "gets softer too, and screenshots get smaller.",
                             { "100%", "75%", "50%" }, ChoiceOf(kEffectResolutions, EffectResolution()));
     if (clicked >= 0)
         SetEffectResolution(kEffectResolutions[clicked]);
@@ -3295,6 +3299,7 @@ void Answer(std::function<void()> answer)
 
 void SharingThread()
 {
+    InitThreadLog();
     // WIC decodes the screenshots shown and encodes the ones published.
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     for (;;)
@@ -3780,6 +3785,7 @@ void SignIn()
     m.browse.signingIn = true;
     m.browse.signInUrl.clear();
     std::thread([] {
+        InitThreadLog();
         std::function<void()> answer = [] { m.browse.signingIn = false; };
         try
         {
@@ -4780,11 +4786,11 @@ void DrawToast(ULONGLONG elapsed)
 
 void DrawFpsGraph(const FrameStatistics& stats)
 {
-    Text("Game capture", kAccent, 11.5f, -1);
+    Text("Capture", kAccent, 11.5f, -1);
     ImGui::SameLine(0, S(14));
-    Text("Unishade", kWarning, 11.5f, -1);
+    Text("Submitted", kWarning, 11.5f, -1);
     ImGui::SameLine(0, S(14));
-    Text("Fresh output", kSuccess, 11.5f, -1);
+    Text("Fresh submitted", kSuccess, 11.5f, -1);
 
     const auto now = FrameStatistics::Clock::now();
     constexpr double seconds = 60;
@@ -4870,20 +4876,27 @@ void DrawDebugInfo()
                 ImGui::TextDisabled("%s", label);
                 ImGui::TableNextColumn();
             };
-            row("Game capture");
+            row("Capture");
             ImGui::Text("%.1f FPS", stats.captureFps);
-            row("Unishade");
+            row("Submitted");
             ImGui::Text("%.1f FPS", stats.programFps);
-            row("Fresh output");
+            row("Fresh submitted");
             ImGui::Text("%.1f FPS", stats.freshFps);
-            row("Frame loss");
+            row("Skipped captures");
             ImGui::Text("%.1f FPS / %.1f%%", stats.LostFps(), stats.LossPercent());
             row("Repeated frames");
             ImGui::Text("%.1f FPS", stats.RepeatedFps());
-            row("Processing avg");
+            row("CPU avg");
             ImGui::Text("%.2f ms", stats.processingMs);
-            row("Processing peak");
+            row("CPU peak");
             ImGui::Text("%.2f ms", stats.peakProcessingMs);
+            row("CPU p95 / p99");
+            ImGui::Text("%.2f / %.2f ms", stats.p95ProcessingMs, stats.p99ProcessingMs);
+            row("GPU span");
+            if (stats.gpuReady)
+                ImGui::Text("%.2f ms", stats.gpuMs);
+            else
+                ImGui::TextDisabled("Measuring...");
             ImGui::EndTable();
         }
     }
@@ -5022,6 +5035,16 @@ void CarryOutRequests()
             case SwitchResult::Failed: ShowToast("ReShade could not load " + name); break;
             }
     }
+    // The launcher is not over the game, so what goes wrong is also reported there.
+    if (const fs::path target = std::exchange(m.launcherPreset, {}); !target.empty() && !SamePath(target, m.current))
+        switch (SwitchNow(target))
+        {
+        case SwitchResult::Switched: ShowToast(Utf8(target.stem().wstring())); break;
+        case SwitchResult::Unsaved:
+            Report(LogLevel::Warning, L"Save or discard the changes to %ls in the menu to switch to %ls.", m.current.stem().c_str(), target.stem().c_str());
+            break;
+        case SwitchResult::Failed: Report(LogLevel::Warning, L"ReShade could not load %ls.", target.stem().c_str()); break;
+        }
 }
 
 // ReShade calls the menu from its own DLL, which nothing may be thrown into. An error is logged once, and the frame
@@ -5105,8 +5128,12 @@ void DrawOverlay(bool menu)
     if (!menu && !toast && !DebugInfoEnabled())
         return;
 
+    // Sized for the window the frame is scaled to, so the menu keeps its size at every effect resolution.
     const ImVec2 display = ImGui::GetIO().DisplaySize;
-    m.scale = menu_layout::Scale(display.x, display.y, MenuScale());
+    RECT window{};
+    m.scale = GetClientRect(g.overlay, &window) && window.bottom > 0 && display.y > 0
+                  ? menu_layout::FrameScale(static_cast<float>(window.right), static_cast<float>(window.bottom), display.y, MenuScale())
+                  : menu_layout::Scale(display.x, display.y, MenuScale());
     if (m.scale <= 0)
         return;
     ApplyStyle(ImGui::GetStyle());
@@ -5128,6 +5155,7 @@ void OnOverlay(effect_runtime* runtime)
 {
     if (runtime != m.runtime)
         return;
+    const auto started = FrameStatistics::Clock::now();
     // The menu's look only applies to its own windows, so ReShade's is restored after, also after an error.
     ImGuiStyle& style = ImGui::GetStyle();
     const ImGuiStyle saved = style;
@@ -5137,6 +5165,7 @@ void OnOverlay(effect_runtime* runtime)
         DrawOverlay(menu);
     });
     style = saved;
+    g.menuCpuMs += std::chrono::duration<double, std::milli>(FrameStatistics::Clock::now() - started).count();
 }
 
 void OnInitRuntime(effect_runtime* runtime)
@@ -5367,4 +5396,38 @@ void FlushPresets(bool saveUnsaved)
     {
         Log(LogLevel::Error, L"Could not write %ls: %hs", m.current.filename().c_str(), e.what());
     }
+}
+
+GamePresetList GamePresets(const std::wstring& game)
+{
+    GamePresetList list;
+    {
+        std::lock_guard lock(scanner.mutex);
+        for (const ScannedFolder& folder : scanner.folders)
+            if (SamePath(folder.path, PresetsRoot()))
+                list.shared = folder.presets;
+            else if (!game.empty() && SamePath(folder.path, PresetsRoot() / game))
+                list.own = folder.presets;
+    }
+    list.inUse = !game.empty() && SamePath(m.game, game) && m.runtime ? m.current : RememberedPreset(game);
+    return list;
+}
+
+unsigned PresetScanVersion()
+{
+    std::lock_guard lock(scanner.mutex);
+    return scanner.version;
+}
+
+void RequestPresetScan()
+{
+    RequestScan();
+}
+
+void UseGamePreset(const std::wstring& game, const fs::path& preset)
+{
+    if (m.runtime && !m.game.empty() && SamePath(m.game, game))
+        m.launcherPreset = preset;
+    else if (const std::wstring relative = LibraryPath(preset); !relative.empty())
+        SetGamePreset(game, relative);
 }

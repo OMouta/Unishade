@@ -162,8 +162,9 @@ add_library(posix_libraries STATIC
     "${MINIZ_DIR}/miniz.c"
     "${POSIX_DIR}/stb.cpp")
 target_include_directories(posix_libraries PUBLIC "${IMGUI_DIR}" "${IMGUI_DIR}/backends" "${MINIZ_DIR}" "${STB_DIR}")
-# Vulkan only: without this GLFW's header pulls in OpenGL's.
-target_compile_definitions(posix_libraries PUBLIC MINIZ_NO_TIME GLFW_INCLUDE_NONE)
+# Vulkan only: without GLFW_INCLUDE_NONE GLFW's header pulls in OpenGL's. Dear ImGui's 32-bit characters let emoji
+# outside the first 65536 code points show.
+target_compile_definitions(posix_libraries PUBLIC MINIZ_NO_TIME GLFW_INCLUDE_NONE IMGUI_USE_WCHAR32)
 target_compile_options(posix_libraries PRIVATE -w)
 target_link_libraries(posix_libraries PUBLIC glfw unishade_vulkan)
 
@@ -189,7 +190,10 @@ set(POSIX_SOURCES
     "${POSIX_DIR}/hotkeys.cpp"
     "${POSIX_DIR}/log.cpp"
     "${POSIX_DIR}/setup.cpp"
-    "${POSIX_DIR}/ui.cpp")
+    "${POSIX_DIR}/ui.cpp"
+    # The launcher every platform shares.
+    "${POSIX_DIR}/../ui/kit.cpp"
+    "${POSIX_DIR}/../ui/launcher_ui.cpp")
 if(APPLE)
     list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_macos.mm")
 else()
@@ -260,7 +264,6 @@ else()
     target_compile_options(unishade PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
 endif()
 
-include(CTest)
 if(BUILD_TESTING)
     add_executable(ini_text_tests "${CMAKE_SOURCE_DIR}/tests/ini_text_tests.cpp")
     # GNU mode defines unix as a macro, which the test uses as a name.
@@ -270,6 +273,10 @@ if(BUILD_TESTING)
     add_executable(posix_tests "${CMAKE_SOURCE_DIR}/tests/posix_tests.cpp")
     target_link_libraries(posix_tests PRIVATE unishade_core)
     add_test(NAME posix_tests COMMAND posix_tests)
+
+    add_executable(image_tests "${CMAKE_SOURCE_DIR}/tests/image_tests.cpp")
+    target_link_libraries(image_tests PRIVATE posix_libraries)
+    add_test(NAME image_tests COMMAND image_tests)
 
     add_executable(posix_effects_tests "${CMAKE_SOURCE_DIR}/tests/posix_effects_tests.cpp")
     target_link_libraries(posix_effects_tests PRIVATE unishade_core)

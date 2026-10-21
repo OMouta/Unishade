@@ -1,0 +1,314 @@
+---
+import { Image } from 'astro:assets';
+import { steps } from '../site';
+import setup from '../content/docs/images/setup-addons.png';
+import launcher from '../content/docs/images/launcher.png';
+import game from '../assets/menu-game.jpg';
+import panel from '../assets/menu-panel.png';
+---
+
+<section class="steps">
+  <h2>One installer, a few minutes</h2>
+
+  <!-- Shows the step being read: Setup, then the Unishade window, then the game with the menu open. -->
+  <div class="screen-frame">
+    <div class="screen" data-active="0">
+      <Image src={game} widths={[720, 1440]} sizes="(max-width: 900px) 100vw, 58vw" alt="" class="screen-game" />
+      <Image src={setup} sizes="(max-width: 900px) 80vw, 44vw" alt="Setup's add-ons page" class="screen-window" data-for="0" />
+      <Image src={launcher} sizes="(max-width: 900px) 80vw, 44vw" alt="The Unishade window with three saved games" class="screen-window" data-for="1" />
+      <Image src={panel} widths={[240, 461]} sizes="(max-width: 900px) 30vw, 18vw" alt="The Unishade menu over a game, with an effect's settings open" class="screen-menu" />
+      <kbd class="screen-key" aria-hidden="true">Home</kbd>
+    </div>
+  </div>
+
+  <ol>
+    <li data-step="0">
+      <h3>{steps[0]}</h3>
+      <p>Setup brings ReShade, every official effect and a set of presets. Depth estimation and DLSS5 are there if you want them.</p>
+    </li>
+    <li data-step="1">
+      <h3>{steps[1]}</h3>
+      <p>Click Add game and pick its window. Next time you play, your effects are already on.</p>
+      <p class="dim">Works with games in windowed or borderless mode.</p>
+    </li>
+    <li data-step="2">
+      <h3>{steps[2]}</h3>
+      <p>The menu opens right over the game. Switch presets, turn effects on and tweak them while you watch.</p>
+      <ul>
+        <li>Save your own presets or import shared ones</li>
+        <li>Every ReShade effect, searchable</li>
+        <li>Hold <kbd>F7</kbd> to compare with the original</li>
+        <li>Before and after screenshots from the same frame</li>
+      </ul>
+    </li>
+  </ol>
+
+  <a class="guide" href="/docs/">Read the install guide</a>
+</section>
+
+<script>
+  const screen = document.querySelector<HTMLElement>('.screen')!;
+  const steps = document.querySelectorAll<HTMLElement>('.steps li[data-step]');
+
+  // The step crossing the middle of the window is the one shown.
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const step = (entry.target as HTMLElement).dataset.step!;
+        screen.dataset.active = step;
+        for (const item of steps) item.toggleAttribute('data-active', item.dataset.step === step);
+      }
+    },
+    { rootMargin: '-50% 0px -50% 0px' },
+  );
+  for (const step of steps) observer.observe(step);
+</script>
+
+<style>
+  .steps {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    grid-template-rows: auto auto 1fr;
+    column-gap: clamp(32px, 6vw, 88px);
+    width: var(--page);
+    margin: clamp(72px, 10vw, 140px) auto 0;
+  }
+
+  .steps > h2,
+  .steps > ol,
+  .guide {
+    grid-column: 1;
+  }
+
+  .guide {
+    justify-self: start;
+    align-self: start;
+    margin-left: 64px;
+  }
+
+  ol {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: step;
+  }
+
+  ol > li {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    align-content: center;
+    gap: 14px 0;
+    min-height: 56svh;
+    padding: 24px 0;
+    counter-increment: step;
+  }
+
+  ol > li > * {
+    grid-column: 2;
+  }
+
+  /* The step's number, and a line under it that lights up while it's the one shown. */
+  ol > li::before {
+    content: counter(step);
+    grid-area: 1 / 1;
+    color: var(--line-strong);
+    font-size: 2.6rem;
+    font-weight: 800;
+    font-stretch: 125%;
+    line-height: 0.8;
+    transition: color 0.4s;
+  }
+
+  ol > li::after {
+    content: '';
+    grid-area: 2 / 1;
+    width: 40px;
+    height: 2px;
+    background: linear-gradient(90deg, var(--spectrum));
+    opacity: 0;
+    transform: scaleX(0.3);
+    transform-origin: left;
+    transition:
+      opacity 0.4s,
+      transform 0.5s var(--ease-out);
+  }
+
+  ol > li[data-active]::before {
+    color: var(--ink);
+  }
+
+  ol > li[data-active]::after {
+    opacity: 1;
+    transform: none;
+  }
+
+  li h3 {
+    color: var(--haze);
+    transition: color 0.4s;
+  }
+
+  li[data-active] h3 {
+    color: var(--ink);
+  }
+
+  li p {
+    max-width: 44ch;
+  }
+
+  li ul {
+    display: grid;
+    gap: 8px;
+    margin: 4px 0 0;
+    padding-left: 1.2em;
+  }
+
+  li ul li::marker {
+    color: var(--accent);
+  }
+
+  .screen-frame {
+    grid-column: 2;
+    grid-row: 1 / -1;
+    position: sticky;
+    top: calc(var(--nav-height) + 8svh);
+    align-self: start;
+  }
+
+  .screen {
+    position: relative;
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: #050508;
+    box-shadow: 0 40px 100px -40px rgb(0 0 0 / 0.9);
+    isolation: isolate;
+  }
+
+  .screen img {
+    position: absolute;
+  }
+
+  /* Out of focus behind the windows, in focus once the game is in front. */
+  .screen-game {
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: blur(10px) brightness(0.4) saturate(0.8);
+    transform: scale(1.06);
+    transition:
+      filter 0.7s var(--ease-out),
+      transform 0.9s var(--ease-out);
+  }
+
+  .screen-window {
+    top: 50%;
+    left: 50%;
+    width: 78%;
+    border-radius: 8px;
+    box-shadow: 0 30px 70px rgb(0 0 0 / 0.65);
+    opacity: 0;
+    transform: translate(-50%, -46%) scale(0.96);
+    transition:
+      opacity 0.45s,
+      transform 0.6s var(--ease-out);
+  }
+
+  .screen-menu {
+    top: 2.5%;
+    left: 2.5%;
+    height: 95%;
+    width: auto;
+    border-radius: 10px;
+    box-shadow: 20px 0 60px rgb(0 0 0 / 0.5);
+    transform: translateX(-112%);
+    transition: transform 0.6s var(--ease-out);
+  }
+
+  .screen-key {
+    position: absolute;
+    right: 5%;
+    bottom: 6%;
+    font-size: clamp(0.85rem, 1.4vw, 1.15rem);
+    padding: 0.2em 0.8em 0.25em;
+    box-shadow: 0 10px 30px rgb(0 0 0 / 0.5);
+    opacity: 0;
+    transition: opacity 0.4s;
+  }
+
+  .screen[data-active='0'] [data-for='0'],
+  .screen[data-active='1'] [data-for='1'] {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+
+  .screen[data-active='2'] .screen-game {
+    filter: none;
+    transform: none;
+  }
+
+  .screen[data-active='2'] .screen-menu {
+    transform: none;
+    transition-delay: 0.25s;
+  }
+
+  .screen[data-active='2'] .screen-key {
+    opacity: 1;
+    animation: press 0.5s 0.1s;
+  }
+
+  @keyframes press {
+    40% {
+      border-bottom-width: 1px;
+      transform: translateY(2px);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .screen *,
+    ol > li::before,
+    ol > li::after {
+      transition-duration: 0.01ms !important;
+      animation: none !important;
+    }
+  }
+
+  /* The screen stays at the top while the steps go by under it. */
+  @media (max-width: 900px) {
+    .steps {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .steps > h2,
+    .steps > ol,
+    .guide,
+    .screen-frame {
+      grid-column: 1;
+      grid-row: auto;
+    }
+
+    .screen-frame {
+      top: var(--nav-height);
+      z-index: 1;
+      margin: 24px calc(-1 * var(--gutter)) 0;
+      padding: 12px var(--gutter);
+      background: var(--night);
+    }
+
+    .guide {
+      margin-left: 52px;
+    }
+
+    ol > li {
+      grid-template-columns: 52px minmax(0, 1fr);
+      min-height: 44svh;
+    }
+
+    ol > li::before {
+      font-size: 2rem;
+    }
+  }
+</style>

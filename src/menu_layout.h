@@ -24,6 +24,18 @@ constexpr float Scale(float width, float height, float userScale = 1)
     return std::max(std::min(height / 1080.0f, width / (kWidth + kMargin * 2)), kMinScale) * userScale;
 }
 
+// Below this, text drawn in the frame is unreadable once scaled up to the window.
+constexpr float kMinFrameScale = 0.5f;
+
+// The scale in the frame's pixels when a frame of frameHeight is scaled to a window of width and height. The menu has
+// the same size in the window at every effect resolution, unless that would draw it below kMinFrameScale.
+constexpr float FrameScale(float width, float height, float frameHeight, float userScale = 1)
+{
+    if (width <= 0 || height <= 0)
+        return 0;
+    return std::max(Scale(width, height, userScale) * frameHeight / height, kMinFrameScale * userScale);
+}
+
 // The menu's height at 1080p when the window is too short for it.
 constexpr float MinHeight()
 {

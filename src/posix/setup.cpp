@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <cerrno>
 #include <cstring>
 #include <cstdio>
 #include <stdexcept>
@@ -42,23 +43,40 @@ void Download(const std::string& url, const fs::path& path, const std::atomic<bo
     fs::remove(path, error);
     const std::string output = path.string();
     const std::string maxSize = std::to_string(limit);
-    const char* argv[] = { "curl", "-fsSL", "--proto", local ? "=https,file" : "=https", "--proto-redir", "=https", "--max-filesize", maxSize.c_str(),
-                           "--retry", "2", "--connect-timeout", "20", "-o", output.c_str(), url.c_str(), nullptr };
+    const char* argv[] = { "curl", "-q", "-g", "-fsSL", "--proto", local ? "=https,file" : "=https", "--proto-redir", "=https", "--max-filesize", maxSize.c_str(),
+                           "--retry", "2", "--retry-max-time", "600", "--connect-timeout", "20", "--max-time", "300",
+                           "--speed-limit", "1024", "--speed-time", "30", "-o", output.c_str(), url.c_str(), nullptr };
     pid_t pid;
     if (posix_spawnp(&pid, "curl", nullptr, nullptr, const_cast<char* const*>(argv), environ) != 0)
         throw std::runtime_error("curl is needed to download effects. Install it and try again.");
     int status = 0;
-    while (waitpid(pid, &status, WNOHANG) == 0)
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(10);
+    for (;;)
     {
-        if (cancel)
+        const pid_t waited = waitpid(pid, &status, WNOHANG);
+        if (waited == pid)
+            break;
+        if (waited < 0)
         {
-            kill(pid, SIGTERM);
-            waitpid(pid, &status, 0);
-            throw Cancelled{};
+            if (errno == EINTR)
+                continue;
+            throw std::runtime_error("Could not wait for the download of " + url + ".");
+        }
+        // Older curl versions cannot bound a response without Content-Length themselves.
+        const uintmax_t size = fs::file_size(path, error);
+        const bool tooLarge = !error && size > limit;
+        const bool timedOut = std::chrono::steady_clock::now() >= deadline;
+        if (cancel || tooLarge || timedOut)
+        {
+            kill(pid, SIGKILL);
+            while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+            fs::remove(path, error);
+            if (cancel)
+                throw Cancelled{};
+            throw std::runtime_error(tooLarge ? url + " is larger than Unishade accepts." : "The download of " + url + " timed out.");
         }
         usleep(50'000);
     }
-    // curl's own limit only works where the server says the size first, before curl 8.4.
     const uintmax_t size = fs::file_size(path, error);
     if ((WIFEXITED(status) && WEXITSTATUS(status) == 63) || (!error && size > limit))
         throw std::runtime_error(url + " is larger than Unishade accepts.");

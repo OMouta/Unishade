@@ -41,6 +41,8 @@ const platforms = {
 
 <div class="download" data-platforms={detect ? JSON.stringify(platforms) : undefined}>
   <a class="button button-primary" href={windows.href}>{windows.label}</a>
+  <!-- Another button can go next to this one. -->
+  <slot />
   <span class="dim">
     <span class="details">{windows.details}</span> · <a class="other" href={windows.other.href}>{windows.other.label}</a>
   </span>

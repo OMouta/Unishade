@@ -1760,6 +1760,37 @@ std::string UiFont(bool bold)
     return {};
 }
 
+std::vector<std::pair<std::string, int>> UiFallbackFonts(bool bold)
+{
+    // fontconfig's font for each language, which may be one collection holding all of them.
+    std::vector<std::string> languages = { "zh-cn", "ja", "ko", "zh-tw" };
+    const char* lang = getenv("LANG");
+    const std::string user = lang ? lang : "";
+    const size_t first = !user.compare(0, 2, "ja") ? 1 : !user.compare(0, 2, "ko") ? 2 : !user.compare(0, 5, "zh_TW") || !user.compare(0, 5, "zh_HK") ? 3 : 0;
+    std::rotate(languages.begin(), languages.begin() + static_cast<std::ptrdiff_t>(first), languages.begin() + static_cast<std::ptrdiff_t>(first) + 1);
+    std::vector<std::pair<std::string, int>> fonts;
+    for (const std::string& language : languages)
+    {
+        const std::string match = "fc-match -f '%{file}\\n%{index}' 'sans-serif:lang=" + language + (bold ? ":bold" : "") + "' 2>/dev/null";
+        FILE* pipe = popen(match.c_str(), "r");
+        if (!pipe)
+            continue;
+        char buffer[1024]{};
+        const size_t size = fread(buffer, 1, sizeof(buffer) - 1, pipe);
+        pclose(pipe);
+        const std::string output(buffer, size);
+        const size_t newline = output.find('\n');
+        if (newline == std::string::npos)
+            continue;
+        std::pair<std::string, int> font{ output.substr(0, newline), atoi(output.c_str() + newline + 1) };
+        const std::string extension = font.first.size() > 4 ? font.first.substr(font.first.size() - 4) : "";
+        if ((extension == ".ttf" || extension == ".otf" || extension == ".ttc") && access(font.first.c_str(), R_OK) == 0 &&
+            std::find(fonts.begin(), fonts.end(), font) == fonts.end())
+            fonts.push_back(std::move(font));
+    }
+    return fonts;
+}
+
 void ReadInput(std::array<bool, 256>& keys, std::array<bool, 5>& buttons)
 {
     keys = {};

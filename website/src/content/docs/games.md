@@ -18,9 +18,17 @@ That's it. If the game isn't in the list, make sure its window isn't minimized a
 
 If you move a game to another folder, add it again.
 
-## Turn a game off or remove it
+## A game's page
 
-The switch next to a game turns it off. The × removes it. Roblox is on the list from the start, so turn it off if you don't play it.
+Click a game in the sidebar to open its page.
+
+![Roblox's page in the Unishade window](./images/launcher-game.png)
+
+The switch at the top turns the game off, and the × removes it. Roblox is on the list from the start, so turn it off if you don't play it.
+
+Click a preset to use it. If the game isn't running, it starts with that preset next time.
+
+On Windows, **Performance** limits the frame rate and lowers the effect resolution and depth detail for this game. **Settings > Performance** sets them for games without their own.
 
 ## Playing more than one
 

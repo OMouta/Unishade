@@ -2,7 +2,9 @@
 
 #include <windows.h>
 
+#include <filesystem>
 #include <string>
+#include <vector>
 
 // Draws the host's menu over the game through ReShade's ImGui, after the effects, so they do not apply to it.
 // Does nothing without the add-on.
@@ -33,6 +35,22 @@ bool MenuHasUnsavedChanges();
 
 // The name of the active preset, for asking about its unsaved changes. Empty while ReShade runs no effects.
 std::wstring ActivePresetName();
+
+// The presets a saved game can use, by its presets folder's name, for the launcher: those in its own folder and those
+// for all games, as the presets folder was last read, and the one it is played with or starts with next.
+struct GamePresetList
+{
+    std::vector<std::filesystem::path> own;
+    std::vector<std::filesystem::path> shared;
+    std::filesystem::path inUse;
+};
+GamePresetList GamePresets(const std::wstring& game);
+// Goes up whenever the presets folder was read again, which RequestPresetScan asks for.
+unsigned PresetScanVersion();
+void RequestPresetScan();
+// Makes a preset the one a saved game starts with. While the game is being played, switches to it on the next frame,
+// unless there are unsaved changes.
+void UseGamePreset(const std::wstring& game, const std::filesystem::path& preset);
 
 // Writes preset changes to disk now. ReShade writes them from its present a second after they happen, so they are
 // lost when the host exits or stops showing frames before that. saveUnsaved saves changes that are not saved yet

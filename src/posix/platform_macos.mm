@@ -879,6 +879,17 @@ std::string UiFont(bool bold)
     return {};
 }
 
+std::vector<std::pair<std::string, int>> UiFallbackFonts(bool)
+{
+    // Symbols, then Chinese, Japanese and Korean.
+    std::vector<std::pair<std::string, int>> fonts;
+    for (const char* path : { "/System/Library/Fonts/Apple Symbols.ttf", "/System/Library/Fonts/Hiragino Sans GB.ttc",
+                              "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", "/System/Library/Fonts/AppleSDGothicNeo.ttc" })
+        if (access(path, R_OK) == 0)
+            fonts.emplace_back(path, 0);
+    return fonts;
+}
+
 void ReadInput(std::array<bool, 256>& keys, std::array<bool, 5>& buttons)
 {
     keys = {};

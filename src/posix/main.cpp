@@ -202,7 +202,10 @@ int main(int argc, char** argv)
             // Setup takes a lock of its own, so this cannot mix with an install the launcher runs.
             const FileLock instance(DataDirectory() / "unishade.lock");
             InitLogUnlessRunning(instance);
-            return EffectSetup::RunInTerminal();
+            const int result = EffectSetup::RunInTerminal();
+            Log(LogLevel::Info, "Session ended: exit_code=%d.", result);
+            FlushLog();
+            return result;
         }
         else if (!strcmp(argv[i], "--render"))
         {
@@ -216,7 +219,10 @@ int main(int argc, char** argv)
             const FileLock instance(DataDirectory() / "unishade.lock");
             InitLogUnlessRunning(instance);
             const bool gpuSource = i + 4 < argc && !strcmp(argv[i + 4], "--gpu-source");
-            return Render(argv[i + 1], argv[i + 2], argv[i + 3], gpuSource);
+            const int result = Render(argv[i + 1], argv[i + 2], argv[i + 3], gpuSource);
+            Log(LogLevel::Info, "Session ended: exit_code=%d.", result);
+            FlushLog();
+            return result;
         }
     }
     if (!HaveDataDirectory())
@@ -243,6 +249,7 @@ int main(int argc, char** argv)
     glfwInitVulkanLoader(vkGetInstanceProcAddr);
     if (!glfwInit())
     {
+        Log(LogLevel::Error, "Could not initialize GLFW. The host needs a supported display.");
         fprintf(stderr, "Unishade could not open a window. It needs an X11 or XWayland display on Linux.\n");
         return 1;
     }
@@ -259,5 +266,7 @@ int main(int argc, char** argv)
     }
     app.Shutdown();
     glfwTerminate();
+    Log(LogLevel::Info, "Session ended: exit_code=%d.", result);
+    FlushLog();
     return result;
 }

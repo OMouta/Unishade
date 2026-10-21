@@ -38,6 +38,7 @@ bool CachedFlag(std::atomic<int>& cached, const wchar_t* name, bool fallback)
     {
         value = GetPrivateProfileIntW(L"Menu", name, fallback, IniPath().c_str()) != 0;
         cached = value;
+        Log(LogLevel::Info, L"Setting loaded: Menu.%ls=%d.", name, value);
     }
     return value != 0;
 }
@@ -47,7 +48,10 @@ bool SaveFlag(std::atomic<int>& cached, const wchar_t* name, bool enabled)
 {
     cached = enabled;
     ++settingsVersion;
-    return WritePrivateProfileStringW(L"Menu", name, enabled ? L"1" : L"0", IniPath().c_str()) != FALSE;
+    const bool saved = WritePrivateProfileStringW(L"Menu", name, enabled ? L"1" : L"0", IniPath().c_str()) != FALSE;
+    const DWORD error = saved ? ERROR_SUCCESS : GetLastError();
+    Log(LogLevel::Info, L"Setting changed: Menu.%ls=%d, saved=%d, error=%lu.", name, enabled, saved, error);
+    return saved;
 }
 
 // Also turns a scale that is not a number into the default.
@@ -61,19 +65,37 @@ std::wstring PerformanceSection(const std::wstring& game)
     return game.empty() ? L"Performance" : L"Performance." + game;
 }
 
-// A performance setting of the game, read from the file once. valid turns what the file holds into a value the
+// A game's performance setting, or the default for an empty game. valid turns what the file holds into a value the
 // setting takes, which is never negative.
+int ReadNumber(const std::wstring& game, const wchar_t* name, int fallback, int (*valid)(int))
+{
+    const std::wstring path = IniPath();
+    int number = static_cast<int>(GetPrivateProfileIntW(L"Performance", name, fallback, path.c_str()));
+    if (!game.empty())
+        number = static_cast<int>(GetPrivateProfileIntW(PerformanceSection(game).c_str(), name, number, path.c_str()));
+    return valid(number);
+}
+
+void WriteNumber(const std::wstring& game, const wchar_t* name, int value)
+{
+    ++settingsVersion;
+    const std::wstring section = PerformanceSection(game);
+    const bool saved = WritePrivateProfileStringW(section.c_str(), name, std::to_wstring(value).c_str(), IniPath().c_str()) != FALSE;
+    const DWORD error = saved ? ERROR_SUCCESS : GetLastError();
+    Log(LogLevel::Info, L"Setting changed: %ls.%ls=%d, saved=%d, error=%lu.", section.c_str(), name, value, saved, error);
+    if (!saved)
+        Log(LogLevel::Warning, L"Could not save %ls to RobloxShadeHost.ini. It applies until Unishade closes.", name);
+}
+
+// A performance setting of the game being played, read from the file once.
 int CachedNumber(std::atomic<int>& cached, const wchar_t* name, int fallback, int (*valid)(int))
 {
     int value = cached;
     if (value < 0)
     {
-        const std::wstring path = IniPath();
-        int number = static_cast<int>(GetPrivateProfileIntW(L"Performance", name, fallback, path.c_str()));
-        if (!performanceGame.empty())
-            number = static_cast<int>(GetPrivateProfileIntW(PerformanceSection(performanceGame).c_str(), name, number, path.c_str()));
-        value = valid(number);
+        value = ReadNumber(performanceGame, name, fallback, valid);
         cached = value;
+        Log(LogLevel::Info, L"Setting loaded: %ls.%ls=%d.", PerformanceSection(performanceGame).c_str(), name, value);
     }
     return value;
 }
@@ -82,9 +104,15 @@ void SaveNumber(std::atomic<int>& cached, const wchar_t* name, int value)
 {
     if (cached.exchange(value) == value)
         return;
-    ++settingsVersion;
-    if (!WritePrivateProfileStringW(PerformanceSection(performanceGame).c_str(), name, std::to_wstring(value).c_str(), IniPath().c_str()))
-        Log(LogLevel::Warning, L"Could not save %ls to RobloxShadeHost.ini. It applies until Unishade closes.", name);
+    WriteNumber(performanceGame, name, value);
+}
+
+// Changes a game's setting, and the game being played's when it is that game or uses the defaults that changed.
+void SaveGameNumber(std::atomic<int>& cached, const std::wstring& game, const wchar_t* name, int value)
+{
+    WriteNumber(game, name, value);
+    if (game.empty() || _wcsicmp(game.c_str(), performanceGame.c_str()) == 0)
+        cached = -1;
 }
 
 int ValidFrameRate(int fps)
@@ -127,6 +155,8 @@ void UseHotkeys(const InputHotkeys& hotkeys)
     g.hotkeys = hotkeys;
     g.inputHotkey = FormatHotkey(hotkeys.input);
     g.overlayHotkey = FormatHotkey(hotkeys.overlay);
+    for (const Shortcut& shortcut : kShortcuts)
+        Log(LogLevel::Info, L"Shortcut: %ls=%ls.", shortcut.name, FormatHotkey(hotkeys.*shortcut.member).c_str());
 }
 
 bool Register(const Shortcut& shortcut, const InputHotkeys& hotkeys)
@@ -289,6 +319,7 @@ float MenuScale()
         GetPrivateProfileStringW(L"Menu", L"Scale", L"1", value, static_cast<DWORD>(std::size(value)), IniPath().c_str());
         scale = ValidScale(wcstof(value, nullptr));
         menuScale = scale;
+        Log(LogLevel::Info, L"Setting loaded: Menu.Scale=%.2f.", scale);
     }
     return scale;
 }
@@ -303,6 +334,7 @@ void SetMenuScale(float scale)
     ++settingsVersion;
     wchar_t value[32]{};
     swprintf_s(value, L"%.2f", scale);
+    Log(LogLevel::Info, L"Setting changed: Menu.Scale=%ls.", value);
     if (!WritePrivateProfileStringW(L"Menu", L"Scale", value, IniPath().c_str()))
         Log(LogLevel::Warning, L"Could not save the menu size to RobloxShadeHost.ini. It applies until Unishade closes.");
 }
@@ -349,6 +381,8 @@ void SetPerformanceGame(const std::wstring& game)
     effectResolution = -1;
     depthSize = -1;
     ++settingsVersion;
+    Log(LogLevel::Info, L"Performance game: %ls, fps_limit=%d, effect_resolution=%d%%, depth_size=%d.",
+        game.empty() ? L"defaults" : game.c_str(), FrameRateLimit(), EffectResolution(), DepthSize());
 }
 
 const std::wstring& PerformanceGame()
@@ -423,6 +457,36 @@ void SetSharingToken(const std::string& token)
         Log(LogLevel::Warning, L"Could not save the Discord sign-in to RobloxShadeHost.ini.");
 }
 
+int FrameRateLimit(const std::wstring& game)
+{
+    return ReadNumber(game, L"FrameRateLimit", 0, ValidFrameRate);
+}
+
+void SetFrameRateLimit(const std::wstring& game, int fps)
+{
+    SaveGameNumber(frameRateLimit, game, L"FrameRateLimit", ValidFrameRate(fps));
+}
+
+int EffectResolution(const std::wstring& game)
+{
+    return ReadNumber(game, L"EffectResolution", 100, ValidResolution);
+}
+
+void SetEffectResolution(const std::wstring& game, int percent)
+{
+    SaveGameNumber(effectResolution, game, L"EffectResolution", ValidResolution(percent));
+}
+
+int DepthSize(const std::wstring& game)
+{
+    return ReadNumber(game, L"DepthSize", kDefaultDepthSize, ValidDepthSize);
+}
+
+void SetDepthSize(const std::wstring& game, int size)
+{
+    SaveGameNumber(depthSize, game, L"DepthSize", ValidDepthSize(size));
+}
+
 std::wstring GamePreset(const std::wstring& game)
 {
     std::wstring value(32768, L'\0');
@@ -439,6 +503,26 @@ void SetGamePreset(const std::wstring& game, const std::wstring& preset)
 void RemoveGamePreset(const std::wstring& game)
 {
     WritePrivateProfileStringW(L"GamePresets", game.c_str(), nullptr, IniPath().c_str());
+}
+
+std::optional<LauncherPlace> LoadLauncherPlace()
+{
+    wchar_t value[128]{};
+    GetPrivateProfileStringW(L"Launcher", L"Place", L"", value, static_cast<DWORD>(std::size(value)), IniPath().c_str());
+    LauncherPlace place;
+    int maximized = 0;
+    if (swscanf_s(value, L"%ld,%ld,%ld,%ld,%d", &place.rect.left, &place.rect.top, &place.rect.right, &place.rect.bottom, &maximized) != 5 ||
+        place.rect.right <= place.rect.left || place.rect.bottom <= place.rect.top)
+        return std::nullopt;
+    place.maximized = maximized != 0;
+    return place;
+}
+
+void SaveLauncherPlace(const LauncherPlace& place)
+{
+    wchar_t value[128]{};
+    swprintf_s(value, L"%ld,%ld,%ld,%ld,%d", place.rect.left, place.rect.top, place.rect.right, place.rect.bottom, place.maximized ? 1 : 0);
+    WritePrivateProfileStringW(L"Launcher", L"Place", value, IniPath().c_str());
 }
 
 std::wstring ChangeHotkeys(const InputHotkeys& hotkeys)

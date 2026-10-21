@@ -1,7 +1,21 @@
-import { MessageReferenceType, type Attachment, type Message } from "discord.js";
+import {
+  cleanContent,
+  Message,
+  MessageReferenceType,
+  type Attachment,
+  type GuildMember,
+  type GuildTextBasedChannel,
+  type ThreadChannel,
+  type User,
+} from "discord.js";
+import type { Tags } from "./tags.ts";
+import { supportThread } from "./threads.ts";
+import { habitsOf } from "./usage.ts";
 
-// How many messages before the mention are sent along, so a question asked over several messages reads as one.
+// How many messages before the mention are sent along, so a question asked over several messages reads as one. [tldr]
+// reads the most Discord sends at once, to have more to sum up, and [context 3] reads three times as many.
 const historyLength = 10;
+const tldrHistoryLength = 100;
 // Long earlier messages are cut, so ten of them can't cost more than the question itself.
 const maxEarlierLength = 400;
 // Text files, such as Unishade.log, are read from the newest messages first, this many in all.
@@ -14,19 +28,39 @@ const fileTail = 10_000;
 // Pictures in the message and in the one it replies to go along with it, this many at most.
 const maxImages = 4;
 
-// The author's name and two highest roles, such as "Tiago (Admin, Support)", so the model can tell the team apart.
+// The name and two highest roles, such as "Tiago (Admin, Support)", so the model can tell the team apart.
+function nameWithRoles(user: User, member: GuildMember | null): string {
+  const name = member?.displayName ?? user.displayName;
+  const roles = member?.roles.cache
+    .filter((role) => role.id !== member.guild.id)
+    .sorted((a, b) => b.position - a.position)
+    .first(2)
+    .map((role) => role.name);
+  return roles?.length ? `${name} (${roles.join(", ")})` : name;
+}
+
 async function describe(message: Message<true>): Promise<string> {
   if (message.author.id === message.client.user.id) return "You";
   // Messages fetched from history carry no member, so it's looked up. A webhook has none, and neither has someone who
   // left, and the name alone still works for those.
   const member = message.webhookId ? null : await message.guild.members.fetch(message.author.id).catch(() => null);
-  const name = member?.displayName ?? message.author.displayName;
-  const roles = member?.roles.cache
-    .filter((role) => role.id !== message.guild.id)
-    .sorted((a, b) => b.position - a.position)
-    .first(2)
-    .map((role) => role.name);
-  return roles?.length ? `${name} (${roles.join(", ")})` : name;
+  return nameWithRoles(message.author, member);
+}
+
+// Names the authors of messages, with one lookup per author however many messages they wrote.
+async function namer(messages: Message<true>[]): Promise<(message: Message<true>) => string> {
+  const authors = new Map(messages.map((each) => [each.author.id, each]));
+  const names = new Map(await Promise.all([...authors].map(async ([id, each]) => [id, await describe(each)] as const)));
+  return (each) => names.get(each.author.id) ?? each.author.displayName;
+}
+
+// A thread made from a message starts with that one. A private thread has none, and its first message stands in, past
+// the notes Discord posts, such as who was added.
+async function firstMessage(thread: ThreadChannel): Promise<Message<true> | null> {
+  const starter = await thread.fetchStarterMessage().catch(() => null);
+  if (starter) return starter;
+  const first = await thread.messages.fetch({ after: thread.id, limit: 5 }).catch(() => null);
+  return first?.filter((each) => !each.system).sort((a, b) => a.createdTimestamp - b.createdTimestamp).first() ?? null;
 }
 
 const isTextFile = (attachment: Attachment) =>
@@ -35,7 +69,9 @@ const isImage = (attachment: Attachment) => /^image\/(png|jpeg|webp)$/.test(atta
 
 // A message without text, such as another bot's post, is read from its embeds. Attachments are listed by name.
 function textOf(message: Message<true>): string {
-  const text = message.cleanContent || message.embeds.flatMap((embed) => [embed.title, embed.description]).filter(Boolean).join("\n");
+  let text = message.cleanContent || message.embeds.flatMap((embed) => [embed.title, embed.description]).filter(Boolean).join("\n");
+  // The line under the bot's own replies, such as "Done in 12s", isn't part of the answer, and the model would copy it.
+  if (message.author.id === message.client.user.id) text = text.replace(/(^|\n)-# [^\n]*$/, "");
   return [text, ...message.attachments.map((attachment) => `[file: ${attachment.name}]`)].filter(Boolean).join(" ");
 }
 
@@ -51,50 +87,87 @@ async function download(attachment: Attachment): Promise<string> {
   return `${text.slice(0, fileHead)}\n[${text.length - fileHead - fileTail} characters left out]\n${text.slice(-fileTail)}`;
 }
 
-// The message that mentions the bot, with the one it replies to, and apart from it the background to follow it by:
-// where it was posted, what came before, and attached files. Kept apart, the model answers the mention and not
-// whatever question is still open further up. Images are the URLs of its pictures, which the model fetches itself.
-export type Conversation = { background: string; mention: string; images: string[] };
+// A question asked with /ask rather than a mention: its text and the file attached to it. ID is the interaction's,
+// which comes after the messages before it, so history is read from there.
+export type Ask = { id: string; channel: GuildTextBasedChannel; member: GuildMember; text: string; file: Attachment | null };
 
-export async function conversation(message: Message<true>): Promise<Conversation> {
-  const { channel } = message;
+// The question, which is the message that mentions the bot with the one it replies to, or the question from /ask, and
+// apart from it the background to follow it by: where it was asked, what came before, and attached files. Kept apart,
+// the model answers the question and not whatever is still open further up. Images are the URLs of its pictures, which
+// the model fetches itself. Tags are the ones it was asked with, and supportThread is whether it was asked in a private
+// thread the bot opened.
+export type Conversation = { background: string; mention: string; images: string[]; tags: Tags; supportThread: boolean };
+
+export async function conversation(question: Message<true> | Ask, tags: Tags): Promise<Conversation> {
+  const message = question instanceof Message ? question : null;
+  const { channel } = question;
   const [earlier, replied, starter] = await Promise.all([
-    channel.messages.fetch({ limit: historyLength, before: message.id }),
+    channel.messages.fetch({ limit: tags.context ? historyLength * tags.context : tags.tldr ? tldrHistoryLength : historyLength, before: question.id }),
     // A deleted message can't be fetched, and the question still stands without it.
-    message.reference?.type === MessageReferenceType.Default ? message.fetchReference().catch(() => null) : null,
-    channel.isThread() ? channel.fetchStarterMessage().catch(() => null) : null,
+    message?.reference?.type === MessageReferenceType.Default ? message.fetchReference().catch(() => null) : null,
+    channel.isThread() ? firstMessage(channel) : null,
   ]);
-  // Newest first, which is also the order files are read in.
-  const messages = [message, replied, ...earlier.values(), starter].filter((each) => each != null);
-  // One lookup per author, however many messages they wrote.
-  const authors = new Map(messages.map((each) => [each.author.id, each]));
-  const names = new Map(await Promise.all([...authors].map(async ([id, each]) => [id, await describe(each)] as const)));
-  const nameOf = (each: Message<true>) => names.get(each.author.id) ?? each.author.displayName;
+  const nameOf = await namer([message, replied, ...earlier.values(), starter].filter((each) => each != null));
+
+  const asked =
+    question instanceof Message
+      ? { id: question.author.id, name: nameOf(question), text: textOf(question), attachments: [...question.attachments.values()] }
+      : {
+          id: question.member.id,
+          name: nameWithRoles(question.member.user, question.member),
+          text: [question.text, question.file && `[file: ${question.file.name}]`].filter(Boolean).join(" "),
+          attachments: question.file ? [question.file] : [],
+        };
 
   const background = [channel.isThread() ? `Thread "${channel.name}" in #${channel.parent?.name}` : `Channel: #${channel.name}`];
   // In a long thread, the question that opened it is further back than the earlier messages go.
-  if (starter && starter.id !== message.id) background.push(`The thread starts with this message from ${nameOf(starter)}:\n${textOf(starter)}`);
+  if (starter && starter.id !== message?.id && !earlier.has(starter.id)) background.push(`The thread starts with this message from ${nameOf(starter)}:\n${textOf(starter)}`);
   if (earlier.size) {
     const lines = [...earlier.values()].reverse().map((previous) => `${nameOf(previous)}: ${cut(textOf(previous))}`);
     background.push(`Earlier messages, oldest first:\n${lines.join("\n")}`);
   }
+  if (tags.touchgrass) background.push(`How much ${asked.name} has asked you: ${habitsOf(asked.id)}.`);
 
   // Keyed by ID, since the message replied to can be one of the earlier ones too.
-  const files = new Map(
-    messages.flatMap((each) => each.attachments.filter(isTextFile).map((attachment) => [attachment.id, { attachment, from: nameOf(each) }] as const)),
-  );
+  const attached = [
+    ...asked.attachments.map((attachment) => ({ attachment, from: asked.name })),
+    ...[replied, ...earlier.values(), starter].flatMap((each) => (each ? each.attachments.map((attachment) => ({ attachment, from: nameOf(each) })) : [])),
+  ];
+  const files = new Map(attached.filter(({ attachment }) => isTextFile(attachment)).map((each) => [each.attachment.id, each]));
   const read = [...files.values()]
     .slice(0, maxFiles)
     .map(async ({ attachment, from }) => `<file name="${attachment.name}" from="${from}">\n${await download(attachment)}\n</file>`);
   background.push(...(await Promise.all(read)));
 
-  const mention = `${nameOf(message)}:\n${textOf(message)}`;
+  const mention = `${asked.name}:\n${asked.text}`;
   return {
     background: background.join("\n\n"),
     mention: replied ? `In reply to this message from ${nameOf(replied)}:\n${textOf(replied)}\n\n${mention}` : mention,
-    images: [message, replied]
-      .flatMap((each) => (each ? [...each.attachments.filter(isImage).values()] : []))
+    images: [...asked.attachments, ...(replied?.attachments.values() ?? [])]
+      .filter(isImage)
       .slice(0, maxImages)
       .map((attachment) => attachment.url),
+    tags,
+    supportThread: !!supportThread(channel.id),
   };
+}
+
+// A thread's messages, oldest first, for summing it up. Files are listed by name and not read.
+export async function transcript(thread: ThreadChannel): Promise<string> {
+  const messages = [...(await thread.messages.fetch({ limit: tldrHistoryLength })).values()].filter((each) => !each.system).reverse();
+  const nameOf = await namer(messages);
+  return messages.map((each) => `${nameOf(each)}: ${textOf(each).slice(0, 1500)}`).join("\n\n");
+}
+
+// An answer the bot posted, without the line under it, and the question it was for: the message it replies to, or the
+// question /ask quotes above it.
+export async function exchangeOf(answer: Message<true>): Promise<{ question: string; answer: string }> {
+  const text = textOf(answer);
+  const replied = answer.reference ? await answer.fetchReference().catch(() => null) : null;
+  if (replied) {
+    const content = replied.content.replace(new RegExp(`<@!?${answer.client.user.id}>`, "g"), "");
+    return { question: cleanContent(content, replied.channel).trim(), answer: text };
+  }
+  const [, quoted = "", rest = text] = text.match(/^> (.*)\n([\s\S]*)$/) ?? [];
+  return { question: quoted, answer: rest };
 }

@@ -33,7 +33,7 @@ Leave **Start Unishade now** checked and click **Finish**. Next time, start **Un
 
 ![Setup's last page](./images/setup-done.png)
 
-Keep the Unishade window open while you play. Minimizing it is fine. Closing it turns Unishade off.
+Closing the Unishade window leaves Unishade running in the notification area. To quit, right-click its icon there and choose **Quit**.
 
 ![The Unishade window running on a game](./images/launcher-running.png)
 

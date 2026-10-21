@@ -151,6 +151,7 @@ void CheckForUpdate()
         return;
     }
     std::thread([] {
+        InitThreadLog();
         try
         {
             Check();

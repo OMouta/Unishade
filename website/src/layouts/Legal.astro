@@ -10,24 +10,32 @@ const { frontmatter } = Astro.props;
 ---
 
 <Base title={`${frontmatter.title} | Unishade`} description={frontmatter.description}>
-  <main class="legal prose">
-    <h1>{frontmatter.title}</h1>
-    <p class="dim updated">Last updated {frontmatter.updated}</p>
-    <slot />
+  <main class="legal">
+    <header>
+      <h1>{frontmatter.title}</h1>
+      <p class="dim">Last updated {frontmatter.updated}</p>
+    </header>
+    <div class="prose">
+      <slot />
+    </div>
   </main>
 </Base>
 
 <style>
   .legal {
-    width: var(--page);
-    margin: clamp(40px, 7vw, 80px) auto 0;
+    width: min(760px, 100% - 2 * var(--gutter));
+    margin: clamp(40px, 7vw, 88px) auto 0;
   }
 
-  .legal h1 {
-    margin-bottom: 12px;
+  header {
+    display: grid;
+    gap: 14px;
+    margin-bottom: 44px;
+    padding-bottom: 32px;
+    border-bottom: 1px solid var(--line);
   }
 
-  .legal .updated {
-    margin-bottom: 40px;
+  h1 {
+    font-size: clamp(2.3rem, 4.6vw, 3.6rem);
   }
 </style>

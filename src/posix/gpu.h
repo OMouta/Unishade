@@ -106,8 +106,8 @@ public:
 
     // Waits for the previous frame, acquires an image and starts recording. The image is ready to be cleared or
     // copied into (VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL). Returns false when there is nothing to draw on, such
-    // as a minimized window.
-    bool BeginFrame();
+    // as a minimized window. With wait=false, skips the frame if the previous frame or an image is not ready.
+    bool BeginFrame(bool wait = true);
     // Starts the render pass Dear ImGui draws in, keeping what was copied into the image.
     void BeginRenderPass();
     void EndFrame();

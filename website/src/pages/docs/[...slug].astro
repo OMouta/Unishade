@@ -13,9 +13,12 @@ interface Props {
 }
 
 const { entry, pages } = Astro.props;
-const { Content } = await render(entry);
+const { Content, headings } = await render(entry);
+const sections = headings.filter((heading) => heading.depth === 2);
 const href = (id: string) => (id === 'install' ? '/docs/' : `/docs/${id}/`);
-const next = pages[pages.indexOf(entry) + 1];
+const index = pages.indexOf(entry);
+const previous = pages[index - 1];
+const next = pages[index + 1];
 ---
 
 <Base title={`${entry.data.title} | Unishade`} description={entry.data.description}>
@@ -28,48 +31,93 @@ const next = pages[pages.indexOf(entry) + 1];
               <a href={href(page.id)} aria-current={page === entry ? 'page' : undefined}>
                 {page.data.title}
               </a>
+              {page === entry && sections.length > 0 && (
+                <ul class="sections">
+                  {sections.map((section) => (
+                    <li>
+                      <a href={`#${section.slug}`}>{section.text}</a>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </li>
           ))
         }
       </ul>
     </nav>
-    <main class="guide prose">
-      <h1>{entry.data.title}</h1>
-      <Content />
+
+    <main class="guide">
+      <header>
+        <h1>{entry.data.title}</h1>
+        <p class="lede">{entry.data.description}</p>
+      </header>
+      <div class="prose">
+        <Content />
+      </div>
       {
-        next && (
-          <a class="next" href={href(next.id)}>
-            <span class="dim">Next</span>
-            {next.data.title}
-          </a>
+        (previous || next) && (
+          <nav class="pager" aria-label="Previous and next page">
+            {previous && (
+              <a class="previous" href={href(previous.id)}>
+                <span class="dim">Previous</span>
+                {previous.data.title}
+              </a>
+            )}
+            {next && (
+              <a class="next" href={href(next.id)}>
+                <span class="dim">Next</span>
+                {next.data.title}
+              </a>
+            )}
+          </nav>
         )
       }
     </main>
   </div>
 </Base>
 
+<script>
+  // Marks the section being read in the sidebar.
+  const links = new Map(
+    [...document.querySelectorAll<HTMLAnchorElement>('.sections a')].map((link) => [decodeURIComponent(link.hash.slice(1)), link]),
+  );
+  const headings = [...document.querySelectorAll<HTMLElement>('.prose h2[id]')].filter((heading) => links.has(heading.id));
+
+  // The last section whose heading has passed the upper third of the window.
+  const update = () => {
+    const current = headings.findLast((heading) => heading.getBoundingClientRect().top < innerHeight / 3);
+    for (const [id, link] of links) link.toggleAttribute('data-current', id === current?.id);
+  };
+  addEventListener('scroll', update, { passive: true });
+  update();
+</script>
+
 <style>
   .docs {
     display: grid;
-    grid-template-columns: 200px minmax(0, 720px);
-    gap: clamp(32px, 6vw, 88px);
+    grid-template-columns: 220px minmax(0, 760px);
+    gap: clamp(32px, 6vw, 96px);
     width: var(--page);
-    margin: clamp(40px, 7vw, 80px) auto 0;
+    margin: clamp(40px, 6vw, 72px) auto 0;
   }
 
-  .sidebar ul {
+  .sidebar > ul {
     position: sticky;
-    top: calc(var(--nav-height) + 24px);
+    top: calc(var(--nav-height) + 32px);
     display: grid;
     gap: 2px;
+    max-height: calc(100svh - var(--nav-height) - 64px);
     margin: 0;
     padding: 0;
+    overflow-y: auto;
     list-style: none;
+    view-transition-name: docs-nav;
   }
 
   .sidebar a {
+    position: relative;
     display: block;
-    padding: 8px 12px;
+    padding: 8px 14px;
     border-radius: 8px;
     color: var(--haze);
     text-decoration: none;
@@ -77,48 +125,147 @@ const next = pages[pages.indexOf(entry) + 1];
 
   .sidebar a:hover {
     color: var(--ink);
-  }
-
-  .sidebar a[aria-current='page'] {
-    color: var(--ink);
     background: var(--night-raised);
   }
 
-  .guide h1 {
-    margin-bottom: 28px;
+  /* The current page gets the spectrum down its edge. */
+  .sidebar a[aria-current='page'] {
+    color: var(--ink);
+    font-weight: 650;
+    background: var(--night-raised);
   }
 
-  .next {
+  .sidebar a[aria-current='page']::before {
+    content: '';
+    position: absolute;
+    inset: 8px auto 8px 0;
+    width: 2px;
+    border-radius: 2px;
+    background: linear-gradient(to bottom, var(--spectrum));
+  }
+
+  .sections {
+    display: grid;
+    gap: 0;
+    margin: 6px 0 10px 14px;
+    padding: 0 0 0 12px;
+    border-left: 1px solid var(--line);
+    list-style: none;
+  }
+
+  .sections a {
+    padding: 5px 10px;
+    font-size: 0.9rem;
+    line-height: 1.4;
+  }
+
+  .sections a[data-current] {
+    color: var(--ink);
+  }
+
+  .guide header {
+    display: grid;
+    gap: 16px;
+    margin-bottom: 48px;
+    padding-bottom: 36px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .guide h1 {
+    font-size: clamp(2.3rem, 4.6vw, 3.6rem);
+  }
+
+  .lede {
+    max-width: 52ch;
+    color: var(--haze);
+    font-size: 1.2rem;
+  }
+
+  .pager {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 80px;
+  }
+
+  .pager a {
     display: grid;
     gap: 2px;
-    width: fit-content;
-    margin-top: 64px;
-    padding: 16px 22px;
+    padding: 18px 22px;
     border: 1px solid var(--line);
     border-radius: var(--radius);
     color: var(--ink);
-    font-weight: 650;
+    font-size: 1.1rem;
+    font-weight: 680;
+    font-stretch: 112%;
     text-decoration: none;
+    transition:
+      border-color 0.2s,
+      background-color 0.2s;
   }
 
-  .next:hover {
-    border-color: var(--haze);
+  .pager a:hover {
+    border-color: var(--line-strong);
+    background: var(--night-raised);
   }
 
-  .next .dim {
+  .pager .dim {
     font-size: 0.85rem;
-    font-weight: 400;
+    font-weight: 450;
+    font-stretch: 100%;
   }
 
-  @media (max-width: 860px) {
+  .next {
+    grid-column: 2;
+    text-align: right;
+  }
+
+  /* The pages become one row that scrolls sideways, above the page. */
+  @media (max-width: 900px) {
     .docs {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 32px;
+      margin-top: 16px;
+    }
+
+    .sidebar {
+      margin: 0 calc(-1 * var(--gutter));
+      border-bottom: 1px solid var(--line);
+    }
+
+    .sidebar > ul {
+      position: static;
+      display: flex;
+      gap: 4px;
+      max-height: none;
+      padding: 0 var(--gutter) 12px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .sidebar a {
+      white-space: nowrap;
+    }
+
+    .sidebar a[aria-current='page']::before {
+      inset: auto 14px 0;
+      width: auto;
+      height: 2px;
+      background: linear-gradient(90deg, var(--spectrum));
+    }
+
+    .sections {
+      display: none;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .pager {
       grid-template-columns: minmax(0, 1fr);
     }
 
-    .sidebar ul {
-      position: static;
-      display: flex;
-      flex-wrap: wrap;
+    .next {
+      grid-column: 1;
     }
   }
 </style>
