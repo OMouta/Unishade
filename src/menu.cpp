@@ -4432,6 +4432,8 @@ void BrowseTab()
         return;
     }
     ResolveGame();
+    // Publishing checks the effects, which only load while a tab asks for them.
+    UpdateTechniques();
     switch (b.view)
     {
     case BrowseView::List: BrowseList(); break;
