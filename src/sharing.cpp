@@ -213,8 +213,10 @@ int64_t Publish(const std::string& token, const Publication& publication, const 
 
 std::vector<OwnPreset> OwnPresets(const std::string& token, const std::atomic<bool>& cancel)
 {
+    // Kept in a variable, since a range-for doesn't keep the temporary alive.
+    const json::Value answer = Call(L"GET", "/me/presets", token, {}, {}, cancel);
     std::vector<OwnPreset> presets;
-    for (const json::Value& preset : Call(L"GET", "/me/presets", token, {}, {}, cancel)["presets"].items)
+    for (const json::Value& preset : answer["presets"].items)
         presets.push_back({
             .id = preset["id"].Integer(),
             .name = preset["name"].String(),
