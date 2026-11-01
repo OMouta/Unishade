@@ -270,7 +270,7 @@ void CaptureShortcut(UINT key)
         const Hotkey& taken = app.hotkeys.*other.member;
         if (&other != &shortcut && taken.key == hotkey.key && taken.modifiers == hotkey.modifiers)
         {
-            app.shortcutError = Utf8(text) + " is already used by another Unishade shortcut.";
+            app.shortcutError = Utf8(text) + " is already used by another DSL MODS Visual Engine shortcut.";
             return;
         }
     }
@@ -653,7 +653,7 @@ void Sidebar(std::initializer_list<const char*> steps, int current)
     if (ui.logo)
         draw->AddImage(ImTextureID(reinterpret_cast<uintptr_t>(ui.logo.Get())), ImVec2(x - S(8), y), ImVec2(x - S(8) + S(80), y + S(80)));
     y += S(92);
-    draw->AddText(ui.semibold, S(18), ImVec2(x, y), kText, "Unishade");
+    draw->AddText(ui.semibold, S(18), ImVec2(x, y), kText, "DSL MODS Visual Engine");
     y += S(25);
     draw->AddText(ui.regular, S(13.5f), ImVec2(x, y), kDim, "Setup " UNISHADE_VERSION);
     y += S(48);
@@ -718,7 +718,7 @@ void CreditsPopup()
 
 void WelcomePage()
 {
-    Title("Install Unishade");
+    Title("Install DSL MODS Visual Engine");
     Text("Universal post-processing without injection.");
     Text("Your frame rate will be lower while it runs.", kDim, 15);
     Spacing(18);
@@ -741,8 +741,8 @@ void WelcomePage()
 
 void ManagePage()
 {
-    Title("Unishade is installed");
-    std::string version = app.installation && !app.installation->version.empty() ? "Version " + app.installation->version : "Unishade";
+    Title("DSL MODS Visual Engine is installed");
+    std::string version = app.installation && !app.installation->version.empty() ? "Version " + app.installation->version : "DSL MODS Visual Engine";
     Text(version + " is installed in " + app.directory + ".", kDim, 15);
     if (app.installation && app.installation->version != UNISHADE_VERSION)
         Text("This setup installs version " UNISHADE_VERSION ".", kDim, 15);
@@ -754,7 +754,7 @@ void ManagePage()
         app.dlss5 = AddonInstalled(Directory(), Addon::DLSS5);
         app.page = Page::Addons;
     }
-    if (Card("uninstall", "Uninstall", nullptr, 0, "Remove Unishade, ReShade and the effects from this PC.", CardKind::Action))
+    if (Card("uninstall", "Uninstall", nullptr, 0, "Remove DSL MODS Visual Engine, ReShade and the effects from this PC.", CardKind::Action))
         app.page = Page::Uninstall;
 }
 
@@ -763,7 +763,7 @@ void AddonsPage()
     Title("Choose what to install");
     Spacing(6);
     Card("reshade", "ReShade and effects", "Included", kDim, "ReShade from reshade.me and every effect package on ReShade's official list.", CardKind::Static);
-    if (Card("presets", "Presets", nullptr, 0, "Ready-made looks to start from. Pick one in the Unishade menu.", CardKind::Toggle, app.presets))
+    if (Card("presets", "Presets", nullptr, 0, "Ready-made looks to start from. Pick one in the DSL MODS menu.", CardKind::Toggle, app.presets))
         app.presets = !app.presets;
     Spacing(8);
     Text("Optional add-ons", kText, 15, ui.semibold);
@@ -844,8 +844,8 @@ void FailedPage()
 
 void FinishedPage()
 {
-    Title("Unishade is ready");
-    Text("Start Unishade and open your game. Roblox is detected automatically. Add other games in the Unishade window.", kDim, 15);
+    Title("DSL MODS Visual Engine is ready");
+    Text("Start DSL MODS Visual Engine and open your game. Roblox is detected automatically. Add other games in the DSL MODS Visual Engine window.", kDim, 15);
     Spacing(14);
     Keybinds();
     Spacing(4);
@@ -856,15 +856,15 @@ void FinishedPage()
         Text(note, kWarning, 14.5f);
     }
     Spacing(14);
-    CheckLine("Run Unishade on the high-performance GPU", app.highPerformanceGpu);
+    CheckLine("Run DSL MODS Visual Engine on the high-performance GPU", app.highPerformanceGpu);
     if (!app.hostRunning)
-        CheckLine("Start Unishade now", app.launch);
+        CheckLine("Start DSL MODS Visual Engine now", app.launch);
 }
 
 void UninstallPage()
 {
-    Title("Uninstall Unishade");
-    Text("Removes Unishade, ReShade and the effects from " + std::string(app.directory) + ", and its Start menu shortcuts.", kDim, 15);
+    Title("Uninstall DSL MODS Visual Engine");
+    Text("Removes DSL MODS Visual Engine, ReShade and the effects from " + std::string(app.directory) + ", and its Start menu shortcuts.", kDim, 15);
     Spacing(10);
     CheckLine("Also delete my presets, settings and game list", app.deleteUserFiles);
     Text("That deletes ReShade.ini, ReShadePreset.ini, RobloxShadeHost.ini and games.ini, and the presets and reshade-shaders folders with "
@@ -881,7 +881,7 @@ void UninstalledPage()
 {
     if (app.uninstallTask.error.empty())
     {
-        Title("Unishade was uninstalled");
+        Title("DSL MODS Visual Engine was uninstalled");
         if (!app.deleteUserFiles)
             Text("Your presets and settings are still in " + std::string(app.directory) + ".", kDim, 15);
         else if (app.folderLeft)
