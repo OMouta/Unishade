@@ -275,7 +275,7 @@ void PerformanceRows(const Page& page, float& y, Host& host, const Performance& 
         state.rateFor = rateFor;
         showRate(performance.frameRate);
     }
-    const int rate = ChoicesRow(page, y, "rate", "Frame rate", "The most frames a second Unishade shows. A lower limit leaves more of the GPU to the game.",
+    const int rate = ChoicesRow(page, y, "rate", "Frame rate", "The most frames a second DSL MODS Visual Engine shows. A lower limit leaves more of the GPU to the game.",
                                 { "Follow game", "120 FPS", "60 FPS", "Custom" },
                                 state.rateFor == rateFor ? kCustom : ChoiceOf(kFrameRates, performance.frameRate));
     if (rate >= 0 && rate < kCustom)
@@ -407,7 +407,7 @@ void Sidebar(const Model& model, Host& host, float height)
     if (const ImTextureID texture = Picture("logo", logo); texture != ImTextureID_Invalid)
         draw->AddImage(ImTextureRef(texture), origin + ImVec2(S(22), y), origin + ImVec2(S(22) + logo, y + logo));
     const float textX = origin.x + S(22) + logo + S(12);
-    Line(draw, textX, origin.x + width - pad, origin.y + y + S(10), "Unishade", kText, kSemibold, true);
+    Line(draw, textX, origin.x + width - pad, origin.y + y + S(10), "DSL MODS", kText, kSemibold, true);
     Line(draw, textX, origin.x + width - pad, origin.y + y + S(28), "Version " + model.version, kDim, kNote);
     y += logo + S(26);
 
@@ -878,7 +878,7 @@ void GameHero(const Model& model, Host& host, size_t index, const Page& page, fl
     // What Unishade does with it.
     const ImVec2 pillMin = page.At(textLeft, textY);
     const float pillWidth = Pill(page.draw, pillMin, game.running ? "Running" : game.enabled ? "Not running" : "Off", game.running ? kSuccess : kDim);
-    const std::string detail = game.running ? model.status.detail : game.enabled ? "Effects start when you open it." : "Unishade skips it while it's off.";
+    const std::string detail = game.running ? model.status.detail : game.enabled ? "Effects start when you open it." : "DSL MODS Visual Engine skips it while it's off.";
     Line(page.draw, pillMin.x + pillWidth + S(12), page.origin.x + textRight, pillMin.y + S(11), detail, kDim, kBody);
 
     ImGui::SetCursorScreenPos(page.At(page.right - controlsWidth, y + S(10)));
@@ -1027,7 +1027,7 @@ void GeneralSettings(const Settings& settings, Host& host, const Page& page, flo
     if (settings.updateChecks)
         section("UPDATES", [&] {
             if (SwitchRow(page, y, "updates", *settings.updateChecks, "Check for updates",
-                          "Asks GitHub for a newer version when Unishade starts. Applies from the next start."))
+                          "Asks GitHub for a newer version when DSL MODS Visual Engine starts. Applies from the next start."))
                 host.SetSwitch(Switch::UpdateChecks, !*settings.updateChecks);
         });
 }
@@ -1151,7 +1151,7 @@ void DiscordPage(const Model& model, Host& host, const Page& page, float& y)
     PageTitle(page, y, "Discord");
     const float top = y;
     BeginCard(page);
-    if (SwitchRow(page, y, "presence", discord.on, "Show on Discord", "Your Discord profile shows the game Unishade is running on, with its icon and your preset."))
+    if (SwitchRow(page, y, "presence", discord.on, "Show on Discord", "Your Discord profile shows the game DSL MODS Visual Engine is running on, with its icon and your preset."))
         host.SetSwitch(Switch::DiscordPresence, !discord.on);
     if (discord.on && !discord.status.empty())
     {
@@ -1198,7 +1198,7 @@ void PickerDialog(const Model& model, Host& host)
     Line(draw, origin.x + pad, origin.x + width - pad, origin.y + y + S(12), picker.add ? "Add a game" : "Pick a window", kText, kSemibold, true);
     y += S(24) + S(6);
     y += Paragraph(draw, origin + ImVec2(pad, y), origin.x + width - pad,
-                   picker.add ? "Pick your game's window. If it isn't here, open the game first." : "Unishade uses this window until you click Detect automatically.",
+                   picker.add ? "Pick your game's window. If it isn't here, open the game first." : "DSL MODS Visual Engine uses this window until you click Detect automatically.",
                    kDim, kBody) +
          S(16);
 
@@ -1265,7 +1265,7 @@ void ResetDialog(Host& host)
 {
     if (!BeginDialog("##reset", state.confirmReset, 400))
         return;
-    DialogText("Reset every shortcut?", "They go back to the keys Unishade starts with.");
+    DialogText("Reset every shortcut?", "They go back to the default DSL MODS Visual Engine shortcuts.");
     const int clicked = DialogButtons({ "Cancel", "Reset" });
     if (clicked == 1)
         host.ResetShortcuts();
