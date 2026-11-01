@@ -2622,7 +2622,7 @@ void EffectsTab()
     if (m.techniques.empty() && m.effectsEmpty)
     {
         ImGui::Dummy(ImVec2(0, S(6)));
-        Text(m.effectFiles == false ? "No effects are installed. Run Unishade Setup again to download them."
+        Text(m.effectFiles == false ? "No effects are installed. Run DSL MODS Visual Engine Setup again to download them."
                                     : "No effects loaded. The ReShade button below opens ReShade's menu, which shows why.",
              kDim, 14);
         return;
@@ -2856,7 +2856,7 @@ void FrameRateRow()
     }
     const int choice = ChoiceOf(kFrameRates, limit);
     const bool custom = m.customRatePicked || choice == kCustom;
-    const int clicked = ChoiceRow("Frame rate", "The most frames a second Unishade shows. A lower limit leaves more of the GPU to the game.",
+    const int clicked = ChoiceRow("Frame rate", "The most frames a second DSL MODS Visual Engine shows. A lower limit leaves more of the GPU to the game.",
                                   { "Follow game", "120 FPS", "60 FPS", "Custom" }, custom ? kCustom : choice);
     if (clicked == kCustom)
     {
@@ -2955,7 +2955,7 @@ void GeneralSettings()
 
     ImGui::Dummy(ImVec2(0, S(14)));
     Heading("UPDATES");
-    if (SwitchRow("update_checks", UpdateChecksEnabled(), "Check for updates", "Asks GitHub for a newer version when Unishade starts. Applies from the next start."))
+    if (SwitchRow("update_checks", UpdateChecksEnabled(), "Check for updates", "Asks GitHub for a newer version when DSL MODS Visual Engine starts. Applies from the next start."))
         SetUpdateChecksEnabled(!UpdateChecksEnabled());
 }
 
@@ -2986,7 +2986,7 @@ void ConfirmDialog()
         DialogText("Reset every setting of " + m.confirmEffect + "?",
                    AutoSavePresets() ? "They go back to their defaults and the preset is saved." : "They go back to their defaults.");
     else
-        DialogText("Reset every shortcut?", "They go back to the keys Unishade starts with.");
+        DialogText("Reset every shortcut?", "They go back to the default DSL MODS Visual Engine shortcuts.");
     const int clicked = DialogButtons({ "Cancel", "Reset" });
     if (clicked == 1)
     {
@@ -3062,7 +3062,7 @@ void StatusTab()
         ImGui::PushStyleColor(ImGuiCol_Border, Color(theme::kAccent, 120));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(14), S(12)));
         ImGui::BeginChild("update", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened);
-        Text("Unishade " + Utf8(update.version) + " is available", kText, 14.5f);
+        Text("DSL MODS Visual Engine " + Utf8(update.version) + " is available", kText, 14.5f);
         Text("Download the new Setup and run it. Your presets and settings stay.", kDim, 13);
         if (Button("Download", ImVec2(S(110), S(30)), true))
             ShellOpen(update.url);
@@ -3110,7 +3110,7 @@ void StatusTab()
         ShellOpen(kHelpUrl);
     ImGui::PopFont();
     ImGui::Dummy(ImVec2(0, S(6)));
-    Text("Unishade " UNISHADE_VERSION ". Effects run on ReShade by crosire.", kDim, 12.5f);
+    Text("DSL MODS Visual Engine " UNISHADE_VERSION ". Effects run on ReShade by crosire.", kDim, 12.5f);
 }
 
 // Frame
@@ -3124,8 +3124,8 @@ void Header(ImVec2 origin, float width)
         draw->AddImage(ImTextureRef(texture), logoPosition, logoPosition + ImVec2(logo, logo));
     const float textX = S(kPadding) + logo + S(12);
     PushSize(16.5f);
-    draw->AddText(origin + ImVec2(textX, S(17)), kText, "Unishade");
-    const float titleWidth = ImGui::CalcTextSize("Unishade").x;
+    draw->AddText(origin + ImVec2(textX, S(17)), kText, "DSL MODS");
+    const float titleWidth = ImGui::CalcTextSize("DSL MODS").x;
     ImGui::PopFont();
     // The right side holds the effects switch, its label and, with auto-save off, the save icon.
     PushSize(13);
@@ -3343,7 +3343,7 @@ void DrawMenu()
     const bool scrolls = size.y > available;
     ImGui::SetNextWindowPos(ImVec2(S(kMargin), S(kMargin)));
     ImGui::SetNextWindowSize(ImVec2(width, available));
-    ImGui::Begin("Unishade##menu", nullptr,
+    ImGui::Begin("DSL MODS Visual Engine##menu", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                      (scrolls ? ImGuiWindowFlags_None : ImGuiWindowFlags_NoScrollWithMouse));
     const ImVec2 origin = ImGui::GetWindowPos() - ImVec2(0, ImGui::GetScrollY());
@@ -3663,12 +3663,12 @@ void Guarded(F&& callback) noexcept
     catch (const std::exception& e)
     {
         if (!std::exchange(m.errorReported, true))
-            Log(LogLevel::Error, L"The Unishade menu ran into an error: %hs", e.what());
+            Log(LogLevel::Error, L"The DSL MODS menu ran into an error: %hs", e.what());
     }
     catch (...)
     {
         if (!std::exchange(m.errorReported, true))
-            Log(LogLevel::Error, L"The Unishade menu ran into an unknown error.");
+            Log(LogLevel::Error, L"The DSL MODS menu ran into an unknown error.");
     }
 }
 
@@ -3877,7 +3877,7 @@ void ShowStartHint()
     if (!AddonRegistered() || m.hintShown)
         return;
     m.hintShown = true;
-    ShowToast("opens the Unishade menu", Utf8(g.inputHotkey), kHintDuration);
+    ShowToast("opens the DSL MODS menu", Utf8(g.inputHotkey), kHintDuration);
 }
 
 void RequestScreenshot(bool beforeAfter)
