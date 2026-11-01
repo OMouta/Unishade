@@ -289,7 +289,7 @@ public:
         {
             // Prefer the official DSL artwork installed beside the launcher.
             // Preserve the built-in logo as a safe fallback for older installations.
-            const fs::path brand = fs::path(ExeDirectory()) / L"assets" / L"brand" / L"dsl-logo-preview.png";
+            const fs::path brand = fs::path(ExeDirectory()) / L"assets" / L"brand" / L"dsl-logo-square.png";
             if (SUCCEEDED(l.imaging->CreateDecoderFromFilename(brand.c_str(), nullptr, GENERIC_READ,
                                                                WICDecodeMetadataCacheOnLoad, decoder.put())) &&
                 DecodedPixels(decoder.get(), size, rgba))
