@@ -22,6 +22,12 @@ The user supplied the official 1920×1080 RGB black-background DSL chrome logo a
 
 Run `python -m pip install Pillow` and then `python tools/prepare_brand_assets.py path/to/base.png --output assets/brand`. The script checks the official 1920×1080 dimensions and refuses to overwrite existing outputs. Keep `base.png` private until distribution rights and publication are confirmed.
 
+## Installation behavior
+
+The Windows setup now looks for `assets/brand/dsl-logo-square.png` next to its own executable. When it is a regular PNG file with a valid PNG signature and reasonable size (up to 12 MiB), Setup stages it alongside the program. The existing installation commit automatically records this asset in its file manifest, so uninstall removes it. If the optional image is unavailable or invalid, the program continues to use its embedded fallback logo.
+
+The DSL Windows distribution workflow copies `assets/brand/*.png` into the ZIP when the official artwork has been added to the source tree. **The setup executable by itself does not currently contain the official bitmap**; keep the ZIP's folder structure intact when extracting.
+
 ## Integration status
 
-The official source image was received and optimized variants were prepared externally. **The image loader is implemented in the launcher, overlay and installer**, using `assets/brand/dsl-logo-square.png` relative to the running executable, with the original embedded logo as fallback. The binary artwork is **not yet committed to this GitHub repository or embedded in the installer**. To preview it, put the generated `assets/brand` directory beside `Unishade.exe` (or beside the Setup executable for its own preview). Installing the application does not currently copy the artwork automatically. Do not claim complete shipped integration until the binary files, installation copy step, CI and runtime rendering have been verified.
+The official artwork has been provided and optimized externally. The launcher, overlay and setup now support the optional `dsl-logo-square.png`, and Setup can copy it into the installation. **The actual PNG files are not yet committed to the repository**; therefore the current automated GitHub ZIP cannot be assumed to include them. A successful build proves compilation and automated tests, not visual quality in a running game.
