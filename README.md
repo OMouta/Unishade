@@ -7,7 +7,7 @@
   <strong>Windows 10/11 · x64 · ReShade-powered post-processing</strong>
 </p>
 
-DSL MODS Visual Engine is a customized desktop host for ReShade-based post-processing. It is being developed from the open-source [UniShade](https://github.com/OMouta/Unishade) project, with a new DSL MODS identity, a black-and-purple visual system, and a product roadmap focused on game capture, presets, effects and performance controls.
+DSL MODS Visual Engine is a customized desktop host for ReShade-based post-processing. It is being developed from the open-source [UniShade](https://github.com/OMouta/Unishade) project, with a new DSL MODS identity, a black, graphite, silver and white visual system, and a product roadmap focused on game capture, presets, effects and performance controls.
 
 ## Project status
 
