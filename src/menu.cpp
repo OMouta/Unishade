@@ -3194,12 +3194,23 @@ void Header(ImVec2 origin, float width)
     Rainbow(draw, origin + ImVec2(0, S(kHeader) - S(2)), origin + ImVec2(width, S(kHeader)));
 }
 
-void Tabs(ImVec2 origin, float width)
+void Sidebar(ImVec2 origin, float width, float height)
 {
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const float left = origin.x;
+    const float top = origin.y + S(kHeader);
+    const float sidebarWidth = S(menu_layout::kSidebarWidth);
+    const float bottom = top + height;
+    draw->AddRectFilled(ImVec2(left, top), ImVec2(left + sidebarWidth, bottom), kInset);
+    draw->AddLine(ImVec2(left + sidebarWidth, top), ImVec2(left + sidebarWidth, bottom), kBorder);
+
+    PushSize(10.5f);
+    draw->AddText(ImVec2(left + S(16), top + S(16)), kDim, "WORKSPACE");
+    ImGui::PopFont();
+
     struct Entry
     {
         const char* name;
-        // Empty for DLSS5. RenoDX's add-on only draws its settings in ReShade's menu, so its tab opens that.
         std::optional<Tab> tab;
     };
     Entry entries[5];
@@ -3211,16 +3222,18 @@ void Tabs(ImVec2 origin, float width)
     entries[count++] = { "Settings", Tab::Settings };
     entries[count++] = { "Status", Tab::Status };
 
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    const float tabWidth = (width - S(kPadding) * 2) / count;
-    const bool problems = m.problems;
-    PushSize(14);
+    const float rowHeight = S(42);
+    const float rowX = left + S(9);
+    const float rowWidth = sidebarWidth - S(18);
+    float y = top + S(39);
+    PushSize(13.5f);
     for (int i = 0; i < count; ++i)
     {
         const Entry& entry = entries[i];
-        const ImVec2 start = origin + ImVec2(S(kPadding) + i * tabWidth, S(kHeader));
-        ImGui::SetCursorScreenPos(start);
-        if (ImGui::InvisibleButton(entry.name, ImVec2(tabWidth, S(kTabs)), ImGuiButtonFlags_EnableNav))
+        const ImVec2 rowMin(rowX, y);
+        const ImVec2 rowMax(rowX + rowWidth, y + rowHeight - S(3));
+        ImGui::SetCursorScreenPos(rowMin);
+        if (ImGui::InvisibleButton(entry.name, ImVec2(rowWidth, rowHeight - S(3)), ImGuiButtonFlags_EnableNav))
         {
             if (entry.tab)
                 m.tab = *entry.tab;
@@ -3230,24 +3243,26 @@ void Tabs(ImVec2 origin, float width)
         const bool hovered = ImGui::IsItemHovered();
         HandOnHover();
         const bool active = entry.tab == m.tab;
-        const ImVec2 text = ImGui::CalcTextSize(entry.name);
-        const ImVec2 textStart = start + ImVec2((tabWidth - text.x) / 2, (S(kTabs) - text.y) / 2);
-        const ImVec2 tileMin = start + ImVec2(S(3), S(4));
-        const ImVec2 tileMax = start + ImVec2(tabWidth - S(3), S(kTabs) - S(4));
         if (active || hovered)
-            draw->AddRectFilled(tileMin, tileMax, active ? Color(theme::kAccent, 58) : kCardHover, S(7));
+            draw->AddRectFilled(rowMin, rowMax, active ? Color(theme::kAccent, 48) : kCardHover, S(6));
         if (active)
-            draw->AddRect(tileMin, tileMax, Color(theme::kAccent, 150), S(7), 0, S(1));
-        draw->AddText(textStart, active || hovered ? kText : kDim, entry.name);
-        if (entry.tab == Tab::Status && problems)
-            draw->AddCircleFilled(textStart + ImVec2(text.x + S(6), S(3)), S(3), kWarning);
+            draw->AddRectFilled(ImVec2(rowMin.x, rowMin.y + S(8)),
+                                ImVec2(rowMin.x + S(2), rowMax.y - S(8)), kAccentHover, S(1));
+        const ImVec2 labelSize = ImGui::CalcTextSize(entry.name);
+        draw->AddText(ImVec2(rowMin.x + S(13), rowMin.y + (rowHeight - labelSize.y) * 0.5f),
+                      active || hovered ? kText : kDim, entry.name);
+        if (entry.tab == Tab::Status && m.problems)
+            draw->AddCircleFilled(ImVec2(rowMax.x - S(12), rowMin.y + rowHeight * 0.5f - S(1)), S(3), kWarning);
+        y += rowHeight;
     }
     ImGui::PopFont();
-    draw->AddLine(origin + ImVec2(0, S(kHeader + kTabs)), origin + ImVec2(width, S(kHeader + kTabs)), kBorder);
+
+    PushSize(10.5f);
+    draw->AddText(ImVec2(left + S(16), bottom - S(27)), kDim, "DSL MODS  /  IN-GAME");
+    ImGui::PopFont();
 }
 
-// Effects stay off while the compare button is held.
-void Compare(bool holding)
+// Effects stay off while the compare button is held.void Compare(bool holding)
 {
     // The compare shortcut, while held, decides instead.
     if (holding == m.comparing || m.compareKey)
@@ -3356,10 +3371,14 @@ void DrawMenu()
     Header(origin, width);
     Tabs(origin, width);
 
-    const float top = S(kHeader + kTabs) + 1;
-    ImGui::SetCursorScreenPos(origin + ImVec2(0, top));
+    const float top = S(kHeader);
+    const float contentLeft = S(menu_layout::kSidebarWidth);
+    const float contentWidth = std::max(width - contentLeft, S(220));
+    const float contentHeight = size.y - top - S(kFooter);
+    Sidebar(origin, width, contentHeight);
+    ImGui::SetCursorScreenPos(origin + ImVec2(contentLeft, top));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(kPadding), S(16)));
-    ImGui::BeginChild("content", ImVec2(width, size.y - top - S(kFooter)), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened);
+    ImGui::BeginChild("content", ImVec2(contentWidth, contentHeight), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened);
     ImGui::PopStyleVar();
     switch (m.tab)
     {
