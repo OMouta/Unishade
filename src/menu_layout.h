@@ -8,7 +8,8 @@ namespace menu_layout
 constexpr float kWidth = 820;
 constexpr float kMargin = 16;
 constexpr float kHeader = 82;
-constexpr float kTabs = 260; // Minimum height reserved for the vertical navigation rail.\nconstexpr float kSidebarWidth = 164;
+constexpr float kTabs = 260; // Minimum height reserved for the vertical navigation rail.
+constexpr float kSidebarWidth = 164;
 constexpr float kFooter = 70;
 // The least room the navigation rail gets. A window too short for it scrolls the whole menu.
 constexpr float kMinContent = 160;
