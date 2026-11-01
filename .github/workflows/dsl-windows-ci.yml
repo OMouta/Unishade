@@ -52,6 +52,14 @@ jobs:
           Copy-Item 'README.md' (Join-Path $package 'README.md')
           Copy-Item 'installer/CREDITS.txt' (Join-Path $package 'CREDITS.txt')
 
+          # Optional official artwork ships only when its binary assets are present
+          # in the repository. Do not silently download or substitute a logo.
+          if (Test-Path 'assets/brand/dsl-logo-square.png') {
+            $brandTarget = Join-Path $package 'assets/brand'
+            New-Item -ItemType Directory -Force -Path $brandTarget | Out-Null
+            Copy-Item 'assets/brand/*.png' $brandTarget
+          }
+
           @'
           DSL MODS VISUAL ENGINE
           See Beyond. Play Different.
