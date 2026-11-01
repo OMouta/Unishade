@@ -3124,7 +3124,7 @@ void Header(ImVec2 origin, float width)
         draw->AddImage(ImTextureRef(texture), logoPosition, logoPosition + ImVec2(logo, logo));
     const float textX = S(kPadding) + logo + S(12);
     PushSize(16.5f);
-    draw->AddText(origin + ImVec2(textX, S(17)), kText, "DSL MODS");
+    draw->AddText(origin + ImVec2(textX, S(13)), kText, "DSL MODS");
     const float titleWidth = ImGui::CalcTextSize("DSL MODS").x;
     ImGui::PopFont();
     // The right side holds the effects switch, its label and, with auto-save off, the save icon.
@@ -3138,9 +3138,12 @@ void Header(ImVec2 origin, float width)
     const std::string preset = Utf8(m.current.stem().wstring());
     const ImVec2 nameSize = ImGui::CalcTextSize(preset.c_str());
     draw->PushClipRect(origin, origin + ImVec2((AutoSavePresets() ? labelX : saveX) - S(12), S(kHeader)), true);
-    draw->AddText(origin + ImVec2(textX, S(39)), kDim, preset.c_str());
+    PushSize(10.5f);
+    draw->AddText(origin + ImVec2(textX, S(34)), kAccentHover, "SEE BEYOND. PLAY DIFFERENT.");
+    ImGui::PopFont();
+    draw->AddText(origin + ImVec2(textX, S(53)), kDim, preset.c_str());
     if (m.unsaved)
-        draw->AddCircleFilled(origin + ImVec2(textX + nameSize.x + S(7), S(39) + ImGui::GetFontSize() / 2 + S(1)), S(3), kWarning);
+        draw->AddCircleFilled(origin + ImVec2(textX + nameSize.x + S(7), S(53) + ImGui::GetFontSize() / 2 + S(1)), S(3), kWarning);
     draw->PopClipRect();
     ImGui::PopFont();
 
@@ -3229,10 +3232,13 @@ void Tabs(ImVec2 origin, float width)
         const bool active = entry.tab == m.tab;
         const ImVec2 text = ImGui::CalcTextSize(entry.name);
         const ImVec2 textStart = start + ImVec2((tabWidth - text.x) / 2, (S(kTabs) - text.y) / 2);
-        draw->AddText(textStart, active || hovered ? kText : kDim, entry.name);
+        const ImVec2 tileMin = start + ImVec2(S(3), S(4));
+        const ImVec2 tileMax = start + ImVec2(tabWidth - S(3), S(kTabs) - S(4));
+        if (active || hovered)
+            draw->AddRectFilled(tileMin, tileMax, active ? Color(theme::kAccent, 58) : kCardHover, S(7));
         if (active)
-            draw->AddRectFilled(ImVec2(textStart.x - S(6), start.y + S(kTabs) - S(2)), ImVec2(textStart.x + text.x + S(6), start.y + S(kTabs)),
-                                kAccent, S(1));
+            draw->AddRect(tileMin, tileMax, Color(theme::kAccent, 150), S(7), 0, S(1));
+        draw->AddText(textStart, active || hovered ? kText : kDim, entry.name);
         if (entry.tab == Tab::Status && problems)
             draw->AddCircleFilled(textStart + ImVec2(text.x + S(6), S(3)), S(3), kWarning);
     }
