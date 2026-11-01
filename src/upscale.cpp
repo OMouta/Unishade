@@ -323,9 +323,9 @@ void UpscaleFrame() noexcept
         GetClientRect(g.overlay, &client);
         const UINT width = static_cast<UINT>(client.right);
         const UINT height = static_cast<UINT>(client.bottom);
-        // FSR only scales up. At full effect resolution the frame can be a few pixels off the window's size, which
-        // Windows' stretch handles as before.
-        if (desc.Width < width && desc.Height < height)
+        // FSR is for effects below 100%, and only scales up. At 100% the frame can be a few pixels off the window's size,
+        // which Windows' stretch handles as before.
+        if (EffectResolution() < 100 && desc.Width < width && desc.Height < height)
             Upscale(width, height);
         else
             Hide();
