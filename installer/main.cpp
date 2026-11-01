@@ -629,11 +629,11 @@ void Keybinds()
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor(2);
     Text("Set your keybinds", kText, 18, ui.semibold);
-    Text(app.hostRunning ? "Click a key, then press the keys you want. They apply the next time Unishade starts."
+    Text(app.hostRunning ? "Click a key, then press the keys you want. They apply the next time DSL MODS Visual Engine starts."
                          : "Click a key, then press the keys you want.",
          kDim, 14.5f);
     Spacing(2);
-    KeybindLine(0, "opens the Unishade menu over the game. Press it again to go back to playing.");
+    KeybindLine(0, "opens the DSL MODS menu over the game. Press it again to go back to playing.");
     KeybindLine(1, "turns the overlay off and on.");
     if (!app.shortcutError.empty())
         Text(app.shortcutError, kError, 14.5f);
@@ -719,7 +719,7 @@ void CreditsPopup()
 void WelcomePage()
 {
     Title("Install DSL MODS Visual Engine");
-    Text("Universal post-processing without injection.");
+    Text("Capture-based post-processing for supported games.");
     Text("Your frame rate will be lower while it runs.", kDim, 15);
     Spacing(18);
     Text("Install folder", kText, 15, ui.semibold);
