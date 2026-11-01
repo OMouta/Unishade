@@ -407,9 +407,10 @@ void Sidebar(const Model& model, Host& host, float height)
     if (const ImTextureID texture = Picture("logo", logo); texture != ImTextureID_Invalid)
         draw->AddImage(ImTextureRef(texture), origin + ImVec2(S(22), y), origin + ImVec2(S(22) + logo, y + logo));
     const float textX = origin.x + S(22) + logo + S(12);
-    Line(draw, textX, origin.x + width - pad, origin.y + y + S(10), "DSL MODS", kText, kSemibold, true);
-    Line(draw, textX, origin.x + width - pad, origin.y + y + S(28), "Version " + model.version, kDim, kNote);
-    y += logo + S(26);
+    Line(draw, textX, origin.x + width - pad, origin.y + y + S(8), "DSL MODS", kText, kSemibold, true);
+    Line(draw, textX, origin.x + width - pad, origin.y + y + S(22), "SEE BEYOND. PLAY DIFFERENT.", kAccent, kNote, true);
+    Line(draw, textX, origin.x + width - pad, origin.y + y + S(36), "Visual Engine  •  " + model.version, kDim, kNote);
+    y += logo + S(32);
 
     const int problems = static_cast<int>(std::count_if(model.notices.begin(), model.notices.end(), [](const Notice& notice) { return notice.level >= Level::Warning; }));
     if (NavRow("home", origin + ImVec2(pad, y), rowWidth, "Home", HomeIcon, state.page == PageKind::Home, problems))
