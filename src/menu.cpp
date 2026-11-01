@@ -3194,7 +3194,7 @@ void Header(ImVec2 origin, float width)
     Rainbow(draw, origin + ImVec2(0, S(kHeader) - S(2)), origin + ImVec2(width, S(kHeader)));
 }
 
-void Sidebar(ImVec2 origin, float width, float height)
+void Sidebar(ImVec2 origin, float height)
 {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const float left = origin.x;
@@ -3375,7 +3375,7 @@ void DrawMenu()
     const float contentLeft = S(menu_layout::kSidebarWidth);
     const float contentWidth = std::max(width - contentLeft, S(220));
     const float contentHeight = size.y - top - S(kFooter);
-    Sidebar(origin, width, contentHeight);
+    Sidebar(origin, contentHeight);
     ImGui::SetCursorScreenPos(origin + ImVec2(contentLeft, top));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(kPadding), S(16)));
     ImGui::BeginChild("content", ImVec2(contentWidth, contentHeight), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened);
