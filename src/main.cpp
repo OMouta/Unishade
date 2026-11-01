@@ -101,7 +101,7 @@ void LogState()
 
 void ShowError(const std::wstring& message)
 {
-    MessageBoxW(g.launcher, (message + L"\n\nMore details are in " + LogPath() + L".").c_str(), L"Unishade", MB_ICONERROR);
+    MessageBoxW(g.launcher, (message + L"\n\nMore details are in " + LogPath() + L".").c_str(), L"DSL MODS Visual Engine", MB_ICONERROR);
 }
 
 // A damaged list is kept beside it, since the next change to the list replaces the file.
@@ -116,11 +116,11 @@ void LoadGames()
     {
         g.autoGames = DefaultAutoGames();
         if (CopyFileW(path.c_str(), (path + L".damaged").c_str(), FALSE))
-            Report(LogLevel::Warning, L"Your saved games could not be loaded (%hs), so Unishade is using the default list. The old list "
+            Report(LogLevel::Warning, L"Your saved games could not be loaded (%hs), so DSL MODS Visual Engine is using the default list. The old list "
                                       L"was kept as games.ini.damaged.",
                    e.what());
         else
-            Report(LogLevel::Warning, L"Your saved games could not be loaded (%hs), so Unishade is using the default list. Changing "
+            Report(LogLevel::Warning, L"Your saved games could not be loaded (%hs), so DSL MODS Visual Engine is using the default list. Changing "
                                       L"the list replaces games.ini.",
                    e.what());
     }
@@ -135,8 +135,8 @@ void GiveUpOnDevice(const wchar_t* reason)
     loop.losses.clear();
     loop.deviceRetryAt = 0;
     loop.deviceFailingSince = 0;
-    const std::wstring retry = g.overlayHotkey.empty() ? L"restart Unishade" : L"press " + g.overlayHotkey + L" or restart Unishade";
-    Report(LogLevel::Error, L"%ls, so Unishade turned the overlay off. Update the graphics driver, then %ls.", reason, retry.c_str());
+    const std::wstring retry = g.overlayHotkey.empty() ? L"restart DSL MODS Visual Engine" : L"press " + g.overlayHotkey + L" or restart DSL MODS Visual Engine";
+    Report(LogLevel::Error, L"%ls, so DSL MODS Visual Engine turned the overlay off. Update the graphics driver, then %ls.", reason, retry.c_str());
 }
 
 // After a driver update, a GPU reset or a switch to another GPU, everything made on the device is released and capture
@@ -361,7 +361,7 @@ int Run()
     Log(LogLevel::Info, L"Checking Windows Graphics Capture support.");
     if (!GraphicsCaptureSession::IsSupported())
     {
-        const wchar_t* message = L"Windows Graphics Capture is not available, and Unishade needs it to copy the game's picture. "
+        const wchar_t* message = L"Windows Graphics Capture is not available, and DSL MODS Visual Engine needs it to copy the game's picture. "
                                  L"Update Windows and your graphics driver.";
         Log(LogLevel::Error, L"%ls", message);
         ShowError(message);
@@ -504,23 +504,23 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     }
     catch (const winrt::hresult_error& e)
     {
-        Log(LogLevel::Error, L"Unishade stopped: %ls (0x%08X)", e.message().c_str(), static_cast<unsigned>(e.code()));
+        Log(LogLevel::Error, L"DSL MODS Visual Engine stopped: %ls (0x%08X)", e.message().c_str(), static_cast<unsigned>(e.code()));
         LogState();
         LogStackTrace();
-        ShowError(L"Unishade stopped because of an error: " + std::wstring(e.message()));
+        ShowError(L"DSL MODS Visual Engine stopped because of an error: " + std::wstring(e.message()));
     }
     catch (const std::exception& e)
     {
-        Log(LogLevel::Error, L"Unishade stopped: %hs", e.what());
+        Log(LogLevel::Error, L"DSL MODS Visual Engine stopped: %hs", e.what());
         LogState();
         LogStackTrace();
-        ShowError(L"Unishade stopped because of an error.");
+        ShowError(L"DSL MODS Visual Engine stopped because of an error.");
     }
     catch (...)
     {
-        Log(LogLevel::Error, L"Unishade stopped because of an unknown exception.");
+        Log(LogLevel::Error, L"DSL MODS Visual Engine stopped because of an unknown exception.");
         LogStackTrace();
-        ShowError(L"Unishade stopped because of an error.");
+        ShowError(L"DSL MODS Visual Engine stopped because of an error.");
     }
     // Removes the tray icon after an error. After a normal exit the launcher is already gone.
     DestroyLauncher();
