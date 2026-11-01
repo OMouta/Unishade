@@ -58,9 +58,11 @@ Assert-File $hostOnly 'Unishade-Setup.exe' $false
 
 $hostMetadata = [Diagnostics.FileVersionInfo]::GetVersionInfo("$hostOnly/Unishade.exe")
 $setupMetadata = [Diagnostics.FileVersionInfo]::GetVersionInfo($Setup)
-if ($hostMetadata.ProductName -ne 'Unishade' -or $hostMetadata.FileDescription -ne 'Unishade' -or
-    $hostMetadata.OriginalFilename -ne 'Unishade.exe' -or $setupMetadata.ProductName -ne 'Unishade' -or
-    $setupMetadata.FileDescription -ne 'Unishade Setup') {
+if ($hostMetadata.ProductName -ne 'DSL MODS Visual Engine' -or
+    $hostMetadata.FileDescription -ne 'DSL MODS Visual Engine' -or
+    $hostMetadata.OriginalFilename -ne 'Unishade.exe' -or
+    $setupMetadata.ProductName -ne 'DSL MODS Visual Engine' -or
+    $setupMetadata.FileDescription -ne 'DSL MODS Visual Engine Setup') {
     throw 'The executable or installer still has incorrect product metadata.'
 }
 
