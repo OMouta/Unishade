@@ -3262,7 +3262,8 @@ void Sidebar(ImVec2 origin, float width, float height)
     ImGui::PopFont();
 }
 
-// Effects stay off while the compare button is held.void Compare(bool holding)
+// Effects stay off while the compare button is held.
+void Compare(bool holding)
 {
     // The compare shortcut, while held, decides instead.
     if (holding == m.comparing || m.compareKey)
@@ -3369,7 +3370,6 @@ void DrawMenu()
                      (scrolls ? ImGuiWindowFlags_None : ImGuiWindowFlags_NoScrollWithMouse));
     const ImVec2 origin = ImGui::GetWindowPos() - ImVec2(0, ImGui::GetScrollY());
     Header(origin, width);
-    Tabs(origin, width);
 
     const float top = S(kHeader);
     const float contentLeft = S(menu_layout::kSidebarWidth);
