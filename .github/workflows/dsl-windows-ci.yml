@@ -31,3 +31,14 @@ jobs:
 
       - name: Run tests
         run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Upload Windows launcher
+        uses: actions/upload-artifact@v4
+        with:
+          name: DSL-MODS-Visual-Engine-Windows-x64
+          path: |
+            build/Release/Unishade.exe
+            build/Release/UnishadeUi.dll
+          if-no-files-found: error
+          compression-level: 9
+          retention-days: 14
