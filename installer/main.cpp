@@ -1065,12 +1065,26 @@ ComPtr<ID3D11ShaderResourceView> LoadLogo(UINT size)
     ComPtr<IWICBitmapScaler> scaler;
     ComPtr<IWICFormatConverter> straight;
     std::vector<BYTE> pixels(size * size * 4);
+    // Prefer the official DSL image when it ships alongside Setup, retaining the
+    // embedded bitmap for offline installs and older release packages.
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))))
+        return nullptr;
+    wchar_t executable[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, executable, MAX_PATH) != 0)
+    {
+        const fs::path brand = fs::path(executable).parent_path() / L"assets" / L"brand" / L"dsl-logo-square.png";
+        factory->CreateDecoderFromFilename(brand.c_str(), nullptr, GENERIC_READ,
+                                           WICDecodeMetadataCacheOnLoad, &decoder);
+    }
+    if (!decoder)
+    {
+        if (FAILED(factory->CreateStream(&stream)) ||
+            FAILED(stream->InitializeFromMemory(reinterpret_cast<BYTE*>(const_cast<char*>(png.data())), static_cast<DWORD>(png.size()))) ||
+            FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnLoad, &decoder)))
+            return nullptr;
+    }
     // Scaling with premultiplied alpha keeps the transparent edge from darkening.
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
-        FAILED(factory->CreateStream(&stream)) ||
-        FAILED(stream->InitializeFromMemory(reinterpret_cast<BYTE*>(const_cast<char*>(png.data())), static_cast<DWORD>(png.size()))) ||
-        FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnLoad, &decoder)) ||
-        FAILED(decoder->GetFrame(0, &frame)) || FAILED(factory->CreateFormatConverter(&premultiplied)) ||
+    if (FAILED(decoder->GetFrame(0, &frame)) || FAILED(factory->CreateFormatConverter(&premultiplied)) ||
         FAILED(premultiplied->Initialize(frame.Get(), GUID_WICPixelFormat32bppPRGBA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom)) ||
         FAILED(factory->CreateBitmapScaler(&scaler)) ||
         FAILED(scaler->Initialize(premultiplied.Get(), size, size, WICBitmapInterpolationModeHighQualityCubic)) ||
