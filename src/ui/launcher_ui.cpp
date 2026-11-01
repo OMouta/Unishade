@@ -775,8 +775,31 @@ void Links(const Model& model, Host& host, const Page& page, float& y)
     y += S(20);
 }
 
+void HomeHero(const Model& model, const Page& page, float& y)
+{
+    const float top = y;
+    const float height = S(126);
+    const ImVec2 min = page.At(page.left, top);
+    const ImVec2 max = page.At(page.right, top + height);
+    page.draw->AddRectFilledMultiColor(min, max, Color(theme::kAccent, 0x42), Color(theme::kAccent, 0x18),
+                                      Color(theme::kAccent, 0x08), Color(theme::kAccent, 0x24));
+    page.draw->AddRect(min, max, Color(theme::kAccent, 0x70), S(12), 0, S(1));
+    Line(page.draw, min.x + S(22), max.x - S(22), min.y + S(39), "DSL MODS VISUAL ENGINE", kText, kHeroTitle, true);
+    Line(page.draw, min.x + S(22), max.x - S(22), min.y + S(68), "SEE BEYOND. PLAY DIFFERENT.", kAccentHover, kBody, true);
+    Line(page.draw, min.x + S(22), max.x - S(22), min.y + S(96),
+         "Your visual control center for supported games.", kDim, kNote);
+    const char* stateLabel = model.status.tone == Tone::Running ? "ENGINE ACTIVE" : "READY TO PLAY";
+    const ImU32 stateColor = model.status.tone == Tone::Running ? kSuccess : kAccent;
+    const float pillWidth = Measure(stateLabel, kNote).x + S(18);
+    const ImVec2 pillMin(max.x - S(22) - pillWidth, min.y + S(14));
+    page.draw->AddRectFilled(pillMin, pillMin + ImVec2(pillWidth, S(22)), Fade(stateColor, 0x28), S(11));
+    Line(page.draw, pillMin.x, pillMin.x + pillWidth, pillMin.y + S(11), stateLabel, stateColor, kNote, false, true);
+    y += height + S(22);
+}
+
 void HomePage(const Model& model, Host& host, const Page& page, float& y)
 {
+    HomeHero(model, page, y);
     StatusCard(model, host, page, y);
     Cards(model, host, page, y);
     GameTiles(model, host, page, y);
