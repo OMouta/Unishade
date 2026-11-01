@@ -17,6 +17,10 @@ The user supplied the official 1920×1080 RGB black-background DSL chrome logo a
 - Validate rendering at 1280×720, 1920×1080 and 2560×1440, including Windows DPI scaling.
 - Ensure binary asset licensing and branding are documented; preserve third-party upstream licenses and attribution.
 
+## Reproducible generation
+
+Run `python -m pip install Pillow` and then `python tools/prepare_brand_assets.py path/to/base.png --output assets/brand`. The script checks the official 1920×1080 dimensions and refuses to overwrite existing outputs. Keep `base.png` private until distribution rights and publication are confirmed.
+
 ## Integration status
 
 The official source image was received and optimized variants were prepared externally. The binary artwork is **not yet committed to this GitHub repository**. The UI remains logo-ready with existing fallback resources. Do not claim the image is integrated into the app until binary files, resource references, CI and runtime rendering have been verified.
