@@ -2545,7 +2545,7 @@ void TechniqueRow(size_t index, size_t& moveFrom, size_t& moveTo)
     const bool expanded = m.expanded == technique.key;
     ImGui::PushID(technique.key.c_str());
     const ImVec2 start = ImGui::GetCursorScreenPos();
-    const ImVec2 size(ImGui::GetContentRegionAvail().x, S(38));
+    const ImVec2 size(ImGui::GetContentRegionAvail().x, S(46));
     if (!expanded && !ImGui::IsRectVisible(size))
     {
         ImGui::Dummy(size);
@@ -2577,8 +2577,8 @@ void TechniqueRow(size_t index, size_t& moveFrom, size_t& moveTo)
         }
     }
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    if (hovered || expanded)
-        draw->AddRectFilled(start, start + size, hovered ? kCardHover : kCard, S(8));
+    draw->AddRectFilled(start, start + size, hovered ? kCardHover : kCard, S(8));
+    draw->AddRect(start, start + size, expanded ? kBorderStrong : kBorder, S(8), 0, S(1));
 
     ImGui::SetCursorScreenPos(start + ImVec2(S(10), (size.y - S(18)) / 2));
     if (Switch("on", on))
