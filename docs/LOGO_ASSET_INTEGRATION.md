@@ -9,6 +9,7 @@ The user supplied the official 1920×1080 RGB black-background DSL chrome logo a
 - Launcher: 960×540.
 - Installer: 640×360.
 - Preview: 480×270.
+- Square slots: 512×512 with black letterboxing (do not stretch the art).
 - Resize with high-quality Lanczos; preserve 16:9 aspect ratio.
 - The background is opaque black; **do not treat it as transparent** or use alpha blending that expects transparency.
 - Use `ImGui::Image` or the existing resource texture path with a 16:9 fitted rectangle and no cropping.
@@ -23,4 +24,4 @@ Run `python -m pip install Pillow` and then `python tools/prepare_brand_assets.p
 
 ## Integration status
 
-The official source image was received and optimized variants were prepared externally. The binary artwork is **not yet committed to this GitHub repository**. The UI remains logo-ready with existing fallback resources. Do not claim the image is integrated into the app until binary files, resource references, CI and runtime rendering have been verified.
+The official source image was received and optimized variants were prepared externally. **The image loader is implemented in the launcher, overlay and installer**, using `assets/brand/dsl-logo-square.png` relative to the running executable, with the original embedded logo as fallback. The binary artwork is **not yet committed to this GitHub repository or embedded in the installer**. To preview it, put the generated `assets/brand` directory beside `Unishade.exe` (or beside the Setup executable for its own preview). Installing the application does not currently copy the artwork automatically. Do not claim complete shipped integration until the binary files, installation copy step, CI and runtime rendering have been verified.
