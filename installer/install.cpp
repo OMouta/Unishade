@@ -1047,6 +1047,34 @@ bool Install(const InstallOptions& options, const ReShadeRelease& release, Progr
     WriteFile(files / L"UnishadeUi.dll", Resource(IDR_UI));
     WriteFile(files / L"LICENSE", Resource(IDR_LICENSE));
     WriteFile(files / L"CREDITS.txt", Resource(IDR_CREDITS));
+    // An optional official logo ships beside Setup in assets/brand. Stage it
+    // with the rest of the installation, so Commit records it in the manifest
+    // and Uninstall removes it normally. The embedded logo is always a fallback.
+    const fs::path brandSource = ModulePath().parent_path() / L"assets" / L"brand" / L"dsl-logo-square.png";
+    std::error_code brandError;
+    if (fs::is_regular_file(brandSource, brandError))
+    {
+        const auto bytes = fs::file_size(brandSource, brandError);
+        if (!brandError && bytes >= 24 && bytes <= 12 * 1024 * 1024)
+        {
+            std::ifstream image(brandSource, std::ios::binary);
+            constexpr unsigned char kPngHeader[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
+            unsigned char header[8] = {};
+            image.read(reinterpret_cast<char*>(header), sizeof(header));
+            if (image.gcount() == static_cast<std::streamsize>(sizeof(header)) &&
+                std::equal(std::begin(header), std::end(header), std::begin(kPngHeader)))
+            {
+                const fs::path destination = files / L"assets" / L"brand" / L"dsl-logo-square.png";
+                fs::create_directories(destination.parent_path());
+                fs::copy_file(brandSource, destination);
+                SetupLog("Official DSL MODS brand artwork staged.");
+            }
+            else
+                SetupLog("The optional brand image is not a valid PNG signature; using embedded logo.");
+        }
+        else
+            SetupLog("Optional DSL brand image has an unexpected file size; using embedded logo.");
+    }
     bool complete = true;
     if (options.reshade)
     {
