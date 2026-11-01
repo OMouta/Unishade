@@ -653,10 +653,12 @@ void Sidebar(std::initializer_list<const char*> steps, int current)
     if (ui.logo)
         draw->AddImage(ImTextureID(reinterpret_cast<uintptr_t>(ui.logo.Get())), ImVec2(x - S(8), y), ImVec2(x - S(8) + S(80), y + S(80)));
     y += S(92);
-    draw->AddText(ui.semibold, S(18), ImVec2(x, y), kText, "DSL MODS Visual Engine");
-    y += S(25);
-    draw->AddText(ui.regular, S(13.5f), ImVec2(x, y), kDim, "Setup " UNISHADE_VERSION);
-    y += S(48);
+    draw->AddText(ui.semibold, S(18), ImVec2(x, y), kText, "DSL MODS");
+    y += S(24);
+    draw->AddText(ui.semibold, S(11.5f), ImVec2(x, y), kAccentHover, "SEE BEYOND. PLAY DIFFERENT.");
+    y += S(20);
+    draw->AddText(ui.regular, S(13.5f), ImVec2(x, y), kDim, "Visual Engine  •  Setup " UNISHADE_VERSION);
+    y += S(40);
 
     int index = 0;
     for (const char* step : steps)
@@ -718,7 +720,9 @@ void CreditsPopup()
 
 void WelcomePage()
 {
-    Title("Install DSL MODS Visual Engine");
+    Title("Welcome to DSL MODS Visual Engine");
+    Text("SEE BEYOND. PLAY DIFFERENT.", kAccentHover, 14, ui.semibold);
+    Spacing(8);
     Text("Capture-based post-processing for supported games.");
     Text("Your frame rate will be lower while it runs.", kDim, 15);
     Spacing(18);
@@ -1275,7 +1279,7 @@ int RunWindow(const Arguments& arguments)
     windowClass.lpszClassName = L"UnishadeSetup";
     RegisterClassExW(&windowClass);
     constexpr DWORD kStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-    ui.window = CreateWindowExW(0, windowClass.lpszClassName, L"Unishade Setup", kStyle, CW_USEDEFAULT, CW_USEDEFAULT, 100, 100, nullptr,
+    ui.window = CreateWindowExW(0, windowClass.lpszClassName, L"DSL MODS Visual Engine Setup", kStyle, CW_USEDEFAULT, CW_USEDEFAULT, 100, 100, nullptr,
                                 nullptr, windowClass.hInstance, nullptr);
     if (!ui.window)
         return kExitFailed;
@@ -1297,7 +1301,7 @@ int RunWindow(const Arguments& arguments)
 
     if (!CreateDeviceAndSwapchain())
     {
-        MessageBoxW(ui.window, L"Setup could not start its window because DirectX 11 is unavailable.", L"Unishade Setup", MB_ICONERROR);
+        MessageBoxW(ui.window, L"Setup could not start its window because DirectX 11 is unavailable.", L"DSL MODS Visual Engine Setup", MB_ICONERROR);
         return kExitFailed;
     }
     ImGui::CreateContext();
@@ -1480,7 +1484,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     {
         SetupLog(arguments.error);
         if (!arguments.silent)
-            MessageBoxW(nullptr, Wide(arguments.error).c_str(), L"Unishade Setup", MB_ICONERROR);
+            MessageBoxW(nullptr, Wide(arguments.error).c_str(), L"DSL MODS Visual Engine Setup", MB_ICONERROR);
         return kExitFailed;
     }
     const int result = arguments.silent ? RunSilent(arguments) : RunWindow(arguments);
