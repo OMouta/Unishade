@@ -3,20 +3,20 @@
 // DSL MODS Visual Engine palette, shared by Setup, the launcher and the in-game menu. 0xRRGGBB.
 namespace theme
 {
-constexpr unsigned kBackground = 0x100B16;
-constexpr unsigned kSidebar = 0x0B0710;
-constexpr unsigned kCard = 0x191222;
-constexpr unsigned kCardHover = 0x241832;
-constexpr unsigned kBorder = 0x332440;
-constexpr unsigned kBorderStrong = 0x62427D;
-constexpr unsigned kText = 0xF4ECFA;
-constexpr unsigned kDim = 0xA99AB5;
-constexpr unsigned kAccent = 0xA855F7;
-constexpr unsigned kAccentHover = 0xC084FC;
-constexpr unsigned kAccentActive = 0x9333EA;
-constexpr unsigned kWarning = 0xF5C05C;
-constexpr unsigned kError = 0xFF7676;
-constexpr unsigned kSuccess = 0x68D694;
+constexpr unsigned kBackground = 0x090B0E;
+constexpr unsigned kSidebar = 0x050608;
+constexpr unsigned kCard = 0x15191E;
+constexpr unsigned kCardHover = 0x222830;
+constexpr unsigned kBorder = 0x343B44;
+constexpr unsigned kBorderStrong = 0x78828D;
+constexpr unsigned kText = 0xFFFFFF;
+constexpr unsigned kDim = 0xB9C1CA;
+constexpr unsigned kAccent = 0xAEB8C2;
+constexpr unsigned kAccentHover = 0xE1E6EB;
+constexpr unsigned kAccentActive = 0x7D8791;
+constexpr unsigned kWarning = 0xE4C77A;
+constexpr unsigned kError = 0xF07878;
+constexpr unsigned kSuccess = 0x83C9A1;
 // Kept for compatibility with upstream UI drawing helpers.
-constexpr unsigned kRainbow[] = { 0xA855F7, 0xC084FC, 0x7C3AED, 0x6D28D9, 0x9333EA, 0xD8B4FE, 0xA855F7 };
+constexpr unsigned kRainbow[] = { 0x7D8791, 0xAEB8C2, 0xE1E6EB, 0xFFFFFF, 0xC5CDD5, 0x89939E, 0x7D8791 };
 } // namespace theme
