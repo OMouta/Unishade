@@ -287,6 +287,14 @@ public:
         winrt::com_ptr<IWICBitmapDecoder> decoder;
         if (key == "logo")
         {
+            // Prefer the official DSL artwork installed beside the launcher.
+            // Preserve the built-in logo as a safe fallback for older installations.
+            const fs::path brand = fs::path(ExeDirectory()) / L"assets" / L"brand" / L"dsl-logo-preview.png";
+            if (SUCCEEDED(l.imaging->CreateDecoderFromFilename(brand.c_str(), nullptr, GENERIC_READ,
+                                                               WICDecodeMetadataCacheOnLoad, decoder.put())) &&
+                DecodedPixels(decoder.get(), size, rgba))
+                return true;
+            decoder = nullptr;
             const HRSRC info = FindResourceW(nullptr, MAKEINTRESOURCEW(IDR_LOGO), RT_RCDATA);
             const HGLOBAL resource = info ? LoadResource(nullptr, info) : nullptr;
             winrt::com_ptr<IWICStream> stream;
