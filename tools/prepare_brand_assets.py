@@ -17,6 +17,7 @@ SIZES = {
     "dsl-logo-launcher.png": (960, 540),
     "dsl-logo-installer.png": (640, 360),
     "dsl-logo-preview.png": (480, 270),
+    "dsl-logo-square.png": (512, 512),
 }
 
 
@@ -36,7 +37,13 @@ def prepare(source: Path, destination: Path) -> None:
             target = destination / filename
             if target.exists():
                 raise FileExistsError(f"Refusing to overwrite existing asset: {target}")
-            scaled = original.resize(size, Image.Resampling.LANCZOS)
+            if size[0] == size[1]:
+                # Square slots in ImGui must never stretch the 16:9 DSL artwork.
+                scaled = Image.new("RGB", size, (0, 0, 0))
+                fitting = original.resize((size[0], size[0] * 9 // 16), Image.Resampling.LANCZOS)
+                scaled.paste(fitting, (0, (size[1] - fitting.height) // 2))
+            else:
+                scaled = original.resize(size, Image.Resampling.LANCZOS)
             scaled.save(target, format="PNG", optimize=True)
             print(f"{target}: {size[0]}x{size[1]}")
 
