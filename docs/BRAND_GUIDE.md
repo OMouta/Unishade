@@ -24,7 +24,7 @@
 - Use silver accents for primary actions, selection and focus; reserve semantic colors for status and warnings.
 - Keep backgrounds near-black and cards subtly separated rather than using bright gradients everywhere.
 - Preserve readable contrast and existing keyboard navigation.
-- Keep the in-game menu compact and avoid obscuring the game view.
+- Use the premium desktop-style in-game layout while scaling or scrolling safely on smaller game viewports.
 - Use the same product naming in the launcher, setup, tray tooltip, in-game menu and Windows file metadata.
 
 ## Compatibility rules
