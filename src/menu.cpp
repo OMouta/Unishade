@@ -445,8 +445,23 @@ Pixels MipmapPixels(IWICImagingFactory* factory, IWICBitmapDecoder* decoder, UIN
     return pixels;
 }
 
+Pixels ImagePixels(const fs::path& file, UINT size);
+
 Pixels LogoPixels(UINT size)
 {
+    // Optional official 16:9 artwork, letterboxed into a square by the asset tool.
+    // The original embedded image remains the fallback when the file is unavailable.
+    wchar_t executable[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, executable, MAX_PATH) != 0)
+    {
+        const fs::path brand = fs::path(executable).parent_path() / L"assets" / L"brand" / L"dsl-logo-square.png";
+        if (fs::exists(brand))
+        {
+            Pixels official = ImagePixels(brand, size);
+            if (official && !official->empty())
+                return official;
+        }
+    }
     const HRSRC info = FindResourceW(nullptr, MAKEINTRESOURCEW(IDR_LOGO), RT_RCDATA);
     const HGLOBAL resource = info ? LoadResource(nullptr, info) : nullptr;
     winrt::com_ptr<IWICImagingFactory> factory;
