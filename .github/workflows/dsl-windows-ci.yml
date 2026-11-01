@@ -1,0 +1,33 @@
+name: DSL MODS Windows CI
+
+on:
+  push:
+    branches:
+      - dsl-visual-engine/development
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build Windows x64 and run tests
+    runs-on: windows-2022
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Show CMake version
+        run: cmake --version
+
+      - name: Configure x64 build
+        run: cmake -S . -B build -A x64 -DBUILD_TESTING=ON
+
+      - name: Build Release
+        run: cmake --build build --config Release --parallel 2
+
+      - name: Run tests
+        run: ctest --test-dir build -C Release --output-on-failure
