@@ -1339,6 +1339,68 @@ bool Relaunch()
     }
 }
 
+namespace
+{
+// Shows an alert in front of everything. Before glfwInit there is no NSApp yet, so this makes one.
+void Alert(NSString* title, NSString* text)
+{
+    [NSApplication sharedApplication];
+    if (NSApp.activationPolicy != NSApplicationActivationPolicyRegular)
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    if (@available(macOS 14.0, *))
+        [NSApp activate];
+    else
+    {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [NSApp activateIgnoringOtherApps:YES];
+#pragma clang diagnostic pop
+    }
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = title;
+    alert.informativeText = text;
+    [alert runModal];
+}
+} // namespace
+
+void ShowStartupError(const std::string& message)
+{
+    @autoreleasepool
+    {
+        NSString* text = [NSString stringWithUTF8String:message.c_str()];
+        Alert(@"Unishade cannot start", text ?: @"");
+    }
+}
+
+void ShowAlreadyRunning()
+{
+    @autoreleasepool
+    {
+        // The other Unishade is the app with the same identifier, such as another copy of the app.
+        NSRunningApplication* other = nil;
+        if (NSString* identifier = NSBundle.mainBundle.bundleIdentifier)
+            for (NSRunningApplication* app in [NSRunningApplication runningApplicationsWithBundleIdentifier:identifier])
+                if (app.processIdentifier != getpid())
+                    other = app;
+        Alert(@"Unishade is already running", other ? @"It comes to the front when you close this." : @"Only one Unishade runs at a time.");
+        if (!other)
+            return;
+        // Only the active program can hand activation on, which this one is while its alert shows.
+        if (@available(macOS 14.0, *))
+        {
+            [NSApp yieldActivationToApplication:other];
+            [other activateWithOptions:NSApplicationActivateAllWindows];
+        }
+        else
+        {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+            [other activateWithOptions:NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps];
+#pragma clang diagnostic pop
+        }
+    }
+}
+
 void SetHotkeyCallback(HotkeyCallback callback)
 {
     hotkeyCallback = std::move(callback);

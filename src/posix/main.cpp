@@ -231,7 +231,10 @@ int main(int argc, char** argv)
         }
     }
     if (!HaveDataDirectory())
+    {
+        platform::ShowStartupError("Unishade cannot find your home folder.");
         return 1;
+    }
 
     // One host at a time, like the mutex on Windows. A restarted one waits a few seconds for the one before it to quit.
     const fs::path lockPath = DataDirectory() / "unishade.lock";
@@ -245,6 +248,7 @@ int main(int argc, char** argv)
     if (instance->Busy())
     {
         fprintf(stderr, "Unishade is already running.\n");
+        platform::ShowAlreadyRunning();
         return 0;
     }
 
@@ -263,6 +267,7 @@ int main(int argc, char** argv)
     {
         Log(LogLevel::Error, "Could not initialize GLFW. The host needs a supported display.");
         fprintf(stderr, "Unishade could not open a window. It needs an X11 or XWayland display on Linux.\n");
+        platform::ShowStartupError("Unishade could not open a window.");
         return 1;
     }
 
@@ -274,6 +279,7 @@ int main(int argc, char** argv)
     {
         Log(LogLevel::Error, "%s", error.c_str());
         fprintf(stderr, "Unishade cannot start: %s\n", error.c_str());
+        platform::ShowStartupError(error);
         result = 1;
     }
     app.Shutdown();

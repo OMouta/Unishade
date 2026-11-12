@@ -1639,6 +1639,15 @@ bool Relaunch()
     return false;
 }
 
+// Linux users start Unishade from a terminal or a desktop entry, and the terminal already has the message.
+void ShowStartupError(const std::string&)
+{
+}
+
+void ShowAlreadyRunning()
+{
+}
+
 // X11 reports a window's content area without its frame, and has no layers to keep the overlay above.
 int WindowLayer(WindowId)
 {

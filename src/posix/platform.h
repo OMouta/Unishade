@@ -153,6 +153,11 @@ void RequestCapturePermission();
 // Starts a new Unishade, which waits for this one to quit, and returns whether it started. The caller then quits.
 // Not needed on X11, where it does nothing and returns false.
 bool Relaunch();
+// For starting from the Finder, where nobody sees the terminal: on macOS an alert says why Unishade could not start,
+// and for a second Unishade, an alert says one is running and then brings that one to the front. The caller writes
+// the same to the terminal. Both do nothing on X11. Can run before glfwInit.
+void ShowStartupError(const std::string& message);
+void ShowAlreadyRunning();
 
 // Global shortcuts. The callback runs on the main thread from PollHotkeys, with pressed false when the key is let
 // go.
