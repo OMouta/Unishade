@@ -97,6 +97,7 @@ bool App::Init(std::string& error)
     glfwWindowHint(GLFW_MOUSE_PASSTHROUGH, GLFW_TRUE);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
+    platform::PrepareOverlayWindow();
     overlay.window = glfwCreateWindow(64, 64, "Unishade overlay", nullptr, nullptr);
     if (!overlay.window)
     {
@@ -150,7 +151,7 @@ void App::Run()
                 CloseMenu(false);
         }
         else if (overlayVisible && overlayFocused && active)
-            platform::Activate(*active); // the window manager focused the overlay, which should never have it
+            platform::ReturnFocus(overlay.window, *active); // the window manager focused the overlay, which should never have it
 
         const bool newFrame = active && platform::TakeFrame(frame);
         // Capture works again, so the next failure is news.
@@ -423,6 +424,7 @@ void App::UpdateOverlay()
         overlayVisible = false;
         return;
     }
+    platform::MatchOverlay(overlay.window, active->id);
     if (!overlayVisible || !(bounds == overlayBounds))
     {
         Log(LogLevel::Info, "Overlay placed: bounds=%d,%d %dx%d, frame=%ux%u.", bounds.x, bounds.y, bounds.width, bounds.height, frame.width, frame.height);
@@ -585,7 +587,7 @@ void App::CloseMenu(bool returnToGame)
     if (settings.autoSavePresets && runtime.Dirty())
         runtime.SavePreset();
     if (returnToGame && active)
-        platform::Activate(*active);
+        platform::ReturnFocus(overlay.window, *active);
     Log(LogLevel::Info, "Input returned to the game.");
 }
 

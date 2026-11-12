@@ -89,13 +89,24 @@ std::vector<Process> ListProcesses();
 // Saves the icon of the window's program as a PNG. Returns false when it has none.
 bool SaveWindowIcon(const Window& window, const std::string& path);
 
+// Call right before creating the overlay window, after GLFW's hints for it. On macOS the window GLFW creates next is
+// then a panel that can take the keyboard without making Unishade the active program, so the game stays in front and
+// on its Space while the menu is open. Does nothing on X11.
+void PrepareOverlayWindow();
 // Makes the overlay stay above the game, out of the taskbar and the window switcher, and on every Space. Call
 // before the window is first shown.
 void SetupOverlayWindow(GLFWwindow* window);
 // Shows or hides the overlay without taking focus from the game.
 void ShowOverlay(GLFWwindow* window, bool visible);
+// Fits the overlay to the game's window beyond its bounds: on macOS its level, just above the game's, and its rounded
+// corners. Call before the overlay first shows and on every pass while it shows, since the game's layer can change.
+// Does nothing on X11.
+void MatchOverlay(GLFWwindow* window, WindowId game);
 // Gives the overlay keyboard focus while the menu is open.
 void FocusOverlay(GLFWwindow* window);
+// Gives keyboard focus back to the game, such as when the menu closes. On macOS the game stays the active program
+// while the menu is open, so this takes the keyboard from the overlay. On X11 it is Activate.
+void ReturnFocus(GLFWwindow* window, const Window& game);
 
 // The game's picture. Where the platform can, it stays on the graphics card: image is then an image in
 // VK_IMAGE_LAYOUT_GENERAL whose part at (x, y) of width by height is the window, and stays valid until capture

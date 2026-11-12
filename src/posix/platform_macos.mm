@@ -13,12 +13,16 @@
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 
+// Added to GLFW by posix.cmake: the next window GLFW creates is a non-activating panel.
+extern "C" void glfwCocoaPanelHint(int panel);
+
 #import <AppKit/AppKit.h>
 #import <Carbon/Carbon.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
 #import <IOSurface/IOSurface.h>
+#import <QuartzCore/QuartzCore.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 
 #include <libproc.h>
@@ -915,15 +919,38 @@ bool SaveWindowIcon(const Window& window, const std::string& path)
     }
 }
 
+void PrepareOverlayWindow()
+{
+    glfwCocoaPanelHint(GLFW_TRUE);
+}
+
 void SetupOverlayWindow(GLFWwindow* window)
 {
     NSWindow* overlay = glfwGetCocoaWindow(window);
+    if (NSPanel* panel = [overlay isKindOfClass:[NSPanel class]] ? (NSPanel*)overlay : nil)
+    {
+        // A panel acts as a palette unless told otherwise. Not floating, which would also set its level, and key
+        // whenever the menu asks rather than only for controls that type. Nothing of it works during an alert.
+        panel.floatingPanel = NO;
+        panel.becomesKeyOnlyIfNeeded = NO;
+        panel.worksWhenModal = NO;
+    }
+    else
+        Log(LogLevel::Warning, "The overlay is not a panel, so opening the menu brings Unishade to the front.");
     // On every Space, beside full-screen games too, and never in the window cycle.
     overlay.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary |
                                  NSWindowCollectionBehaviorStationary | NSWindowCollectionBehaviorIgnoresCycle;
     overlay.level = NSStatusWindowLevel;
     overlay.hasShadow = NO;
+    // The game stays on screen while Unishade is in the background, and while the user hides Unishade or every
+    // program but the game.
     overlay.hidesOnDeactivate = NO;
+    overlay.canHide = NO;
+    // A window that lets what is under it show keeps macOS from taking the game for covered, which lets a program
+    // draw less often and nap, and would slow capture down with it. The overlay still shows only its own pixels: the
+    // swapchain's opaque composite alpha makes MoltenVK's layer opaque, and MatchOverlay keeps it so.
+    overlay.opaque = NO;
+    overlay.backgroundColor = NSColor.clearColor;
 }
 
 void ShowOverlay(GLFWwindow* window, bool visible)
@@ -935,9 +962,78 @@ void ShowOverlay(GLFWwindow* window, bool visible)
         [overlay orderOut:nil];
 }
 
+void MatchOverlay(GLFWwindow* window, WindowId game)
+{
+    @autoreleasepool
+    {
+        NSWindow* overlay = glfwGetCocoaWindow(window);
+        // Just above the game, which can be above the overlay's usual level, as Wine games in full screen are. Wine
+        // raises and lowers its window as the game gains and loses focus, so the level follows it.
+        const int layer = WindowLayer(game);
+        const NSWindowLevel level = std::max<NSWindowLevel>(NSStatusWindowLevel, NSWindowLevel(layer) + 1);
+        if (overlay.level != level)
+        {
+            Log(LogLevel::Info, "Overlay level: %ld, game layer: %d.", long(level), layer);
+            overlay.level = level;
+        }
+
+        // The view's layer is MoltenVK's once the swapchain exists.
+        CALayer* content = [(NSView*)glfwGetCocoaView(window) layer];
+        if (!content)
+            return;
+        if (!content.opaque)
+            content.opaque = YES;
+        // A window with a title bar has round corners, where the captured picture is clear and would show black. The
+        // overlay rounds its own corners to match: the bottom ones when it leaves out the title bar, all four when it
+        // covers the whole window. A window that covers its screen or sits above the normal layer, as games in full
+        // screen do, has square corners. macOS does not tell another program's corner radius, so these are measured
+        // from a standard titled window and rounded up, since a sliver of the game without effects shows less than a
+        // black notch: macOS 26's look draws 35 pixels at 2x along the bottom row, which an 18-point continuous curve
+        // covers with a pixel or two to spare, and the earlier look draws about 10 points, rounded up to 12. Which
+        // look the game has depends on its SDK. The layer is not flipped, so its bottom corners are the MinY ones.
+        NSDictionary* info = WindowInfo(CGWindowID(game));
+        const CACornerMask all = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner | kCALayerMinXMaxYCorner | kCALayerMaxXMaxYCorner;
+        CACornerMask corners = all;
+        double radius = info && NewLook([info[(id)kCGWindowOwnerPID] intValue]) ? 18 : 12;
+        if (WindowFillsScreen(game) || layer != window_rules::kNormalLevel)
+            radius = 0;
+        else if (WindowHasTitleBar(game))
+            corners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
+        if (content.cornerRadius != radius || content.maskedCorners != corners)
+        {
+            content.cornerCurve = kCACornerCurveContinuous;
+            content.cornerRadius = radius;
+            content.maskedCorners = corners;
+            content.masksToBounds = radius > 0;
+        }
+    }
+}
+
 void FocusOverlay(GLFWwindow* window)
 {
     NSWindow* overlay = glfwGetCocoaWindow(window);
+    // The non-activating panel takes the keyboard while the game stays the active program, so macOS does not switch
+    // away from the game's full-screen Space to the launcher's.
+    const bool panel = overlay.styleMask & NSWindowStyleMaskNonactivatingPanel;
+    if (panel)
+    {
+        [overlay orderFrontRegardless];
+        [overlay makeKeyWindow];
+    }
+    // A game that hides the cursor, as games played with the mouse held do, lets go of the mouse only once it is no
+    // longer the active program, so then Unishade becomes it. The panel is key first, so macOS has no other window of
+    // Unishade's to go to and stays on the game's Space. CGCursorIsVisible is deprecated without a replacement and
+    // answers for the whole session, so it sees a cursor another program hid.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    const bool cursorHidden = !CGCursorIsVisible();
+#pragma clang diagnostic pop
+    if (panel && !cursorHidden)
+    {
+        Log(LogLevel::Info, "Menu input: the game stays in front.");
+        return;
+    }
+    Log(LogLevel::Info, "Menu input: Unishade comes to the front, since %s.", panel ? "the game hides the cursor" : "the overlay is not a panel");
     if (@available(macOS 14.0, *))
         [NSApp activate];
     else
@@ -948,6 +1044,32 @@ void FocusOverlay(GLFWwindow* window)
 #pragma clang diagnostic pop
     }
     [overlay makeKeyAndOrderFront:nil];
+}
+
+void ReturnFocus(GLFWwindow* window, const Window& game)
+{
+    @autoreleasepool
+    {
+        NSWindow* overlay = glfwGetCocoaWindow(window);
+        // When the menu made Unishade the active program, activating the game gives it the keyboard and the mouse
+        // back, and takes the key window from Unishade. The panel is not ordered out then: in the active program
+        // AppKit would make the launcher key, which could take the user to the launcher's Space.
+        if (NSApp.active || !ProcessInFront(game.pid))
+        {
+            Activate(game);
+            return;
+        }
+        // Otherwise the game stayed the active program, and a key panel stays key until another window becomes key,
+        // which the game has no reason to ask for. Ordered out, the panel gives the keyboard back to the game's
+        // window at once, and ordered straight back in it is missing for a frame at most.
+        if (overlay.keyWindow)
+        {
+            const bool shown = overlay.visible;
+            [overlay orderOut:nil];
+            if (shown)
+                [overlay orderFrontRegardless];
+        }
+    }
 }
 
 bool StartCapture(const Window& window, std::string& error)

@@ -649,6 +649,8 @@ bool Surface::CreateSwapchain()
     if (caps.maxImageCount)
         minImageCount = std::min(minImageCount, caps.maxImageCount);
 
+    // Opaque first, so effects that leave alpha below one cannot make the picture see-through. MoltenVK then marks its
+    // layer opaque, which the macOS overlay relies on, since its window lets what is under it show.
     VkCompositeAlphaFlagBitsKHR alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     for (VkCompositeAlphaFlagBitsKHR option : { VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
                                                 VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR, VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR })

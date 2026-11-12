@@ -1263,6 +1263,10 @@ std::vector<Process> ListProcesses()
     return processes;
 }
 
+void PrepareOverlayWindow()
+{
+}
+
 void SetupOverlayWindow(GLFWwindow* window)
 {
     Display* d = glfwGetX11Display();
@@ -1317,6 +1321,16 @@ void FocusOverlay(GLFWwindow* window)
     ErrorTrap trap(d);
     XSetInputFocus(d, x, RevertToParent, CurrentTime);
     trap.Failed();
+}
+
+// The overlay's place above the game is kept by ShowOverlay, and X11 windows have square corners.
+void MatchOverlay(GLFWwindow*, WindowId)
+{
+}
+
+void ReturnFocus(GLFWwindow*, const Window& game)
+{
+    Activate(game);
 }
 
 bool StartCapture(const Window& window, std::string& error)
