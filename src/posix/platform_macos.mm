@@ -1051,10 +1051,11 @@ void ReturnFocus(GLFWwindow* window, const Window& game)
     @autoreleasepool
     {
         NSWindow* overlay = glfwGetCocoaWindow(window);
-        // When the menu made Unishade the active program, activating the game gives it the keyboard and the mouse
+        // When the menu made Unishade the program in front, activating the game gives it the keyboard and the mouse
         // back, and takes the key window from Unishade. The panel is not ordered out then: in the active program
-        // AppKit would make the launcher key, which could take the user to the launcher's Space.
-        if (NSApp.active || !ProcessInFront(game.pid))
+        // AppKit would make the launcher key, which could take the user to the launcher's Space. NSApp.active does
+        // not answer this: it stays true while the game is in front and the panel is key.
+        if (!ProcessInFront(game.pid))
         {
             Activate(game);
             return;
