@@ -149,6 +149,12 @@ void App::Run()
             platform::Activate(*active); // the window manager focused the overlay, which should never have it
 
         const bool newFrame = active && platform::TakeFrame(frame);
+        // Capture works again, so the next failure is news.
+        if (newFrame && failingWindow)
+        {
+            failingWindow = 0;
+            loggedCaptureError.clear();
+        }
         if (Now() >= nextStateLog)
         {
             Log(LogLevel::Info, "State: window=%llu, pid=%d, capture=%d, visible=%d, menu=%d, in_front=%d, frame=%ux%u, serial=%llu, "
@@ -204,8 +210,11 @@ void App::Shutdown()
 
 void App::StartCapture(const platform::Window& window)
 {
-    Log(LogLevel::Info, "Attaching: window=%llu, pid=%d, title=%s, executable=%s.", static_cast<unsigned long long>(window.id),
-        window.pid, window.title.c_str(), platform::ProcessExecutable(window.pid).c_str());
+    // A window that cannot be captured is tried again every two seconds, which the log does not need to hear about.
+    const bool retrying = window.id == failingWindow;
+    if (!retrying)
+        Log(LogLevel::Info, "Attaching: window=%llu, pid=%d, title=%s, executable=%s.", static_cast<unsigned long long>(window.id),
+            window.pid, window.title.c_str(), platform::ProcessExecutable(window.pid).c_str());
     if (!platform::HasCapturePermission())
     {
         lastCaptureError = "Unishade needs permission to record the screen.";
@@ -216,7 +225,8 @@ void App::StartCapture(const platform::Window& window)
     if (!platform::StartCapture(window, error))
     {
         lastCaptureError = "Could not capture " + window.title + ": " + error;
-        Log(LogLevel::Warning, "%s", lastCaptureError.c_str());
+        WarnCaptureError();
+        failingWindow = window.id;
         captureRetry = Now() + 2;
         return;
     }
@@ -227,7 +237,8 @@ void App::StartCapture(const platform::Window& window)
     failedWidth = failedHeight = 0;
     cursorKnown = false;
     lastCaptureError.clear();
-    Log(LogLevel::Info, "Capturing %s", window.title.c_str());
+    if (!retrying)
+        Log(LogLevel::Info, "Capturing %s", window.title.c_str());
     FollowGame();
     if (!startHintShown)
     {
@@ -246,7 +257,7 @@ void App::StopCapture()
     frame = {};
     inFlight.reset();
     platform::StopCapture();
-    if (active)
+    if (active && active->id != failingWindow)
         Log(LogLevel::Info, "Stopped capturing %s.", active->title.c_str());
     active.reset();
     activeExecutable.clear();
@@ -273,10 +284,11 @@ void App::UpdateTarget()
     }
     else if (active && !platform::Capturing())
     {
+        const platform::WindowId failed = active->id;
         lastCaptureError = platform::CaptureError();
-        if (!lastCaptureError.empty())
-            Log(LogLevel::Warning, "%s", lastCaptureError.c_str());
+        WarnCaptureError();
         StopCapture();
+        failingWindow = failed;
         captureRetry = Now() + 2;
     }
 
@@ -569,7 +581,18 @@ void App::ToggleOverlay()
     captureEnabled = !captureEnabled;
     if (!captureEnabled && menuOpen)
         CloseMenu();
+    // Turned on or off by hand, so what goes wrong next is worth logging again.
+    failingWindow = 0;
+    loggedCaptureError.clear();
     Log(LogLevel::Info, captureEnabled ? "Overlay on." : "Overlay off. Frame capture stopped.");
+}
+
+void App::WarnCaptureError()
+{
+    if (lastCaptureError.empty() || lastCaptureError == loggedCaptureError)
+        return;
+    Log(LogLevel::Warning, "%s", lastCaptureError.c_str());
+    loggedCaptureError = lastCaptureError;
 }
 
 void App::ShowToast(std::string text, double seconds, std::string key)

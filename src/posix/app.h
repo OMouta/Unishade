@@ -131,6 +131,8 @@ private:
     void TakeScreenshots();
     void StartCapture(const platform::Window& window);
     void StopCapture();
+    // Logs lastCaptureError unless it was the last one logged.
+    void WarnCaptureError();
     void FollowGame();
     // Makes a preset the active one in Unishade.ini and for the game being played.
     void UsePreset(const fs::path& path);
@@ -174,6 +176,10 @@ private:
     double lastLauncherFrame = 0;
     double lastAutoSave = 0;
     double captureRetry = 0;
+    // The window whose capture failed and is being tried again, and the last capture error logged. Both are cleared
+    // once a frame arrives.
+    platform::WindowId failingWindow = 0;
+    std::string loggedCaptureError;
     std::vector<platform::Window> windows;
     double windowsTime = -10;
 };
