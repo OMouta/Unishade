@@ -230,10 +230,21 @@ else()
 endif()
 
 if(APPLE)
-    # Finder and the Dock show the logo from an icon file made of it, which Info.plist names.
+    # Finder and the Dock show the logo from an icon file made of it, which Info.plist names. It holds every size
+    # Finder draws, each scaled down from the 512-pixel logo, so small icons are not shrunk from the largest on the fly.
     set(APP_ICON "${CMAKE_BINARY_DIR}/Unishade.icns")
+    set(APP_ICONSET "${CMAKE_BINARY_DIR}/Unishade.iconset")
+    set(ICON_COMMANDS COMMAND "${CMAKE_COMMAND}" -E rm -rf "${APP_ICONSET}" COMMAND "${CMAKE_COMMAND}" -E make_directory "${APP_ICONSET}")
+    foreach(size 16 32 128 256 512)
+        list(APPEND ICON_COMMANDS COMMAND sips -z ${size} ${size} "${LOGO_PNG}" --out "${APP_ICONSET}/icon_${size}x${size}.png")
+        math(EXPR double "${size} * 2")
+        if(double LESS_EQUAL 512)
+            list(APPEND ICON_COMMANDS COMMAND sips -z ${double} ${double} "${LOGO_PNG}" --out "${APP_ICONSET}/icon_${size}x${size}@2x.png")
+        endif()
+    endforeach()
     add_custom_command(OUTPUT "${APP_ICON}"
-        COMMAND sips -s format icns "${LOGO_PNG}" --out "${APP_ICON}"
+        ${ICON_COMMANDS}
+        COMMAND iconutil -c icns "${APP_ICONSET}" -o "${APP_ICON}"
         DEPENDS "${LOGO_PNG}"
         VERBATIM)
     add_executable(Unishade MACOSX_BUNDLE "${POSIX_DIR}/main.cpp" "${APP_ICON}")
