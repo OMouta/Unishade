@@ -107,6 +107,10 @@ void FocusOverlay(GLFWwindow* window);
 // Gives keyboard focus back to the game, such as when the menu closes. On macOS the game stays the active program
 // while the menu is open, so this takes the keyboard from the overlay. On X11 it is Activate.
 void ReturnFocus(GLFWwindow* window, const Window& game);
+// Whether another window of the game's program is above the game's window and overlaps it, such as a message box or
+// a file picker, which the overlay would cover with an old picture of the game. Lists windows, so the host asks only
+// a few times a second. Always false on X11.
+bool GameWindowCovered(const Window& game);
 
 // The game's picture. Where the platform can, it stays on the graphics card: image is then an image in
 // VK_IMAGE_LAYOUT_GENERAL whose part at (x, y) of width by height is the window, and stays valid until capture

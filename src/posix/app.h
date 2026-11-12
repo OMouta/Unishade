@@ -133,6 +133,8 @@ private:
     void StopCapture();
     // Logs lastCaptureError unless it was the last one logged.
     void WarnCaptureError();
+    // Whether another window of the game is above it, asked again a few times a second.
+    bool GameCovered();
     void FollowGame();
     // Makes a preset the active one in Unishade.ini and for the game being played.
     void UsePreset(const fs::path& path);
@@ -180,6 +182,8 @@ private:
     // once a frame arrives.
     platform::WindowId failingWindow = 0;
     std::string loggedCaptureError;
+    bool gameCovered = false;
+    double nextCoverCheck = 0;
     std::vector<platform::Window> windows;
     double windowsTime = -10;
 };

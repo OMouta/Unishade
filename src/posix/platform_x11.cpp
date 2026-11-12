@@ -1333,6 +1333,12 @@ void ReturnFocus(GLFWwindow*, const Window& game)
     Activate(game);
 }
 
+// Only the macOS host looks for the game's other windows. On X11 the overlay stays over them as it always has.
+bool GameWindowCovered(const Window&)
+{
+    return false;
+}
+
 bool StartCapture(const Window& window, std::string& error)
 {
     StopCapture();

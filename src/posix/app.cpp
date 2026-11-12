@@ -271,6 +271,8 @@ void App::StopCapture()
     if (overlayVisible)
         platform::ShowOverlay(overlay.window, false);
     overlayVisible = false;
+    gameCovered = false;
+    nextCoverCheck = 0;
 }
 
 void App::UpdateTarget()
@@ -411,14 +413,15 @@ void App::UpdateOverlay()
 {
     platform::Rect bounds;
     const bool sized = frame.width != failedWidth || frame.height != failedHeight;
-    const bool visible = captureEnabled && active && HasFrame() && sized && (menuOpen || inFront) && platform::WindowBounds(active->id, bounds);
+    const bool visible = captureEnabled && active && HasFrame() && sized && (menuOpen || inFront) && platform::WindowBounds(active->id, bounds) &&
+                         !GameCovered();
     platform::SetCaptureIdle(!visible);
     if (!visible)
     {
         if (overlayVisible)
         {
-            Log(LogLevel::Info, "Overlay hidden: capture=%d, frame=%d, sized=%d, in_front=%d, menu=%d.",
-                captureEnabled, HasFrame(), sized, inFront, menuOpen);
+            Log(LogLevel::Info, "Overlay hidden: capture=%d, frame=%d, sized=%d, in_front=%d, menu=%d, covered=%d.",
+                captureEnabled, HasFrame(), sized, inFront, menuOpen, gameCovered);
             platform::ShowOverlay(overlay.window, false);
         }
         overlayVisible = false;
@@ -437,6 +440,18 @@ void App::UpdateOverlay()
         platform::ShowOverlay(overlay.window, true);
         overlayVisible = true;
     }
+}
+
+// The game's dialogs, such as a message box or a file picker, would sit under the overlay's old picture of the game, so
+// the overlay hides while one is above the game's window. Asked a few times a second, since that lists windows.
+bool App::GameCovered()
+{
+    if (Now() >= nextCoverCheck)
+    {
+        gameCovered = active && platform::GameWindowCovered(*active);
+        nextCoverCheck = Now() + 0.25;
+    }
+    return gameCovered;
 }
 
 void App::RenderOverlay()

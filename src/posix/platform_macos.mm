@@ -1072,6 +1072,51 @@ void ReturnFocus(GLFWwindow* window, const Window& game)
     }
 }
 
+bool GameWindowCovered(const Window& game)
+{
+    @autoreleasepool
+    {
+        NSDictionary* info = WindowInfo(CGWindowID(game.id));
+        Rect bounds;
+        if (!info || !Bounds(info, bounds))
+            return false;
+        const CGRect gameRect = CGRectMake(bounds.x, bounds.y, bounds.width, bounds.height);
+        const int layer = [info[(id)kCGWindowLayer] intValue];
+        // Windows at or above the overlay's level show over it anyway, such as the game's menus.
+        const long overlayLevel = std::max<long>(NSStatusWindowLevel, long(layer) + 1);
+        // Front to back, every window in front of the game's.
+        for (NSDictionary* above in WindowList(kCGWindowListOptionOnScreenAboveWindow, CGWindowID(game.id)))
+        {
+            Rect other;
+            if ([above[(id)kCGWindowOwnerPID] intValue] != game.pid || [above[(id)kCGWindowLayer] intValue] >= overlayLevel ||
+                [above[(id)kCGWindowAlpha] doubleValue] <= 0 || !Bounds(above, other))
+                continue;
+            // Tiny windows, and windows the same size and place as the game's, are more likely parts of the game than
+            // dialogs. So are windows below the normal layer. A game's see-through windows, as Wine and browsers make
+            // for overlays, report full alpha anyway, so a window also needs a title, as dialogs and file pickers
+            // have, or a quarter of the game's area. When unsure, the overlay stays.
+            const CGRect otherRect = CGRectMake(other.x, other.y, other.width, other.height);
+            const CGRect overlap = CGRectIntersection(gameRect, otherRect);
+            NSString* title = above[(id)kCGWindowName];
+            if (other.width < 64 || other.height < 64 || other == bounds || CGRectIsNull(overlap) || overlap.size.width < 32 ||
+                overlap.size.height < 32 || [above[(id)kCGWindowLayer] intValue] < window_rules::kNormalLevel ||
+                (!title.length && double(other.width) * other.height < double(bounds.width) * bounds.height / 4))
+                continue;
+            // Said once for each window, since the host asks a few times a second.
+            static unsigned logged = 0;
+            const unsigned number = [above[(id)kCGWindowNumber] unsignedIntValue];
+            if (number != logged)
+            {
+                Log(LogLevel::Info, "Another window of the game is above it: window=%u, title=%s, layer=%d, bounds=%d,%d %dx%d.", number,
+                    title.length ? title.UTF8String : "", [above[(id)kCGWindowLayer] intValue], other.x, other.y, other.width, other.height);
+                logged = number;
+            }
+            return true;
+        }
+        return false;
+    }
+}
+
 bool StartCapture(const Window& window, std::string& error)
 {
     @autoreleasepool
