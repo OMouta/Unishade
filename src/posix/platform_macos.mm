@@ -1034,13 +1034,11 @@ void FocusOverlay(GLFWwindow* window)
         return;
     }
     Log(LogLevel::Info, "Menu input: Unishade comes to the front, since %s.", panel ? "the game hides the cursor" : "the overlay is not a panel");
-    if (@available(macOS 14.0, *))
-        [NSApp activate];
-    else
-    {
+    // NSApp.active is already true once the panel is key, so the newer [NSApp activate] does nothing here and the
+    // game keeps the mouse. The deprecated call still takes the front on macOS 26.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        [NSApp activateIgnoringOtherApps:YES];
+    [NSApp activateIgnoringOtherApps:YES];
 #pragma clang diagnostic pop
     }
     [overlay makeKeyAndOrderFront:nil];
@@ -1070,7 +1068,6 @@ void ReturnFocus(GLFWwindow* window, const Window& game)
             if (shown)
                 [overlay orderFrontRegardless];
         }
-    }
 }
 
 bool GameWindowCovered(const Window& game)
