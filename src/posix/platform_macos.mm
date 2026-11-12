@@ -437,15 +437,32 @@ bool Bounds(NSDictionary* info, Rect& bounds)
     return true;
 }
 
-// A screen in CoreGraphics' coordinates, with its scale, how far down full-screen windows may start and the height of
-// its menu bar, 0 while it has none or the menu bar hides itself.
+// A screen in CoreGraphics' coordinates, with its scale, how far down full-screen windows may start, the height of
+// its menu bar, 0 while it has none or the menu bar hides itself, and whether the Dock is on it. The Dock keeps a
+// window over each screen, also while it hides itself, and macOS takes that window away in a full-screen Space.
 struct Screen
 {
     window_rules::Box frame;
     double scale = 1;
     double safeTop = 0;
     double menuBar = 0;
+    bool dock = true;
 };
+
+// The Dock's windows that are on a screen now.
+std::vector<CGRect> DockWindows()
+{
+    std::vector<CGRect> docks;
+    NSArray* windows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID));
+    for (NSDictionary* info in windows)
+    {
+        CGRect bounds;
+        if ([info[(id)kCGWindowLayer] intValue] == kCGDockWindowLevel && [info[(id)kCGWindowOwnerName] isEqual:@"Dock"] &&
+            CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)info[(id)kCGWindowBounds], &bounds))
+            docks.push_back(bounds);
+    }
+    return docks;
+}
 
 // Asked again at most once a second, since screens rarely change and the main loop asks often.
 const std::vector<Screen>& Screens()
@@ -460,11 +477,14 @@ const std::vector<Screen>& Screens()
     NSArray<NSScreen*>* all = NSScreen.screens;
     // AppKit counts up from the bottom left corner of the first screen, CoreGraphics down from its top left corner.
     const double top = all.count > 0 ? NSMaxY(all[0].frame) : 0;
+    const std::vector<CGRect> docks = DockWindows();
     for (NSScreen* screen in all)
     {
         const NSRect frame = screen.frame;
-        screens.push_back({ { frame.origin.x, top - NSMaxY(frame), frame.size.width, frame.size.height }, screen.backingScaleFactor,
-                            screen.safeAreaInsets.top, std::max(NSMaxY(frame) - NSMaxY(screen.visibleFrame), 0.0) });
+        const CGRect area = CGRectMake(frame.origin.x, top - NSMaxY(frame), frame.size.width, frame.size.height);
+        const bool dock = std::any_of(docks.begin(), docks.end(), [&](const CGRect& bounds) { return CGRectIntersectsRect(bounds, area); });
+        screens.push_back({ { area.origin.x, area.origin.y, area.size.width, area.size.height }, screen.backingScaleFactor,
+                            screen.safeAreaInsets.top, std::max(NSMaxY(frame) - NSMaxY(screen.visibleFrame), 0.0), dock });
     }
     return screens;
 }
@@ -480,7 +500,7 @@ bool FillsScreen(const Rect& bounds)
     // One reference, since asking again can make a new list.
     const std::vector<Screen>& screens = Screens();
     return std::any_of(screens.begin(), screens.end(),
-                       [&](const Screen& screen) { return window_rules::CoversScreen(box, screen.frame, screen.safeTop, screen.menuBar); });
+                       [&](const Screen& screen) { return window_rules::CoversScreen(box, screen.frame, screen.safeTop, screen.menuBar, screen.dock); });
 }
 
 // The scale of the screen that shows most of the window, or of the first screen when none does.
@@ -1040,7 +1060,6 @@ void FocusOverlay(GLFWwindow* window)
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     [NSApp activateIgnoringOtherApps:YES];
 #pragma clang diagnostic pop
-    }
     [overlay makeKeyAndOrderFront:nil];
 }
 
@@ -1068,6 +1087,7 @@ void ReturnFocus(GLFWwindow* window, const Window& game)
             if (shown)
                 [overlay orderFrontRegardless];
         }
+    }
 }
 
 bool GameWindowCovered(const Window& game)

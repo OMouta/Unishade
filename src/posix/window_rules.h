@@ -38,11 +38,14 @@ struct Box
 // full-screen windows below it, so the top may start as far down as safeTop. A zoomed window starts below the menu
 // bar, so the top may start no further down than one point above the menu bar's bottom, when the screen shows a menu
 // bar of menuBar points. While the menu bar hides itself, a zoomed window reaches the top of the screen and cannot be
-// told from one in full screen.
-constexpr bool CoversScreen(const Box& window, const Box& screen, double safeTop, double menuBar)
+// told from one in full screen. On some screens with a camera housing the menu bar is a point taller than the housing,
+// and a window in full screen starts below the menu bar, exactly where a zoomed one does. There the Dock tells them
+// apart: macOS takes it off the screen in a full-screen Space, so without a Dock the top may start at the menu bar's
+// bottom.
+constexpr bool CoversScreen(const Box& window, const Box& screen, double safeTop, double menuBar, bool dockShown = true)
 {
     constexpr double kSlack = 0.5;
-    const double top = menuBar > 0 ? std::min(safeTop, menuBar - 1) : safeTop;
+    const double top = !dockShown ? std::max(safeTop, menuBar) : menuBar > 0 ? std::min(safeTop, menuBar - 1) : safeTop;
     return window.x <= screen.x + kSlack && window.x + window.width >= screen.x + screen.width - kSlack &&
            window.y <= screen.y + std::max(top, 0.0) + kSlack && window.y + window.height >= screen.y + screen.height - kSlack;
 }

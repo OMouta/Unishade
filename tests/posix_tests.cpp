@@ -214,6 +214,9 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     const Box screen{ 0, 0, 1470, 956 };
     ok &= Check(CoversScreen({ 0, 0, 1470, 956 }, screen, 32, 33) && CoversScreen({ 0, 32, 1470, 924 }, screen, 32, 33), "full screen, below the camera too");
     ok &= Check(!CoversScreen({ 0, 33, 1470, 923 }, screen, 32, 33), "a zoomed window below the menu bar does not cover the screen");
+    ok &= Check(CoversScreen({ 0, 33, 1470, 923 }, screen, 32, 33, false), "the same window in a full-screen Space, which has no Dock, does");
+    ok &= Check(!CoversScreen({ 0, 34, 1470, 922 }, screen, 32, 33, false) && !CoversScreen({ 0, 33, 1470, 848 }, screen, 32, 33, false),
+                "without a Dock a window still has to reach from the menu bar to the bottom");
     ok &= Check(!CoversScreen({ 0, 32, 1470, 924 }, screen, 32, 32) && !CoversScreen({ 0, 24, 1470, 932 }, screen, 32, 24),
                 "nor where the menu bar is no taller than the camera housing");
     ok &= Check(CoversScreen({ 0, 32, 1470, 924 }, screen, 32, 0), "with the menu bar hidden, the camera housing still counts");
