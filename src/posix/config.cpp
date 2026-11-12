@@ -287,6 +287,7 @@ Settings LoadSettings()
     settings.preset = Resolve(value);
 
     settings.autoSavePresets = !ini.Get("HOST", "AutoSavePresets", value) || value != "0";
+    settings.skipTitleBar = !ini.Get("HOST", "SkipTitleBar", value) || value != "0";
 
     if ((ini.Changed() || !existed) && !WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.c_str());
@@ -304,6 +305,9 @@ bool SaveSettings(const Settings& settings)
     ini.Set("GENERAL", "PresetPath", Relative(settings.preset));
     ini.Set("GENERAL", "PreprocessorDefinitions", FormatDefinitions(settings.definitions));
     ini.Set("HOST", "AutoSavePresets", settings.autoSavePresets ? "1" : "0");
+#ifdef __APPLE__
+    ini.Set("HOST", "SkipTitleBar", settings.skipTitleBar ? "1" : "0");
+#endif
     if (WriteFile(path, ini.Text()))
         return true;
     Log(LogLevel::Warning, "Could not write %s.", path.c_str());

@@ -1600,12 +1600,42 @@ std::string CaptureError()
     return capture.error;
 }
 
+bool CaptureStoppedByUser()
+{
+    return false;
+}
+
 bool HasCapturePermission()
 {
     return true;
 }
 
 void RequestCapturePermission()
+{
+}
+
+bool Relaunch()
+{
+    return false;
+}
+
+// X11 reports a window's content area without its frame, and has no layers to keep the overlay above.
+int WindowLayer(WindowId)
+{
+    return 0;
+}
+
+bool WindowFillsScreen(WindowId)
+{
+    return false;
+}
+
+bool WindowHasTitleBar(WindowId)
+{
+    return false;
+}
+
+void SetSkipTitleBar(bool)
 {
 }
 

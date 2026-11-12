@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <optional>
 #include <thread>
 
 namespace
@@ -172,9 +173,13 @@ int Render(const char* input, const char* preset, const char* output, bool gpuSo
 
 int main(int argc, char** argv)
 {
+    bool relaunched = false;
     for (int i = 1; i < argc; ++i)
     {
-        if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h"))
+        // Started by platform::Relaunch, while the Unishade that asked for it quits.
+        if (!strcmp(argv[i], "--relaunch"))
+            relaunched = true;
+        else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h"))
         {
             Usage();
             return 0;
@@ -228,9 +233,16 @@ int main(int argc, char** argv)
     if (!HaveDataDirectory())
         return 1;
 
-    // One host at a time, like the mutex on Windows.
-    const FileLock instance(DataDirectory() / "unishade.lock");
-    if (instance.Busy())
+    // One host at a time, like the mutex on Windows. A restarted one waits a few seconds for the one before it to quit.
+    const fs::path lockPath = DataDirectory() / "unishade.lock";
+    std::optional<FileLock> instance;
+    instance.emplace(lockPath);
+    for (int wait = 0; relaunched && instance->Busy() && wait < 100; ++wait)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        instance.emplace(lockPath);
+    }
+    if (instance->Busy())
     {
         fprintf(stderr, "Unishade is already running.\n");
         return 0;
@@ -238,8 +250,8 @@ int main(int argc, char** argv)
 
     InitLog();
     // Where locks do not work, such as on some network file systems, a second Unishade cannot be told apart.
-    if (!instance.Locked())
-        Log(LogLevel::Warning, "Could not lock %s: %s.", (DataDirectory() / "unishade.lock").c_str(), instance.Error().c_str());
+    if (!instance->Locked())
+        Log(LogLevel::Warning, "Could not lock %s: %s.", lockPath.c_str(), instance->Error().c_str());
     glfwSetErrorCallback([](int code, const char* description) { Log(LogLevel::Warning, "GLFW error %d: %s", code, description); });
 #ifndef __APPLE__
     // Only X11 lets the overlay sit over another program's window.

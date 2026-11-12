@@ -38,6 +38,9 @@ bool App::Init(std::string& error)
     settings = LoadSettings();
     Log(LogLevel::Info, "Settings: auto_save=%d, preset=%s, definitions=%s.", settings.autoSavePresets, settings.preset.c_str(),
         FormatDefinitions(settings.definitions).c_str());
+#ifdef __APPLE__
+    Log(LogLevel::Info, "Settings: skip_title_bar=%d.", settings.skipTitleBar);
+#endif
     for (const fs::path& path : settings.effectPaths)
         Log(LogLevel::Info, "Effect search path: %s.", path.c_str());
     for (const fs::path& path : settings.texturePaths)
@@ -56,6 +59,7 @@ bool App::Init(std::string& error)
 
     if (!platform::Init(error) || !gpu.Init(false, error))
         return false;
+    platform::SetSkipTitleBar(settings.skipTitleBar);
     if (!runtime.Init(settings))
     {
         error = "Could not prepare the graphics card for effects.";
@@ -285,11 +289,20 @@ void App::UpdateTarget()
     else if (active && !platform::Capturing())
     {
         const platform::WindowId failed = active->id;
+        const bool stoppedByUser = platform::CaptureStoppedByUser();
         lastCaptureError = platform::CaptureError();
         WarnCaptureError();
         StopCapture();
         failingWindow = failed;
         captureRetry = Now() + 2;
+        if (stoppedByUser)
+        {
+            // Starting again at once would undo what the user did, so effects turn off as with the overlay shortcut.
+            // The launcher then says how to turn them back on.
+            ToggleOverlay();
+            lastCaptureError = "Recording was stopped from the menu bar, so effects are off.";
+            return;
+        }
     }
 
     // Nothing else is looked for while the game is in front or the menu is open, or while a picked window is.
@@ -584,6 +597,9 @@ void App::ToggleOverlay()
     // Turned on or off by hand, so what goes wrong next is worth logging again.
     failingWindow = 0;
     loggedCaptureError.clear();
+    // Such as recording stopped from the menu bar, which turning effects back on answers.
+    if (captureEnabled)
+        lastCaptureError.clear();
     Log(LogLevel::Info, captureEnabled ? "Overlay on." : "Overlay off. Frame capture stopped.");
 }
 

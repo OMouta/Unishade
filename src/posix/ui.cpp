@@ -1152,6 +1152,19 @@ void GeneralSettings(App& app)
         SaveSettings(app.settings);
     }
 
+#ifdef __APPLE__
+    ImGui::Dummy(ImVec2(0, S(14)));
+    Heading("GAME WINDOW");
+    if (SwitchRow("titlebar", app.settings.skipTitleBar, "Skip the title bar",
+                  "Effects leave a windowed game's title bar alone. Turn off for borderless games in a window."))
+    {
+        app.settings.skipTitleBar = !app.settings.skipTitleBar;
+        platform::SetSkipTitleBar(app.settings.skipTitleBar);
+        SaveSettings(app.settings);
+        Log(LogLevel::Info, "Settings: skip_title_bar=%d.", app.settings.skipTitleBar);
+    }
+#endif
+
     ImGui::Dummy(ImVec2(0, S(14)));
     Heading("EFFECTS");
     for (const fs::path& path : app.settings.effectPaths)
@@ -1537,6 +1550,8 @@ struct LauncherState
     std::string renameProblem;
     int recording = -1; // the shortcut waiting for its keys
     std::string shortcutError;
+    // Screen recording was asked for, so a restart can make it count.
+    bool permissionRequested = false;
     // Whether the picked window is still open, asked now and then.
     bool selectedOpen = true;
     double selectedChecked = -10;
@@ -1901,12 +1916,31 @@ void DescribeCards(App& app, launcher::Model& model)
         launcherState.cards.push_back(std::move(actions));
     };
     if (!platform::HasCapturePermission())
-        card({ .title = "Unishade needs to record the screen",
-               .text = "macOS asks before a program can copy another program's window. Allow Unishade under Privacy & Security, Screen & System "
-                       "Audio Recording, then open Unishade again.",
-               .attention = true,
-               .buttons = { "Allow screen recording" } },
-             { [] { platform::RequestCapturePermission(); } });
+    {
+        const auto request = [] {
+            platform::RequestCapturePermission();
+            launcherState.permissionRequested = true;
+        };
+        // macOS counts the permission only once Unishade starts again.
+        const auto restart = [&app] {
+            if (platform::Relaunch())
+                glfwSetWindowShouldClose(app.launcher.window, GLFW_TRUE);
+            else
+                Report(LogLevel::Warning, "Could not start Unishade again. Quit it and open it again.");
+        };
+        launcher::Card permission{ .title = "Unishade needs to record the screen",
+                                   .text = "macOS asks before a program can copy another program's window. Allow Unishade under Privacy & Security, "
+                                           "Screen & System Audio Recording, then restart Unishade.",
+                                   .attention = true,
+                                   .buttons = { "Allow screen recording" } };
+        if (launcherState.permissionRequested)
+        {
+            permission.buttons = { "Restart Unishade", "Allow screen recording" };
+            card(std::move(permission), { restart, request });
+        }
+        else
+            card(std::move(permission), { request });
+    }
     if (app.runtime.Loading())
     {
         const auto [loaded, total] = app.runtime.LoadingProgress();

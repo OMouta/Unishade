@@ -42,15 +42,30 @@ struct Rect
 bool Init(std::string& error);
 void Shutdown();
 
-// Visible top-level windows of other programs with a title, sorted by title.
+// Visible top-level windows of other programs with a title, sorted by title. On macOS this includes windows that cover
+// a screen on another Space, such as a game in full screen, which WindowBounds reports as hidden until its Space shows.
 std::vector<Window> ListWindows();
 // The window as ListWindows lists it, or nothing when ListWindows would leave it out.
 std::optional<Window> ListedWindow(WindowId window);
 // The processes that own a top-level window, shown or not.
 std::set<int> WindowOwners();
 bool WindowExists(const Window& window);
-// False when the window is minimized, hidden or gone.
+// False when the window is minimized, hidden, on another Space or gone. On macOS a window's title bar is left out
+// unless SetSkipTitleBar turned that off, the same part the captured frames hold.
 bool WindowBounds(WindowId window, Rect& bounds);
+// The window's layer on macOS, kCGWindowLayer: 0 for normal windows, higher for windows kept above them, such as a
+// Wine game in full screen. 0 when the window is gone, and always 0 on X11.
+int WindowLayer(WindowId window);
+// Whether the window covers a whole screen, as a game in full screen or a borderless one does, so it has no title bar
+// and no rounded corners. Always false on X11.
+bool WindowFillsScreen(WindowId window);
+// Whether WindowBounds and the captured frames leave out a title bar at the top of the window. macOS gives no way to
+// tell another program's title bar without the accessibility permission, so a window on the normal layer that does
+// not cover its screen is taken to have the standard one. Always false on X11.
+bool WindowHasTitleBar(WindowId window);
+// Turns leaving out the title bar on or off, for borderless games in a window, which have none. On by default. Takes
+// effect from the next frame without restarting capture. Does nothing on X11.
+void SetSkipTitleBar(bool skip);
 // The window that has keyboard focus, or 0. On macOS, the frontmost window of the frontmost program.
 WindowId ForegroundWindow();
 // Whether the program that owns the window is in front. Games can have more than one window.
@@ -111,10 +126,18 @@ void SetCaptureIdle(bool idle);
 bool TakeFrame(Frame& frame);
 // Set when capture stopped by itself, such as when the window closed. Cleared by StartCapture.
 std::string CaptureError();
+// Whether capture stopped because the user stopped it, as macOS lets them from the menu bar. Starting again at once
+// would undo that. Cleared by StartCapture. Always false on X11.
+bool CaptureStoppedByUser();
 
-// macOS asks for permission to record the screen. Linux always has it.
+// macOS asks for permission to record the screen. Linux always has it. On macOS a permission given in System Settings
+// usually counts only once Unishade starts again, which Relaunch does.
 bool HasCapturePermission();
+// Shows the system's request the first time, and opens System Settings at the setting after that.
 void RequestCapturePermission();
+// Starts a new Unishade, which waits for this one to quit, and returns whether it started. The caller then quits.
+// Not needed on X11, where it does nothing and returns false.
+bool Relaunch();
 
 // Global shortcuts. The callback runs on the main thread from PollHotkeys, with pressed false when the key is let
 // go.

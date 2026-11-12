@@ -6,6 +6,8 @@
 #include "platform.h"
 #include "gpu.h"
 #include "log.h"
+#include "macho.h"
+#include "window_rules.h"
 
 #define GLFW_EXPOSE_NATIVE_COCOA
 #include <GLFW/glfw3.h>
@@ -32,6 +34,7 @@
 #include <cmath>
 #include <map>
 #include <thread>
+#include <vector>
 
 extern char** environ;
 
@@ -46,6 +49,7 @@ struct CaptureState
     platform::Frame ready;
     uint64_t serial = 0;
     std::string error;
+    bool stoppedByUser = false;
     std::atomic<bool> running = false;
     std::atomic<uint64_t> generation = 0;
     uint32_t configWidth = 0;
@@ -53,19 +57,85 @@ struct CaptureState
     bool reconfiguring = false;
     std::atomic<bool> onGpu = false; // frames go to the main thread as IOSurfaces instead of pixels
     std::atomic<bool> idle = false;  // nobody sees the frames, so a few a second do
+    // The height in points of the title bar the frames leave out, or 0. Only the main thread can tell, since it needs
+    // the screens, so it sets this and the capture queue reads it for each frame.
+    std::atomic<int> titleInset = 0;
+    // ScreenCaptureKit said the user refused to let Unishade record the screen, which CGPreflightScreenCaptureAccess
+    // does not notice while Unishade runs.
+    std::atomic<bool> declined = false;
 };
 CaptureState capture;
 
-void FailCapture(uint64_t generation, const std::string& message)
+void FailCapture(uint64_t generation, const std::string& message, bool stoppedByUser = false)
 {
     {
         std::lock_guard lock(capture.mutex);
         if (generation != capture.generation)
             return;
         capture.error = message;
+        capture.stoppedByUser = stoppedByUser;
         capture.running = false;
     }
     glfwPostEmptyEvent();
+}
+
+// Stops capture for a ScreenCaptureKit error, saying what it means for Unishade. The code goes to the log too, since
+// the system's descriptions of these errors are vague.
+void FailWithError(uint64_t generation, NSError* error, const char* what)
+{
+    if (generation != capture.generation)
+        return;
+    const NSInteger code = error ? error.code : 0;
+    Log(LogLevel::Info, "%s: domain=%s, code=%ld.", what, error ? error.domain.UTF8String : "none", long(code));
+    if (error && [error.domain isEqualToString:SCStreamErrorDomain])
+        switch (code)
+        {
+        case SCStreamErrorUserDeclined:
+            capture.declined = true;
+            FailCapture(generation, "Unishade needs permission to record the screen.");
+            return;
+        case SCStreamErrorUserStopped:
+            FailCapture(generation, "Recording was stopped from the menu bar.", true);
+            return;
+        case SCStreamErrorNoCaptureSource:
+            FailCapture(generation, "The game's window closed.");
+            return;
+        default:
+            // Such as the connection to the capture service breaking, or macOS 15 stopping the stream itself. The
+            // host starts capture again after a moment. A stop Unishade asked for never comes here, since StopStream
+            // ignores its result, so even an error about stopping means this stream is dead.
+            break;
+        }
+    FailCapture(generation, std::string(what) + ": " + (error ? error.localizedDescription.UTF8String : "unknown error"));
+}
+
+// One configuration for starting and resizing the stream, so the two never differ.
+SCStreamConfiguration* StreamConfiguration(size_t width, size_t height)
+{
+    SCStreamConfiguration* config = [[SCStreamConfiguration alloc] init];
+    config.width = width;
+    config.height = height;
+    config.pixelFormat = kCVPixelFormatType_32BGRA;
+    config.colorSpaceName = kCGColorSpaceSRGB;
+    config.showsCursor = NO;
+    // As fast as the game draws, so the overlay adds no delay of its own.
+    config.minimumFrameInterval = CMTimeMake(1, 240);
+    config.queueDepth = 8;
+    // The background stays clear and shouldBeOpaque stays off. Only the rounded corners of a window are not covered
+    // by it, and the host makes every pixel opaque, which turns them black. shouldBeOpaque would make them white,
+    // which effects that spread light, such as bloom, would carry into the picture.
+    if (@available(macOS 14.0, *))
+    {
+        config.ignoreShadowsSingleWindow = YES;
+        // A window partly off the screen is captured whole, so the frame keeps the window's size and the overlay's
+        // picture lines up with it.
+        config.ignoreGlobalClipSingleWindow = YES;
+        // From the screen's pixels rather than its points, so a Retina screen gives the game's full detail.
+        config.captureResolution = SCCaptureResolutionBest;
+    }
+    // includeChildWindows stays as it is: it only applies to display and application filters, and a filter of one
+    // window has none of the game's other windows in it either way.
+    return config;
 }
 } // namespace
 
@@ -102,18 +172,22 @@ void FailCapture(uint64_t generation, const std::string& message)
         return;
 
     const size_t bufferWidth = CVPixelBufferGetWidth(image), bufferHeight = CVPixelBufferGetHeight(image);
-    // The window's part of the frame. It is smaller than the frame while the stream catches up with a resize.
-    size_t x0 = 0, y0 = 0, width = bufferWidth, height = bufferHeight;
+    if (bufferWidth == 0 || bufferHeight == 0)
+        return;
+    // The window's part of the frame. It is smaller than the frame while the stream catches up with a resize. The
+    // stream copies the whole window, so its title bar is cut off here, as WindowBounds leaves it out of the overlay.
+    window_rules::Crop crop{ 0, 0, bufferWidth, bufferHeight };
     CGRect content = CGRectZero;
     NSDictionary* rect = info[SCStreamFrameInfoContentRect];
     const double scaleFactor = [info[SCStreamFrameInfoScaleFactor] doubleValue];
     const double contentScale = [info[SCStreamFrameInfoContentScale] doubleValue];
     if (rect && scaleFactor > 0 && CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)rect, &content))
     {
-        x0 = std::min<size_t>(bufferWidth - 1, size_t(std::lround(content.origin.x * scaleFactor)));
-        y0 = std::min<size_t>(bufferHeight - 1, size_t(std::lround(content.origin.y * scaleFactor)));
-        width = std::clamp<size_t>(size_t(std::lround(content.size.width * scaleFactor)), 1, bufferWidth - x0);
-        height = std::clamp<size_t>(size_t(std::lround(content.size.height * scaleFactor)), 1, bufferHeight - y0);
+        // Each of the window's points is contentScale of the frame's points, which are scaleFactor pixels each.
+        const double pixelsPerPoint = scaleFactor * (contentScale > 0 ? contentScale : 1);
+        crop = window_rules::ContentCrop(bufferWidth, bufferHeight,
+                                         { content.origin.x, content.origin.y, content.size.width, content.size.height }, scaleFactor,
+                                         window_rules::TitleRows(capture.titleInset, pixelsPerPoint));
 
         // The window's real size in pixels. A stream the wrong size scales the window, so it is set again.
         if (contentScale > 0)
@@ -129,16 +203,7 @@ void FailCapture(uint64_t generation, const std::string& message)
             }
             if (reconfigure)
             {
-                SCStreamConfiguration* config = [[SCStreamConfiguration alloc] init];
-                config.width = wantedWidth;
-                config.height = wantedHeight;
-                config.pixelFormat = kCVPixelFormatType_32BGRA;
-                config.showsCursor = NO;
-                config.minimumFrameInterval = CMTimeMake(1, 240);
-                config.queueDepth = 8;
-                config.colorSpaceName = kCGColorSpaceSRGB;
-                if (@available(macOS 14.0, *))
-                    config.ignoreShadowsSingleWindow = YES;
+                SCStreamConfiguration* config = StreamConfiguration(wantedWidth, wantedHeight);
                 const uint64_t generation = self.generation;
                 [stream updateConfiguration:config
                           completionHandler:^(NSError* error) {
@@ -156,6 +221,7 @@ void FailCapture(uint64_t generation, const std::string& message)
         }
     }
 
+    const size_t x0 = crop.x, y0 = crop.y, width = crop.width, height = crop.height;
     platform::Frame& back = _back;
     back.width = uint32_t(width);
     back.height = uint32_t(height);
@@ -214,7 +280,7 @@ void FailCapture(uint64_t generation, const std::string& message)
 
 - (void)stream:(SCStream*)stream didStopWithError:(NSError*)error
 {
-    FailCapture(self.generation, std::string("Capture stopped: ") + error.localizedDescription.UTF8String);
+    FailWithError(self.generation, error, "Capture stopped");
 }
 @end
 
@@ -224,6 +290,12 @@ namespace
 {
 UnishadeStreamOutput* output = nil;
 dispatch_queue_t captureQueue = nullptr;
+// The window being captured, for keeping capture.titleInset up to date. Main thread only.
+CGWindowID capturedWindow = kCGNullWindowID;
+bool skipTitleBar = true;
+// Held while capture runs. Unishade's windows are an overlay that never has focus and a launcher that is often
+// covered, which App Nap would otherwise take as a program nobody uses and slow down.
+id<NSObject> activity = nil;
 
 // Stops a stream without waiting for it. The block keeps the stream and its output alive until it has stopped and
 // the callbacks it queued have run, which find their generation stale and hand nothing over.
@@ -270,6 +342,8 @@ VkImage Import(IOSurfaceRef surface)
     // A resize brings new surfaces, so the old ones are dropped instead of piling up.
     if (imported.size() >= 12)
     {
+        // Waiting for the graphics card holds up a frame, which shows in the log if the game stutters.
+        Log(LogLevel::Info, "Dropping %zu captured surfaces on the graphics card for new ones.", imported.size());
         vkDeviceWaitIdle(gpu.device);
         ReleaseImported();
     }
@@ -359,13 +433,143 @@ bool Bounds(NSDictionary* info, Rect& bounds)
     return true;
 }
 
+// A screen in CoreGraphics' coordinates, with its scale, how far down full-screen windows may start and the height of
+// its menu bar, 0 while it has none or the menu bar hides itself.
+struct Screen
+{
+    window_rules::Box frame;
+    double scale = 1;
+    double safeTop = 0;
+    double menuBar = 0;
+};
+
+// Asked again at most once a second, since screens rarely change and the main loop asks often.
+const std::vector<Screen>& Screens()
+{
+    static std::vector<Screen> screens;
+    static std::chrono::steady_clock::time_point checked;
+    const auto now = std::chrono::steady_clock::now();
+    if (!screens.empty() && now - checked < std::chrono::seconds(1))
+        return screens;
+    checked = now;
+    screens.clear();
+    NSArray<NSScreen*>* all = NSScreen.screens;
+    // AppKit counts up from the bottom left corner of the first screen, CoreGraphics down from its top left corner.
+    const double top = all.count > 0 ? NSMaxY(all[0].frame) : 0;
+    for (NSScreen* screen in all)
+    {
+        const NSRect frame = screen.frame;
+        screens.push_back({ { frame.origin.x, top - NSMaxY(frame), frame.size.width, frame.size.height }, screen.backingScaleFactor,
+                            screen.safeAreaInsets.top, std::max(NSMaxY(frame) - NSMaxY(screen.visibleFrame), 0.0) });
+    }
+    return screens;
+}
+
+window_rules::Box ToBox(const Rect& rect)
+{
+    return { double(rect.x), double(rect.y), double(rect.width), double(rect.height) };
+}
+
+bool FillsScreen(const Rect& bounds)
+{
+    const window_rules::Box box = ToBox(bounds);
+    // One reference, since asking again can make a new list.
+    const std::vector<Screen>& screens = Screens();
+    return std::any_of(screens.begin(), screens.end(),
+                       [&](const Screen& screen) { return window_rules::CoversScreen(box, screen.frame, screen.safeTop, screen.menuBar); });
+}
+
+// The scale of the screen that shows most of the window, or of the first screen when none does.
+double ScreenScale(const Rect& bounds)
+{
+    const CGRect window = CGRectMake(bounds.x, bounds.y, bounds.width, bounds.height);
+    const std::vector<Screen>& screens = Screens();
+    double scale = screens.empty() ? 2 : screens[0].scale, most = 0;
+    for (const Screen& screen : screens)
+    {
+        const CGRect shown = CGRectIntersection(window, CGRectMake(screen.frame.x, screen.frame.y, screen.frame.width, screen.frame.height));
+        const double area = CGRectIsNull(shown) ? 0 : shown.size.width * shown.size.height;
+        if (area > most)
+        {
+            most = area;
+            scale = screen.scale;
+        }
+    }
+    return scale;
+}
+
+// Whether the process is a program with a Dock icon, as games are. Programs without one draw the Dock, the menu bar,
+// status items and overlays. Kept for a few seconds, since window lists ask about many windows at a time.
+bool RegularProgram(int pid)
+{
+    static std::map<int, std::pair<bool, std::chrono::steady_clock::time_point>> known;
+    const auto now = std::chrono::steady_clock::now();
+    if (const auto found = known.find(pid); found != known.end() && now - found->second.second < std::chrono::seconds(5))
+        return found->second.first;
+    if (known.size() > 256)
+        known.clear();
+    NSRunningApplication* program = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+    const bool regular = program && program.activationPolicy == NSApplicationActivationPolicyRegular;
+    known[pid] = { regular, now };
+    return regular;
+}
+
+// Whether macOS draws the program's windows with macOS 26's look, a taller title bar and rounder corners. macOS 26
+// gives programs built with an older SDK the earlier look, so this reads the SDK from the program's executable. Wine
+// games are drawn by Wine, whose executable decides. An unreadable executable counts as the earlier look. Kept per
+// process and checked again now and then, since process numbers are reused.
+bool NewLook(int pid)
+{
+    // macOS 26 tells programs built with an older SDK that it is 16, which the check counts too.
+    if (@available(macOS 16.0, *))
+    {
+        static std::map<int, std::pair<bool, std::chrono::steady_clock::time_point>> known;
+        const auto now = std::chrono::steady_clock::now();
+        if (const auto found = known.find(pid); found != known.end() && now - found->second.second < std::chrono::seconds(10))
+            return found->second.first;
+        if (known.size() > 64)
+            known.clear();
+        const std::string executable = ProcessExecutable(pid);
+        const uint32_t sdk = macho::SdkMajorOfFile(executable);
+        const bool look = sdk >= 26;
+        if (known.find(pid) == known.end())
+            Log(LogLevel::Info, "Window look: pid=%d, sdk=%u, new_look=%d, executable=%s.", pid, sdk, look, executable.c_str());
+        known[pid] = { look, now };
+        return look;
+    }
+    return false;
+}
+
+// The height in points of the title bar WindowBounds and the frames leave out, or 0. No public interface tells
+// another program's content area without the accessibility permission, so this is a rule: a window has the standard
+// title bar when it is on the normal layer and does not cover a screen. A window in full screen, native or
+// borderless, covers its screen, and Wine raises its full-screen windows above the normal layer. A borderless game in
+// a window would lose its top strip by this rule, which is why Settings can turn it off.
+int TitleInset(NSDictionary* info)
+{
+    // The standard title bar's height for the game's look. Asking AppKit would answer for Unishade's own SDK instead.
+    const int standard = NewLook([info[(id)kCGWindowOwnerPID] intValue]) ? 32 : 28;
+    Rect bounds;
+    if (!skipTitleBar || [info[(id)kCGWindowLayer] intValue] != window_rules::kNormalLevel || !Bounds(info, bounds) || bounds.height <= standard ||
+        FillsScreen(bounds))
+        return 0;
+    return std::max(standard, 0);
+}
+
 // The window as ListWindows lists it.
 std::optional<Window> Listed(NSDictionary* info)
 {
     const int pid = [info[(id)kCGWindowOwnerPID] intValue];
+    const int layer = [info[(id)kCGWindowLayer] intValue];
     Rect bounds;
-    if ([info[(id)kCGWindowLayer] intValue] != 0 || pid == getpid() || [info[(id)kCGWindowAlpha] doubleValue] <= 0 || !Bounds(info, bounds) ||
-        bounds.width < 64 || bounds.height < 64)
+    if (pid == getpid() || [info[(id)kCGWindowAlpha] doubleValue] <= 0 || !Bounds(info, bounds) || bounds.width < 64 || bounds.height < 64)
+        return std::nullopt;
+    // A game on its own full-screen Space is off the screen while another Space shows, the same as a minimized or
+    // hidden window, which the window list cannot tell apart. Of those, only a window that covers a screen is listed,
+    // since that is what a game on its own Space looks like and the hidden windows programs keep around are not.
+    if (![info[(id)kCGWindowIsOnscreen] boolValue] && !(FillsScreen(bounds) && RegularProgram(pid)))
+        return std::nullopt;
+    if (!window_rules::GameLayer(layer, layer != window_rules::kNormalLevel && RegularProgram(pid), CGShieldingWindowLevel()))
         return std::nullopt;
     // Window titles need the screen recording permission. The program's name stands in without it.
     NSString* name = info[(id)kCGWindowName];
@@ -468,18 +672,27 @@ OSStatus OnHotkey(EventHandlerCallRef, EventRef event, void*)
     return noErr;
 }
 
-void Spawn(const char* program, const std::string& argument)
+bool Spawn(const char* program, const std::vector<std::string>& arguments)
 {
-    const char* argv[] = { program, argument.c_str(), nullptr };
+    std::vector<const char*> argv{ program };
+    for (const std::string& argument : arguments)
+        argv.push_back(argument.c_str());
+    argv.push_back(nullptr);
     pid_t pid;
-    if (posix_spawnp(&pid, program, nullptr, nullptr, const_cast<char* const*>(argv), environ) == 0)
-        std::thread([pid] { waitpid(pid, nullptr, 0); }).detach();
+    if (posix_spawnp(&pid, program, nullptr, nullptr, const_cast<char* const*>(argv.data()), environ) != 0)
+        return false;
+    std::thread([pid] { waitpid(pid, nullptr, 0); }).detach();
+    return true;
 }
 } // namespace
 
 bool Init(std::string&)
 {
-    captureQueue = dispatch_queue_create("me.unishade.capture", DISPATCH_QUEUE_SERIAL);
+    // Frames are what the user looks at, so their queue runs before other work. Each frame's Objective-C objects are
+    // released when it is done, not whenever the thread's pool is drained.
+    dispatch_queue_attr_t attributes = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0);
+    attributes = dispatch_queue_attr_make_with_autorelease_frequency(attributes, DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM);
+    captureQueue = dispatch_queue_create("me.unishade.capture", attributes);
     const EventTypeSpec types[] = { { kEventClassKeyboard, kEventHotKeyPressed }, { kEventClassKeyboard, kEventHotKeyReleased } };
     InstallApplicationEventHandler(&OnHotkey, 2, types, nullptr, &hotkeyHandler);
     return true;
@@ -495,56 +708,130 @@ void Shutdown()
     hotkeyHandler = nullptr;
 }
 
+// These functions run from the host's C++ loop, outside any autorelease pool AppKit drains, so each that makes
+// Objective-C objects has a pool of its own. Without one they would pile up until GLFW next handles events.
+
 std::vector<Window> ListWindows()
 {
-    std::vector<Window> windows;
-    for (NSDictionary* info in WindowList(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID))
-        if (std::optional<Window> window = Listed(info))
-            windows.push_back(std::move(*window));
-    std::sort(windows.begin(), windows.end(), [](const Window& a, const Window& b) { return strcasecmp(a.title.c_str(), b.title.c_str()) < 0; });
-    return windows;
+    @autoreleasepool
+    {
+        std::vector<Window> windows;
+        // Every window, since a game on its own full-screen Space is off the screen while another Space shows.
+        for (NSDictionary* info in WindowList(kCGWindowListOptionAll | kCGWindowListExcludeDesktopElements, kCGNullWindowID))
+            if (std::optional<Window> window = Listed(info))
+                windows.push_back(std::move(*window));
+        std::sort(windows.begin(), windows.end(), [](const Window& a, const Window& b) { return strcasecmp(a.title.c_str(), b.title.c_str()) < 0; });
+        return windows;
+    }
 }
 
 std::optional<Window> ListedWindow(WindowId window)
 {
-    NSDictionary* info = WindowInfo(CGWindowID(window));
-    return info && [info[(id)kCGWindowIsOnscreen] boolValue] ? Listed(info) : std::nullopt;
+    @autoreleasepool
+    {
+        NSDictionary* info = WindowInfo(CGWindowID(window));
+        return info ? Listed(info) : std::nullopt;
+    }
 }
 
 std::set<int> WindowOwners()
 {
-    std::set<int> owners;
-    for (NSDictionary* info in WindowList(kCGWindowListOptionAll, kCGNullWindowID))
-        owners.insert([info[(id)kCGWindowOwnerPID] intValue]);
-    return owners;
+    @autoreleasepool
+    {
+        std::set<int> owners;
+        for (NSDictionary* info in WindowList(kCGWindowListOptionAll, kCGNullWindowID))
+            owners.insert([info[(id)kCGWindowOwnerPID] intValue]);
+        return owners;
+    }
 }
 
 bool WindowExists(const Window& window)
 {
-    NSDictionary* info = WindowInfo(CGWindowID(window.id));
-    return info && [info[(id)kCGWindowOwnerPID] intValue] == window.pid;
+    @autoreleasepool
+    {
+        NSDictionary* info = WindowInfo(CGWindowID(window.id));
+        return info && [info[(id)kCGWindowOwnerPID] intValue] == window.pid;
+    }
 }
 
-// The whole window, title bar included, since that is what ScreenCaptureKit copies of a single window.
 bool WindowBounds(WindowId window, Rect& bounds)
 {
-    NSDictionary* info = WindowInfo(CGWindowID(window));
-    return info && [info[(id)kCGWindowIsOnscreen] boolValue] && Bounds(info, bounds) && bounds.width > 0 && bounds.height > 0;
+    @autoreleasepool
+    {
+        NSDictionary* info = WindowInfo(CGWindowID(window));
+        if (!info || ![info[(id)kCGWindowIsOnscreen] boolValue] || !Bounds(info, bounds))
+            return false;
+        // The same title bar the frames leave out, decided at the same time.
+        const int inset = TitleInset(info);
+        if (window == capturedWindow)
+            capture.titleInset = inset;
+        bounds.y += inset;
+        bounds.height -= inset;
+        return bounds.width > 0 && bounds.height > 0;
+    }
+}
+
+int WindowLayer(WindowId window)
+{
+    @autoreleasepool
+    {
+        NSDictionary* info = WindowInfo(CGWindowID(window));
+        return info ? [info[(id)kCGWindowLayer] intValue] : 0;
+    }
+}
+
+bool WindowFillsScreen(WindowId window)
+{
+    @autoreleasepool
+    {
+        NSDictionary* info = WindowInfo(CGWindowID(window));
+        Rect bounds;
+        return info && Bounds(info, bounds) && FillsScreen(bounds);
+    }
+}
+
+bool WindowHasTitleBar(WindowId window)
+{
+    @autoreleasepool
+    {
+        NSDictionary* info = WindowInfo(CGWindowID(window));
+        return info && TitleInset(info) > 0;
+    }
+}
+
+void SetSkipTitleBar(bool skip)
+{
+    skipTitleBar = skip;
+    // The next frame is cut to match.
+    if (capturedWindow != kCGNullWindowID)
+        @autoreleasepool
+        {
+            if (NSDictionary* info = WindowInfo(capturedWindow))
+                capture.titleInset = TitleInset(info);
+        }
 }
 
 WindowId ForegroundWindow()
 {
-    const int pid = NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
-    // The list is in front-to-back order, so the first window of the program in front is its front window.
-    for (NSDictionary* info in WindowList(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID))
-        if ([info[(id)kCGWindowOwnerPID] intValue] == pid && [info[(id)kCGWindowLayer] intValue] == 0)
-            return [info[(id)kCGWindowNumber] unsignedLongLongValue];
-    return 0;
+    @autoreleasepool
+    {
+        const int pid = NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
+        // The list is in front-to-back order, so the first window of the program in front is its front window. One
+        // above the normal layer, such as a Wine game in full screen, counts where ListWindows would list it.
+        for (NSDictionary* info in WindowList(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID))
+            if ([info[(id)kCGWindowOwnerPID] intValue] == pid &&
+                ([info[(id)kCGWindowLayer] intValue] == window_rules::kNormalLevel || Listed(info)))
+                return [info[(id)kCGWindowNumber] unsignedLongLongValue];
+        return 0;
+    }
 }
 
 bool ProcessInFront(int pid)
 {
-    return NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == pid;
+    @autoreleasepool
+    {
+        return NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == pid;
+    }
 }
 
 void Activate(const Window& window)
@@ -665,109 +952,122 @@ void FocusOverlay(GLFWwindow* window)
 
 bool StartCapture(const Window& window, std::string& error)
 {
-    StopCapture();
-    Rect bounds;
-    if (!WindowBounds(window.id, bounds))
+    @autoreleasepool
     {
-        error = "The window is not visible.";
-        return false;
-    }
-    capture.onGpu = gpu.metalObjects;
-    uint64_t generation = 0;
-    {
-        std::lock_guard lock(capture.mutex);
-        generation = ++capture.generation;
-        capture.error.clear();
-        capture.ready = {};
-        capture.reconfiguring = false;
-        capture.running = true;
-    }
-    const CGWindowID windowId = CGWindowID(window.id);
+        StopCapture();
+        // A window on another Space can be captured too. The overlay stays hidden until it shows.
+        NSDictionary* info = WindowInfo(CGWindowID(window.id));
+        Rect bounds;
+        if (!info || [info[(id)kCGWindowOwnerPID] intValue] != window.pid || !Bounds(info, bounds))
+        {
+            error = "The window has closed.";
+            return false;
+        }
+        // macOS 13 cannot ask the filter for its scale, so it is that of the screen with most of the window. Asked here,
+        // since NSScreen belongs to the main thread.
+        const double screenScale = ScreenScale(bounds);
+        capturedWindow = CGWindowID(window.id);
+        capture.titleInset = TitleInset(info);
+        if (!activity)
+            activity = [NSProcessInfo.processInfo beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep | NSActivityLatencyCritical
+                                                                    reason:@"Copying the game's window"];
+        capture.onGpu = gpu.metalObjects;
+        uint64_t generation = 0;
+        {
+            std::lock_guard lock(capture.mutex);
+            generation = ++capture.generation;
+            capture.error.clear();
+            capture.stoppedByUser = false;
+            capture.ready = {};
+            capture.reconfiguring = false;
+            capture.running = true;
+        }
+        const CGWindowID windowId = CGWindowID(window.id);
 
-    [SCShareableContent
-        getShareableContentExcludingDesktopWindows:YES
-                               onScreenWindowsOnly:NO
-                                 completionHandler:^(SCShareableContent* content, NSError* contentError) {
-                                   if (generation != capture.generation)
-                                       return;
-                                   if (!content)
-                                   {
-                                       FailCapture(generation, std::string("Could not list windows to capture: ") +
-                                                                   (contentError ? contentError.localizedDescription.UTF8String : "unknown error"));
-                                       return;
-                                   }
-                                   SCWindow* target = nil;
-                                   for (SCWindow* candidate in content.windows)
-                                       if (candidate.windowID == windowId)
-                                           target = candidate;
-                                   if (!target)
-                                   {
-                                       FailCapture(generation, "The game's window cannot be captured.");
-                                       return;
-                                   }
-                                   SCContentFilter* filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:target];
-                                   double scale = NSScreen.mainScreen.backingScaleFactor;
-                                   if (@available(macOS 14.0, *))
-                                       scale = filter.pointPixelScale;
-                                   SCStreamConfiguration* config = [[SCStreamConfiguration alloc] init];
-                                   config.width = size_t(std::lround(target.frame.size.width * scale));
-                                   config.height = size_t(std::lround(target.frame.size.height * scale));
-                                   config.pixelFormat = kCVPixelFormatType_32BGRA;
-                                   config.showsCursor = NO;
-                                   // As fast as the game draws, so the overlay adds no delay of its own.
-                                   config.minimumFrameInterval = CMTimeMake(1, 240);
-                                   config.queueDepth = 8;
-                                   config.colorSpaceName = kCGColorSpaceSRGB;
-                                   if (@available(macOS 14.0, *))
-                                       config.ignoreShadowsSingleWindow = YES;
-                                   {
-                                       std::lock_guard lock(capture.mutex);
-                                       capture.configWidth = uint32_t(config.width);
-                                       capture.configHeight = uint32_t(config.height);
-                                   }
+        [SCShareableContent
+            getShareableContentExcludingDesktopWindows:YES
+                                   onScreenWindowsOnly:NO
+                                     completionHandler:^(SCShareableContent* content, NSError* contentError) {
+                                       if (generation != capture.generation)
+                                           return;
+                                       if (!content)
+                                       {
+                                           FailWithError(generation, contentError, "Could not list windows to capture");
+                                           return;
+                                       }
+                                       SCWindow* target = nil;
+                                       for (SCWindow* candidate in content.windows)
+                                           if (candidate.windowID == windowId)
+                                               target = candidate;
+                                       if (!target)
+                                       {
+                                           FailCapture(generation, "The game's window cannot be captured.");
+                                           return;
+                                       }
+                                       SCContentFilter* filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:target];
+                                       double scale = screenScale;
+                                       if (@available(macOS 14.0, *))
+                                           scale = filter.pointPixelScale;
+                                       SCStreamConfiguration* config = StreamConfiguration(size_t(std::lround(target.frame.size.width * scale)),
+                                                                                           size_t(std::lround(target.frame.size.height * scale)));
+                                       {
+                                           std::lock_guard lock(capture.mutex);
+                                           capture.configWidth = uint32_t(config.width);
+                                           capture.configHeight = uint32_t(config.height);
+                                       }
 
-                                   UnishadeStreamOutput* handler = [[UnishadeStreamOutput alloc] init];
-                                   handler.generation = generation;
-                                   SCStream* stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:handler];
-                                   NSError* addError = nil;
-                                   if (![stream addStreamOutput:handler type:SCStreamOutputTypeScreen sampleHandlerQueue:captureQueue error:&addError])
-                                   {
-                                       FailCapture(generation, std::string("Could not capture the game: ") + addError.localizedDescription.UTF8String);
-                                       return;
-                                   }
-                                   handler.stream = stream;
-                                   dispatch_async(dispatch_get_main_queue(), ^{
-                                     // Stopped or replaced before it started.
-                                     if (generation != capture.generation)
-                                     {
-                                         StopStream(handler);
-                                         return;
-                                     }
-                                     output = handler;
-                                   });
-                                   [stream startCaptureWithCompletionHandler:^(NSError* startError) {
-                                     if (startError)
-                                         FailCapture(generation, std::string("Could not capture the game: ") + startError.localizedDescription.UTF8String);
-                                   }];
-                                 }];
-    return true;
+                                       UnishadeStreamOutput* handler = [[UnishadeStreamOutput alloc] init];
+                                       handler.generation = generation;
+                                       SCStream* stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:handler];
+                                       NSError* addError = nil;
+                                       if (![stream addStreamOutput:handler type:SCStreamOutputTypeScreen sampleHandlerQueue:captureQueue error:&addError])
+                                       {
+                                           FailWithError(generation, addError, "Could not capture the game");
+                                           return;
+                                       }
+                                       handler.stream = stream;
+                                       dispatch_async(dispatch_get_main_queue(), ^{
+                                         // Stopped or replaced before it started.
+                                         if (generation != capture.generation)
+                                         {
+                                             StopStream(handler);
+                                             return;
+                                         }
+                                         output = handler;
+                                       });
+                                       [stream startCaptureWithCompletionHandler:^(NSError* startError) {
+                                         if (startError)
+                                             FailWithError(generation, startError, "Could not capture the game");
+                                       }];
+                                     }];
+        return true;
+    }
 }
 
 void StopCapture()
 {
+    @autoreleasepool
     {
-        std::lock_guard lock(capture.mutex);
-        ++capture.generation;
-        capture.running = false;
-        capture.ready = {};
+        {
+            std::lock_guard lock(capture.mutex);
+            ++capture.generation;
+            capture.running = false;
+            capture.ready = {};
+        }
+        if (output)
+        {
+            StopStream(output);
+            output = nil;
+        }
+        capturedWindow = kCGNullWindowID;
+        if (activity)
+        {
+            [NSProcessInfo.processInfo endActivity:activity];
+            activity = nil;
+        }
+        // The host waited for the graphics card before stopping.
+        ReleaseImported();
     }
-    if (output)
-    {
-        StopStream(output);
-        output = nil;
-    }
-    // The host waited for the graphics card before stopping.
-    ReleaseImported();
 }
 
 bool Capturing()
@@ -782,6 +1082,14 @@ void SetCaptureIdle(bool idle)
 
 bool TakeFrame(Frame& frame)
 {
+    // Called on every pass of the main loop while capturing, so the title bar follows the window into and out of full
+    // screen even while the overlay is hidden and WindowBounds is not asked.
+    if (capturedWindow != kCGNullWindowID)
+        @autoreleasepool
+        {
+            if (NSDictionary* info = WindowInfo(capturedWindow))
+                capture.titleInset = TitleInset(info);
+        }
     {
         std::lock_guard lock(capture.mutex);
         if (capture.ready.serial <= frame.serial || (capture.ready.pixels.empty() && !capture.ready.hold))
@@ -808,16 +1116,60 @@ std::string CaptureError()
     return capture.error;
 }
 
+bool CaptureStoppedByUser()
+{
+    std::lock_guard lock(capture.mutex);
+    return capture.stoppedByUser;
+}
+
 bool HasCapturePermission()
 {
-    return CGPreflightScreenCaptureAccess();
+    // CGPreflightScreenCaptureAccess answers with what macOS told Unishade when it started, so a permission given
+    // later counts only after a restart, and one taken away shows only when ScreenCaptureKit refuses. The launcher
+    // asks every frame, so the answer is kept for a second, and for good once it is yes.
+    static bool granted = false;
+    static std::chrono::steady_clock::time_point checked;
+    if (capture.declined)
+        return false;
+    const auto now = std::chrono::steady_clock::now();
+    if (!granted && (checked == std::chrono::steady_clock::time_point() || now - checked > std::chrono::seconds(1)))
+    {
+        granted = CGPreflightScreenCaptureAccess();
+        checked = now;
+    }
+    return granted;
 }
 
 void RequestCapturePermission()
 {
-    // Asks once. After that, only System Settings can change it.
-    if (!CGRequestScreenCaptureAccess())
-        Open("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture");
+    @autoreleasepool
+    {
+        // macOS shows its request only the first time it is asked, and its request has a button to System Settings.
+        // After that CGRequestScreenCaptureAccess shows nothing, so System Settings opens instead. macOS does not say
+        // which time this is, so Unishade remembers that it asked.
+        NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
+        NSString* key = @"ScreenCaptureRequested";
+        const bool askedBefore = [defaults boolForKey:key] || capture.declined;
+        [defaults setBool:YES forKey:key];
+        if (!CGRequestScreenCaptureAccess() && askedBefore)
+            Open("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture");
+    }
+}
+
+bool Relaunch()
+{
+    @autoreleasepool
+    {
+        NSBundle* bundle = NSBundle.mainBundle;
+        Log(LogLevel::Info, "Starting Unishade again: %s.", bundle.bundlePath.fileSystemRepresentation);
+        // Through Launch Services, so the new Unishade is the app itself rather than a child of this one, which macOS
+        // checks the permission against. --relaunch makes it wait for this one to let go of the lock that keeps a
+        // second Unishade from starting.
+        if ([bundle.bundlePath.pathExtension caseInsensitiveCompare:@"app"] == NSOrderedSame)
+            return Spawn("open", { "-n", bundle.bundlePath.fileSystemRepresentation, "--args", "--relaunch" });
+        NSString* executable = bundle.executablePath;
+        return executable && Spawn(executable.fileSystemRepresentation, { "--relaunch" });
+    }
 }
 
 void SetHotkeyCallback(HotkeyCallback callback)
@@ -861,7 +1213,7 @@ void PollHotkeys()
 
 void Open(const std::string& target)
 {
-    Spawn("open", target);
+    Spawn("open", { target });
 }
 
 std::string UiFont(bool bold)
