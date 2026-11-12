@@ -498,7 +498,9 @@ void PresetActions(App& app, const fs::path& path, bool active)
 void PresetRow(App& app, const fs::path& path, bool active)
 {
     const std::string name = path.stem().string();
-    ImGui::PushID(name.c_str());
+    // By path: two presets of a folder can share a name, as Name.ini and Name.INI can on Linux, and a preset from
+    // elsewhere can join a folder that has one of its name.
+    ImGui::PushID(path.c_str());
     const ImVec2 start = ImGui::GetCursorScreenPos();
     const ImVec2 size(ImGui::GetContentRegionAvail().x, S(44));
     ImGui::SetNextItemAllowOverlap();
@@ -2061,6 +2063,11 @@ bool InitUi(UiWindow& ui, std::string& error)
     io.LogFilename = nullptr;
     // Tab and the arrows move through the controls, and Escape closes popups, as in the menu on Windows.
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+#ifdef NDEBUG
+    // Dear ImGui outlines controls that share an ID in red, with a message for programmers, which users took for a
+    // border Unishade draws. Debug builds keep it.
+    io.ConfigDebugHighlightIdConflicts = false;
+#endif
 
     ui.scale = WindowScale(ui.window);
     // A monitor with another scale, or a new scale in the system's settings. BeginUi applies it.
