@@ -18,7 +18,7 @@ You need a Mac with Apple Silicon (M1 or newer) and macOS 13 or newer. Macs with
 2. The build isn't notarized yet, so macOS stops it the first time:
    - On macOS 15 or newer, open Unishade and click **Done** when macOS says it can't verify it. Then open **System Settings > Privacy & Security**, scroll down to Security and click **Open Anyway** next to Unishade. Confirm with **Open Anyway** and your password.
    - On macOS 13 and 14, right-click Unishade and choose **Open**, then click **Open**.
-3. When Unishade asks to record the screen, allow it under **System Settings > Privacy & Security > Screen & System Audio Recording**, called **Screen Recording** on macOS 13 and 14. Then open Unishade again.
+3. Click **Allow screen recording** in the launcher and allow Unishade under **System Settings > Privacy & Security > Screen & System Audio Recording**, called **Screen Recording** on macOS 13 and 14. Then click **Restart Unishade** in the launcher.
 
 The shortcuts differ, since Mac keyboards have no Home key:
 
@@ -31,7 +31,24 @@ The shortcuts differ, since Mac keyboards have no Home key:
 | Cmd+Shift+B | Before and after screenshot |
 | Cmd+Shift+Right / Left | Next or previous preset |
 
-Roblox is found automatically. Windowed or borderless games work best. Unishade also stays above full-screen games on their own Space.
+Roblox is found automatically.
+
+### Full screen and windows
+
+- Unishade covers games in full screen, also on their own Space. While the game shows the cursor, the menu opens without making Unishade the active app, so macOS stays on the game's Space. When the game hides the cursor, as first person games do, Unishade becomes the active app while the menu is open, so the game lets go of the mouse.
+- The launcher's window picker also lists a game that is in full screen on another Space.
+- Wine, CrossOver, Whisky and Game Porting Toolkit games can raise their window above other windows in full screen. Unishade lists such a window and keeps its overlay just above it.
+- In a window, effects leave the title bar alone and cover only the game's picture. The overlay's corners are rounded like the window's.
+- A borderless game in a window has no title bar, so effects miss a strip at its top. Turn off **Skip the title bar** in the menu's **Settings > General**. It's saved as `SkipTitleBar=0` in `Unishade.ini` in the data folder.
+- While another window of the game is in front of it, such as a dialog, a launcher or a file picker, the overlay hides.
+
+### Screen recording permission
+
+- Unishade copies the game's window through screen recording, so macOS shows its purple recording indicator in the menu bar while Unishade copies a game. That's expected.
+- macOS only counts the permission once Unishade starts again. That's what **Restart Unishade** does. If it doesn't show, quit Unishade and open it again.
+- The build has no stable signature yet, so a new version of Unishade can lose the permission when it replaces the old one. Select Unishade in the Screen Recording list, remove it with the minus button and add it again. Or run `tccutil reset ScreenCapture me.unishade.Unishade` in Terminal, then click **Allow screen recording** in the launcher again.
+- macOS 15 and newer ask again from time to time whether Unishade may keep recording the screen. That's macOS, not Unishade. Allow it to keep effects running.
+- If you stop the recording from the menu bar, effects turn off and the launcher says **Effects off**. Turn them back on with **Show effects** in the launcher, or with Ctrl+Cmd+O.
 
 ## Linux
 
