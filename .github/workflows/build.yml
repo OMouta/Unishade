@@ -230,6 +230,15 @@ jobs:
         run: |
           otool -L build/Unishade.app/Contents/MacOS/Unishade
           build/Unishade.app/Contents/MacOS/Unishade --version
+      # The app promises macOS 13, which the runner's own version or a newer MoltenVK from Homebrew would quietly break.
+      - name: Check the oldest macOS the app runs on
+        run: |
+          for binary in build/Unishade.app/Contents/MacOS/Unishade build/Unishade.app/Contents/Frameworks/libMoltenVK.dylib; do
+            vtool -show-build "$binary"
+            vtool -show-build "$binary" | awk -v file="$binary" '
+              $1 == "minos" { found = 1; split($2, v, "."); if (v[1] + 0 > 13 || (v[1] + 0 == 13 && v[2] + 0 > 0)) high = 1 }
+              END { if (!found || high) { print file " needs a macOS newer than 13.0, or does not say which."; exit 1 } }'
+          done
       - name: Package
         run: |
           cp LICENSE src/posix/CREDITS.txt build/

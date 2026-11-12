@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
+# The Mac app runs on macOS 13 and later. project() reads the target when it first enables a language, so it is set
+# before, where APPLE is not known yet. An empty value, as an older build folder may hold, counts as unset, and a value
+# given on the command line or in MACOSX_DEPLOYMENT_TARGET wins.
+if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET AND NOT DEFINED ENV{MACOSX_DEPLOYMENT_TARGET})
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "The oldest macOS the app runs on" FORCE)
+endif()
 if(WIN32)
     project(Unishade VERSION 0.6.2 LANGUAGES C CXX RC)
 else()

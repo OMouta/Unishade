@@ -7,10 +7,10 @@
 #         MoltenVK copied inside so it runs without Homebrew.
 
 if(APPLE)
-    # Objective-C first: the language enabled first owns the .m extension, and GLFW's .m files are not C++.
+    # Objective-C first: the language enabled first owns the .m extension, and GLFW's .m files are not C++. The oldest
+    # macOS the app runs on is set in the top-level CMakeLists.txt, which has to decide it before project().
     enable_language(OBJC)
     enable_language(OBJCXX)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "")
 endif()
 
 set(POSIX_DIR "${CMAKE_CURRENT_LIST_DIR}")
