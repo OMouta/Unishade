@@ -6,8 +6,10 @@
 #include "games.h"
 #include "hotkeys.h"
 #include "log.h"
+#include "macho.h"
 #include "preset_ini.h"
 #include "setup.h"
+#include "window_rules.h"
 
 #include <unistd.h>
 
@@ -23,9 +25,31 @@ bool Check(bool condition, const char* what)
         std::printf("Failed: %s\n", what);
     return condition;
 }
+
+void Put(std::vector<uint8_t>& bytes, size_t at, uint32_t value, bool big)
+{
+    if (bytes.size() < at + 4)
+        bytes.resize(at + 4);
+    for (int i = 0; i < 4; ++i)
+        bytes[at + i] = uint8_t(value >> (big ? 24 - 8 * i : 8 * i));
+}
+
+// A 64-bit Mach-O header with one load command: LC_BUILD_VERSION, or LC_VERSION_MIN_MACOSX when old is set.
+void PutSlice(std::vector<uint8_t>& bytes, size_t at, uint32_t cpu, uint32_t sdk, bool old = false)
+{
+    const uint32_t size = old ? 16 : 24;
+    Put(bytes, at, 0xFEEDFACF, false);
+    Put(bytes, at + 4, cpu, false);
+    Put(bytes, at + 16, 1, false);
+    Put(bytes, at + 20, size, false);
+    Put(bytes, at + 32, old ? 0x24 : 0x32, false);
+    Put(bytes, at + 36, size, false);
+    Put(bytes, at + (old ? 44 : 48), sdk, false);
+    Put(bytes, at + 32 + size - 4, old ? sdk : 0, false);
+}
 } // namespace
 
-int main()
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
     bool ok = true;
 
@@ -173,6 +197,64 @@ int main()
                     "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
                 "hashes across two blocks");
     ok &= Check(Sha256(std::string(1000, 'a')).size() == 64, "hashes long input");
+
+    // Game windows above the normal layer, as Wine puts full-screen games, without the system's own windows.
+    using namespace window_rules;
+    constexpr int kShielding = 2147483628;
+    ok &= Check(GameLayer(0, false, kShielding) && GameLayer(0, true, kShielding), "the normal layer always counts");
+    ok &= Check(GameLayer(26, true, kShielding) && GameLayer(3, true, kShielding) && GameLayer(21, true, kShielding) &&
+                    GameLayer(kShielding + 1, true, kShielding),
+                "Wine's full-screen, topmost and captured-display layers count for a regular program");
+    ok &= Check(!GameLayer(20, false, kShielding) && !GameLayer(24, false, kShielding) && !GameLayer(25, false, kShielding),
+                "the Dock, the menu bar and status items do not");
+    ok &= Check(!GameLayer(101, true, kShielding) && !GameLayer(1000, true, kShielding) && !GameLayer(-20, true, kShielding),
+                "menus, the screen saver and layers below the desktop do not");
+
+    // Covering a screen, with and without a camera housing.
+    const Box screen{ 0, 0, 1470, 956 };
+    ok &= Check(CoversScreen({ 0, 0, 1470, 956 }, screen, 32, 33) && CoversScreen({ 0, 32, 1470, 924 }, screen, 32, 33), "full screen, below the camera too");
+    ok &= Check(!CoversScreen({ 0, 33, 1470, 923 }, screen, 32, 33), "a zoomed window below the menu bar does not cover the screen");
+    ok &= Check(!CoversScreen({ 0, 32, 1470, 924 }, screen, 32, 32) && !CoversScreen({ 0, 24, 1470, 932 }, screen, 32, 24),
+                "nor where the menu bar is no taller than the camera housing");
+    ok &= Check(CoversScreen({ 0, 32, 1470, 924 }, screen, 32, 0), "with the menu bar hidden, the camera housing still counts");
+    ok &= Check(!CoversScreen({ 0, 33, 1470, 848 }, screen, 0, 25) && !CoversScreen({ 10, 0, 1460, 956 }, screen, 0, 25), "nor does a smaller window");
+    ok &= Check(CoversScreen({ 1470, -200, 1920, 1080 }, { 1470, -200, 1920, 1080 }, 0, 25), "on a second screen");
+
+    // The window's part of a frame never takes pixels from outside it.
+    Crop crop = ContentCrop(2000, 1000, { 0, 0, 1000, 500 }, 2, 0);
+    ok &= Check(crop.x == 0 && crop.y == 0 && crop.width == 2000 && crop.height == 1000, "a whole frame stays whole");
+    crop = ContentCrop(2000, 1000, { 0.3, 0.3, 500, 400 }, 2, 0);
+    ok &= Check(crop.x == 1 && crop.y == 1 && crop.width == 999 && crop.height == 799, "edges round inward");
+    crop = ContentCrop(1000, 600, { 0, 0, 999.9, 599.9 }, 1.5, 0);
+    ok &= Check(crop.width == 1000 && crop.height == 600, "and stay inside the frame");
+    crop = ContentCrop(2000, 1000, { 0, 0, 1000, 500 }, 2, TitleRows(32, 2));
+    ok &= Check(crop.y == 64 && crop.height == 936 && crop.width == 2000, "the title bar's rows are dropped");
+    ok &= Check(TitleRows(28, 1.5) == 42 && TitleRows(28, 0.999) == 28 && TitleRows(0, 2) == 0, "title bar rows round up");
+    crop = ContentCrop(100, 40, { 0, 0, 100, 40 }, 1, 64);
+    ok &= Check(crop.y == 0 && crop.height == 40, "a frame no taller than the title bar keeps its rows");
+
+    // The SDK a program was built with, which decides its windows' look on macOS 26.
+    std::vector<uint8_t> fat;
+    Put(fat, 0, 0xCAFEBABE, true);
+    Put(fat, 4, 2, true);
+    Put(fat, 8, 0x01000007, true); // x86_64 at 64
+    Put(fat, 16, 64, true);
+    Put(fat, 28, 0x0100000C, true); // arm64 at 256
+    Put(fat, 36, 256, true);
+    PutSlice(fat, 64, 0x01000007, 0x000E0000);
+    PutSlice(fat, 256, 0x0100000C, 0x001A0100);
+    ok &= Check(macho::SdkMajor(fat) == 26, "a fat file is read for its arm64 slice");
+    Put(fat, 28, 0x00000012, true);
+    ok &= Check(macho::SdkMajor(fat) == 14, "or its x86_64 slice without one");
+    std::vector<uint8_t> thin;
+    PutSlice(thin, 0, 0x0100000C, 0x000A0E00, true);
+    ok &= Check(macho::SdkMajor(thin) == 10, "an old program says its SDK in LC_VERSION_MIN_MACOSX");
+    ok &= Check(macho::SdkMajor(std::vector<uint8_t>(fat.begin(), fat.begin() + 40)) == 0 && macho::SdkMajor({ 0x7F, 'E', 'L', 'F', 2, 1, 1, 0 }) == 0 &&
+                    macho::SdkMajorOfFile("/nonexistent/program") == 0,
+                "a cut, foreign or missing file has no SDK");
+#ifdef __APPLE__
+    ok &= Check(macho::SdkMajorOfFile(argv[0]) >= 13, "reads this test's own SDK");
+#endif
 
     std::printf(ok ? "All tests passed.\n" : "Some tests failed.\n");
     return ok ? 0 : 1;
