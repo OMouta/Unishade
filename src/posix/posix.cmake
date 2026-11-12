@@ -39,22 +39,23 @@ set(SPIRV_URL "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/7845
 fetch_file("${SPIRV_URL}/spirv.hpp" 43f4dcb231a8d61da50043f46e3aa04fa8b7c0ea53bb8b66c5ce70ac4ada51fe "${RESHADEFX_DIR}/spirv/spirv.hpp")
 fetch_file("${SPIRV_URL}/GLSL.std.450.h" 20f32378793c5f416bc0704f44345c2a14c99cba3f411e3beaf1bcea372d58ba "${RESHADEFX_DIR}/spirv/GLSL.std.450.h")
 
-# ReShade's compiler is built with MSVC. A few lines are changed for other systems, in copies under patched/, and
-# configuring stops if a line is no longer there, so an update cannot drop a change unnoticed.
-function(patch_source name)
-    file(READ "${RESHADEFX_DIR}/${name}" source)
+# A few lines of downloaded sources are changed, in copies under patched/ beside them, and configuring stops if a line
+# is no longer there, so an update cannot drop a change unnoticed. Takes the folder, the file's name, then pairs of
+# the old text and the new.
+function(patch_source directory name)
+    file(READ "${directory}/${name}" source)
     math(EXPR last "${ARGC} - 1")
-    foreach(index RANGE 1 ${last} 2)
+    foreach(index RANGE 2 ${last} 2)
         math(EXPR next "${index} + 1")
         set(old "${ARGV${index}}")
         set(new "${ARGV${next}}")
         string(FIND "${source}" "${old}" at)
         if(at EQUAL -1)
-            message(FATAL_ERROR "ReShade's ${name} changed. Update its patch in ${CMAKE_CURRENT_FUNCTION_LIST_FILE}.")
+            message(FATAL_ERROR "${directory}/${name} changed. Update its patch in ${CMAKE_CURRENT_FUNCTION_LIST_FILE}.")
         endif()
         string(REPLACE "${old}" "${new}" source "${source}")
     endforeach()
-    set(patched "${RESHADEFX_DIR}/patched/${name}")
+    set(patched "${directory}/patched/${name}")
     set(existing "")
     if(EXISTS "${patched}")
         file(READ "${patched}" existing)
@@ -63,15 +64,16 @@ function(patch_source name)
         file(WRITE "${patched}" "${source}")
     endif()
 endfunction()
-# Effects written on Windows include files as ".\Folder\File.fxh". Outside Windows backslashes are not
-# separators, so the preprocessor's path helper turns them into slashes.
-patch_source(effect_preprocessor.cpp
+# ReShade's compiler is built with MSVC, so a few of its lines change for other systems. Effects written on Windows
+# include files as ".\Folder\File.fxh". Outside Windows backslashes are not separators, so the preprocessor's path
+# helper turns them into slashes.
+patch_source("${RESHADEFX_DIR}" effect_preprocessor.cpp
     "\t#define u8path(p) path(p)\n"
     "\tstatic std::string posix_path(std::string p) { for (char &c : p) if (c == '\\\\') c = '/'; return p; }\n\t#define u8path(p) path(posix_path(p))\n")
 # malloc.h is Windows' and glibc's home of alloca, alloca.h everyone's.
-patch_source(effect_symbol_table.cpp "#include <malloc.h> // alloca" "#include <alloca.h> // alloca")
+patch_source("${RESHADEFX_DIR}" effect_symbol_table.cpp "#include <malloc.h> // alloca" "#include <alloca.h> // alloca")
 # Apple's C++ library has no std::from_chars for floats before macOS 15's.
-patch_source(effect_lexer.cpp
+patch_source("${RESHADEFX_DIR}" effect_lexer.cpp
     "#include <charconv> // std::from_chars" "#include <charconv> // std::from_chars\n#include <cstdlib> // std::strtof\n#include <string>"
     "std::from_chars(begin, end, tok.literal_as_float);" "tok.literal_as_float = std::strtof(std::string(begin, end).c_str(), nullptr);")
 
@@ -128,7 +130,20 @@ FetchContent_Declare(glfw
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(glfw)
 if(APPLE)
+    # The overlay has to take the keyboard for the menu without making Unishade the active program, which would take
+    # the user off a game's full-screen Space. Only a panel made non-activating when it is created can, and GLFW
+    # creates its windows itself, so glfwCocoaPanelHint makes the next window it creates such a panel.
+    patch_source("${glfw_SOURCE_DIR}/src" cocoa_window.m
+        "@interface GLFWWindow : NSWindow {}\n@end\n"
+        "@interface GLFWWindow : NSWindow {}\n@end\n\n@interface GLFWPanel : NSPanel {}\n@end\n\n@implementation GLFWPanel\n\n- (BOOL)canBecomeKeyWindow\n{\n    return YES;\n}\n\n@end\n\nstatic GLFWbool panelHint = GLFW_FALSE;\n\nGLFWAPI void glfwCocoaPanelHint(int panel)\n{\n    panelHint = panel ? GLFW_TRUE : GLFW_FALSE;\n}\n"
+        "    window->ns.object = [[GLFWWindow alloc]\n        initWithContentRect:contentRect\n                  styleMask:styleMask\n"
+        "    const GLFWbool panel = panelHint;\n    panelHint = GLFW_FALSE;\n    window->ns.object = [[(panel ? [GLFWPanel class] : [GLFWWindow class]) alloc]\n        initWithContentRect:contentRect\n                  styleMask:styleMask | (panel ? NSWindowStyleMaskNonactivatingPanel : 0)\n")
     get_target_property(GLFW_SOURCES glfw SOURCES)
+    list(TRANSFORM GLFW_SOURCES REPLACE "^(.*/)?cocoa_window\\.m$" "${glfw_SOURCE_DIR}/src/patched/cocoa_window.m")
+    if(NOT "${glfw_SOURCE_DIR}/src/patched/cocoa_window.m" IN_LIST GLFW_SOURCES)
+        message(FATAL_ERROR "GLFW no longer builds cocoa_window.m. Update its patch in ${CMAKE_CURRENT_LIST_FILE}.")
+    endif()
+    set_target_properties(glfw PROPERTIES SOURCES "${GLFW_SOURCES}")
     list(FILTER GLFW_SOURCES INCLUDE REGEX "\\.m$")
     set_source_files_properties(${GLFW_SOURCES} TARGET_DIRECTORY glfw PROPERTIES LANGUAGE OBJC)
 endif()
