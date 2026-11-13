@@ -1718,7 +1718,7 @@ std::string RenameGame(App& app, size_t index, std::string name)
     if (moveFolder)
     {
         // Saved changes go with the folder. Unsaved ones would be written back to where it was.
-        if (playing && currentMoves && app.runtime.Dirty() && app.settings.autoSavePresets)
+        if (currentMoves && app.runtime.Dirty() && app.settings.autoSavePresets)
             app.runtime.SavePreset();
         fs::rename(from, to, error);
         if (error)
@@ -1733,14 +1733,20 @@ std::string RenameGame(App& app, size_t index, std::string name)
         SetGamePreset(key, fs::path());
     }
     if (playing)
-    {
         app.game = FolderName(name);
-        if (moveFolder && currentMoves)
+    // The preset still loaded after the game closed moves too, or a save would make the old folder again.
+    if (moveFolder && currentMoves)
+    {
+        if (app.runtime.Dirty())
         {
-            if (app.runtime.Dirty())
-                app.ShowToast("Unsaved changes to " + current.stem().string() + " were dropped, since its game was renamed");
-            app.SwitchPreset(to / current.filename(), false, true);
+            const std::string dropped = "Unsaved changes to " + current.stem().string() + " were dropped, since its game was renamed";
+            // The launcher is in front when the game is not running.
+            if (playing)
+                app.ShowToast(dropped);
+            else
+                Report(LogLevel::Warning, "%s.", dropped.c_str());
         }
+        app.SwitchPreset(to / current.filename(), false, true);
     }
     RefreshLauncher();
     Log(LogLevel::Info, "Renamed %s to %s.", key.c_str(), name.c_str());
