@@ -30,6 +30,12 @@ void SetCaptureIdle(bool idle);
 // Returns false while the presentation queue is full, leaving the newest frame pending.
 bool PresentLatestFrame();
 
+// Does the message loop's frame work once: closes a game that went away, places or hides the overlay and shows the
+// newest frame. A window procedure calls it from a timer while a modal loop, such as moving a window or a menu, keeps
+// the message loop from running. Never throws, does nothing when called again from inside itself, and pumps no
+// messages.
+void PumpFrames() noexcept;
+
 // The message loop waits for capacity without blocking capture or window messages.
 HANDLE FrameLatencyEvent();
 void NotifyFrameReady();

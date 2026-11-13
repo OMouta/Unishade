@@ -24,6 +24,7 @@
 #include <map>
 #include <optional>
 #include <thread>
+#include <utility>
 #include <vector>
 
 State g;
@@ -477,6 +478,57 @@ int Run()
     }
 }
 } // namespace
+
+void PumpFrames() noexcept
+{
+    // A present can run ReShade's menu, and anything there that opens a modal loop would call this again.
+    static bool pumping = false;
+    static bool errorLogged = false;
+    if (pumping)
+        return;
+    pumping = true;
+    try
+    {
+        // A game closed during the modal loop would otherwise stay covered by its last frame until the loop ends.
+        if (g.target && (!g.captureEnabled || !GameWindowExists(*g.activeGame)))
+        {
+            if (g.captureEnabled)
+                Log(LogLevel::Info, L"%ls closed.", g.activeGame->name.c_str());
+            StopCapture();
+        }
+        UpdateOverlay();
+        if (g.target && g.device)
+        {
+            try
+            {
+                SetCaptureIdle(!g.overlayVisible);
+                ShowFrames();
+            }
+            catch (const winrt::hresult_error& e)
+            {
+                if (!DeviceLost(e.code()))
+                    throw;
+                OnDeviceLost(e.code());
+            }
+        }
+    }
+    catch (const winrt::hresult_error& e)
+    {
+        if (!std::exchange(errorLogged, true))
+            Log(LogLevel::Error, L"Could not show frames during a modal loop: %ls (0x%08X).", e.message().c_str(), static_cast<unsigned>(e.code()));
+    }
+    catch (const std::exception& e)
+    {
+        if (!std::exchange(errorLogged, true))
+            Log(LogLevel::Error, L"Could not show frames during a modal loop: %hs", e.what());
+    }
+    catch (...)
+    {
+        if (!std::exchange(errorLogged, true))
+            Log(LogLevel::Error, L"Could not show frames during a modal loop because of an unknown exception.");
+    }
+    pumping = false;
+}
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
