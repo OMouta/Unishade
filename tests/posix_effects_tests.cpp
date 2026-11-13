@@ -159,6 +159,47 @@ int main()
     };
     ok &= Check(entries(moved.cacheDirectory) == 1 && entries(options.cacheDirectory) == 2, "and moves it there");
     options.cacheDirectory.clear();
+    // Sources and the annotations they read are taken once, when the effect's uniforms are built.
+    Write(directory / "Shaders" / "Sources.fx",
+          "uniform float Timer < source = \"timer\"; >;\n"
+          "uniform bool Space < source = \"key\"; keycode = 32; mode = \"toggle\"; >;\n"
+          "uniform bool Click < source = \"mousebutton\"; keycode = 1; mode = \"press\"; >;\n"
+          "uniform int Noise < source = \"random\"; min = 5; max = 10; >;\n"
+          "uniform float2 Wheel < source = \"mousewheel\"; min = -1.0; max = 1.0; >;\n"
+          "uniform float2 Swing < source = \"pingpong\"; min = 1.0; max = 3.0; step = float2(0.5, 2.0); smoothing = 0.25; >;\n"
+          "uniform int Open < source = \"ui_open\"; >;\n"
+          "uniform bool Depth < source = \"bufready_depth\"; >;\n"
+          "uniform float Plain = 1.0;\n"
+          "float4 Vertex(uint id : SV_VertexID) : SV_Position { return 0; }\n"
+          "float4 Pixel(float4 position : SV_Position) : SV_Target\n"
+          "{ return Timer + Space + Click + Noise + Wheel.x + Swing.x + Open + Depth + Plain; }\n"
+          "technique Sources { pass { VertexShader = Vertex; PixelShader = Pixel; } }\n");
+    fx::Effect sources;
+    ok &= Check(fx::CompileEffect(sources, directory / "Shaders" / "Sources.fx", {}, options) && sources.uniforms.size() == 9,
+                "compiles an effect with sources");
+    if (sources.uniforms.size() == 9)
+    {
+        const std::vector<fx::Uniform>& u = sources.uniforms;
+        using fx::UniformSource;
+        ok &= Check(u[0].sourceKind == UniformSource::Timer, "timer");
+        ok &= Check(u[1].sourceKind == UniformSource::Key && u[1].sourceSettings.keycode == 32 && u[1].sourceSettings.toggle &&
+                        !u[1].sourceSettings.press,
+                    "a key in toggle mode");
+        ok &= Check(u[2].sourceKind == UniformSource::MouseButton && u[2].sourceSettings.keycode == 1 && u[2].sourceSettings.press &&
+                        !u[2].sourceSettings.toggle,
+                    "a mouse button in press mode");
+        ok &= Check(u[3].sourceKind == UniformSource::Random && u[3].sourceSettings.randomMin == 5 && u[3].sourceSettings.randomMax == 10,
+                    "random with its range");
+        ok &= Check(u[4].sourceKind == UniformSource::MouseWheel && u[4].sourceSettings.min == -1.0f && u[4].sourceSettings.max == 1.0f &&
+                        u[4].sourceSettings.step[0] == 1.0f,
+                    "the mouse wheel steps by 1 without a step");
+        ok &= Check(u[5].sourceKind == UniformSource::PingPong && u[5].sourceSettings.min == 1.0f && u[5].sourceSettings.max == 3.0f &&
+                        u[5].sourceSettings.step[0] == 0.5f && u[5].sourceSettings.step[1] == 2.0f && u[5].sourceSettings.smoothing == 0.25f,
+                    "pingpong with its range, steps and smoothing");
+        ok &= Check(u[6].sourceKind == UniformSource::OverlayOpen, "ui_open is overlay_open");
+        ok &= Check(u[7].sourceKind == UniformSource::Other, "a source the host cannot provide");
+        ok &= Check(u[8].sourceKind == UniformSource::None, "a plain uniform has none");
+    }
     ok &= Check(!fx::CompileEffect(stopped, effectPath, {}, options, [] { return true; }) && !stopped.compiled, "a cancelled compile stops");
     std::error_code error;
     fs::remove_all(directory, error);

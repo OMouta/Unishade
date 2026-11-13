@@ -288,6 +288,73 @@ void LowerThreadPriority()
 #endif
 }
 
+UniformSource SourceKind(const std::string& source)
+{
+    static const std::unordered_map<std::string, UniformSource> kinds = {
+        { "frametime", UniformSource::FrameTime },
+        { "framecount", UniformSource::FrameCount },
+        { "timer", UniformSource::Timer },
+        { "date", UniformSource::Date },
+        { "random", UniformSource::Random },
+        { "pingpong", UniformSource::PingPong },
+        { "key", UniformSource::Key },
+        { "mousebutton", UniformSource::MouseButton },
+        { "mousepoint", UniformSource::MousePoint },
+        { "mousedelta", UniformSource::MouseDelta },
+        { "mousewheel", UniformSource::MouseWheel },
+        { "overlay_open", UniformSource::OverlayOpen },
+        { "ui_open", UniformSource::OverlayOpen },
+        { "overlay_active", UniformSource::OverlayActive },
+        { "ui_active", UniformSource::OverlayActive },
+        { "overlay_hovered", UniformSource::OverlayHovered },
+        { "ui_hovered", UniformSource::OverlayHovered },
+        { "screenshot", UniformSource::Screenshot },
+    };
+    if (source.empty())
+        return UniformSource::None;
+    const auto found = kinds.find(source);
+    return found == kinds.end() ? UniformSource::Other : found->second;
+}
+
+// The annotations each source reads, with the defaults ReShade 6.8 gives them.
+SourceSettings ReadSourceSettings(UniformSource kind, const std::vector<reshadefx::annotation>& annotations)
+{
+    SourceSettings settings;
+    switch (kind)
+    {
+    case UniformSource::Random:
+        settings.randomMin = AnnotationInt(annotations, "min", 0);
+        settings.randomMax = AnnotationInt(annotations, "max", 32767);
+        break;
+    case UniformSource::PingPong:
+        settings.min = AnnotationFloat(annotations, "min", 0.0f);
+        settings.max = AnnotationFloat(annotations, "max", 1.0f);
+        settings.step[0] = AnnotationFloat(annotations, "step", 0.0f, 0);
+        settings.step[1] = AnnotationFloat(annotations, "step", 0.0f, 1);
+        settings.smoothing = AnnotationFloat(annotations, "smoothing", 0.0f);
+        break;
+    case UniformSource::MouseWheel:
+        settings.min = AnnotationFloat(annotations, "min", 0.0f);
+        settings.max = AnnotationFloat(annotations, "max", 0.0f);
+        settings.step[0] = AnnotationFloat(annotations, "step", 0.0f);
+        if (settings.step[0] == 0.0f)
+            settings.step[0] = 1.0f;
+        break;
+    case UniformSource::Key:
+    case UniformSource::MouseButton:
+    {
+        settings.keycode = AnnotationInt(annotations, "keycode", 0);
+        const std::string mode = AnnotationString(annotations, "mode");
+        settings.toggle = mode == "toggle" || AnnotationInt(annotations, "toggle", 0) != 0;
+        settings.press = !settings.toggle && mode == "press";
+        break;
+    }
+    default:
+        break;
+    }
+    return settings;
+}
+
 void BuildUniforms(Effect& effect)
 {
     effect.uniforms.clear();
@@ -310,6 +377,8 @@ void BuildUniforms(Effect& effect)
         uniform.category = AnnotationString(annotations, "ui_category");
         uniform.text = AnnotationString(annotations, "ui_text");
         uniform.source = AnnotationString(annotations, "source");
+        uniform.sourceKind = SourceKind(uniform.source);
+        uniform.sourceSettings = ReadSourceSettings(uniform.sourceKind, annotations);
         uniform.items = AnnotationString(annotations, "ui_items");
         if (!uniform.items.empty())
         {
@@ -2077,16 +2146,16 @@ void Runtime::UpdateSpecialUniforms(Effect& effect)
     };
     for (const Uniform& uniform : effect.uniforms)
     {
-        if (uniform.source.empty())
-            continue;
-        const auto& annotations = effect.module.uniforms[uniform.declaration].annotations;
-        const std::string& source = uniform.source;
-        if (source == "frametime")
+        const SourceSettings& annotated = uniform.sourceSettings;
+        switch (uniform.sourceKind)
         {
+        case UniformSource::None:
+        case UniformSource::Other:
+            break;
+        case UniformSource::FrameTime:
             SetValue(effect, uniform, &frameTime, 1);
-        }
-        else if (source == "framecount")
-        {
+            break;
+        case UniformSource::FrameCount:
             if (uniform.type.is_floating_point())
             {
                 const float value = static_cast<float>(frameCount);
@@ -2097,31 +2166,34 @@ void Runtime::UpdateSpecialUniforms(Effect& effect)
                 const int value = uniform.type.is_boolean() ? frameCount % 2 == 0 : static_cast<int>(frameCount);
                 SetValue(effect, uniform, &value, 1);
             }
-        }
-        else if (source == "timer")
+            break;
+        case UniformSource::Timer:
         {
             const float value = std::chrono::duration<float, std::milli>(lastFrame - startTime).count();
             SetValue(effect, uniform, &value, 1);
+            break;
         }
-        else if (source == "date")
+        case UniformSource::Date:
         {
             const time_t now = time(nullptr);
             tm local{};
             localtime_r(&now, &local);
             const int value[4] = { local.tm_year + 1900, local.tm_mon + 1, local.tm_mday, local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec };
             SetValue(effect, uniform, value, 4);
+            break;
         }
-        else if (source == "random")
+        case UniformSource::Random:
         {
-            const int low = AnnotationInt(annotations, "min", 0), high = AnnotationInt(annotations, "max", 32767);
+            const int low = annotated.randomMin, high = annotated.randomMax;
             const int value = low + static_cast<int>(random() % static_cast<unsigned>(std::abs(high - low) + 1));
             SetValue(effect, uniform, &value, 1);
+            break;
         }
-        else if (source == "pingpong")
+        case UniformSource::PingPong:
         {
-            const float low = AnnotationFloat(annotations, "min", 0.0f), high = AnnotationFloat(annotations, "max", 1.0f);
-            const float stepLow = AnnotationFloat(annotations, "step", 0.0f, 0), stepHigh = AnnotationFloat(annotations, "step", 0.0f, 1);
-            const float smoothing = AnnotationFloat(annotations, "smoothing", 0.0f);
+            const float low = annotated.min, high = annotated.max;
+            const float stepLow = annotated.step[0], stepHigh = annotated.step[1];
+            const float smoothing = annotated.smoothing;
             float value[2];
             GetValue(effect, uniform, value, 2);
             float increment = stepHigh == 0 ? stepLow : stepLow + std::fmod(static_cast<float>(random()), stepHigh - stepLow + 1);
@@ -2139,73 +2211,79 @@ void Runtime::UpdateSpecialUniforms(Effect& effect)
                     value[0] = low, value[1] = 1;
             }
             SetValue(effect, uniform, value, 2);
+            break;
         }
-        else if (source == "key" || source == "mousebutton")
+        case UniformSource::Key:
+        case UniformSource::MouseButton:
         {
             // A Windows virtual-key code, or a mouse button from 0 to 4. ReShade leaves the first codes, which are
             // the mouse's, to mousebutton.
-            const bool key = source == "key";
-            const int code = AnnotationInt(annotations, "keycode", 0);
+            const bool key = uniform.sourceKind == UniformSource::Key;
+            const int code = annotated.keycode;
             if (key ? code <= 7 || code >= 256 : code < 0 || code >= 5)
                 continue;
             const bool isDown = key ? input.keysDown[code] : input.buttonsDown[code];
             const bool pressed = key ? input.keysPressed[code] : input.buttonsPressed[code];
-            const std::string mode = AnnotationString(annotations, "mode");
             int value = isDown;
-            if (mode == "toggle" || AnnotationInt(annotations, "toggle", 0) != 0)
+            if (annotated.toggle)
             {
                 GetValue(effect, uniform, &value, 1);
                 value = pressed ? !value : value != 0;
             }
-            else if (mode == "press")
+            else if (annotated.press)
                 value = pressed;
             SetValue(effect, uniform, &value, 1);
+            break;
         }
-        else if (source == "mousepoint")
+        case UniformSource::MousePoint:
         {
             const float value[2] = { mouseX, mouseY };
             SetValue(effect, uniform, value, 2);
+            break;
         }
-        else if (source == "mousedelta")
+        case UniformSource::MouseDelta:
         {
             const float value[2] = { input.cursorDeltaX, input.cursorDeltaY };
             SetValue(effect, uniform, value, 2);
+            break;
         }
-        else if (source == "mousewheel")
+        case UniformSource::MouseWheel:
         {
-            const float low = AnnotationFloat(annotations, "min", 0.0f), high = AnnotationFloat(annotations, "max", 0.0f);
-            float step = AnnotationFloat(annotations, "step", 0.0f);
-            if (step == 0.0f)
-                step = 1.0f;
+            const float low = annotated.min, high = annotated.max;
             float value[2];
             GetValue(effect, uniform, value, 2);
             value[1] = input.wheelDelta;
-            value[0] += value[1] * step;
+            value[0] += value[1] * annotated.step[0];
             if (low != high)
                 value[0] = std::clamp(value[0], std::min(low, high), std::max(low, high));
             SetValue(effect, uniform, value, 2);
+            break;
         }
-        else if (source == "overlay_open" || source == "ui_open")
+        case UniformSource::OverlayOpen:
         {
             const int value = menuOpen;
             SetValue(effect, uniform, &value, 1);
+            break;
         }
-        else if (source == "overlay_active" || source == "ui_active")
+        case UniformSource::OverlayActive:
         {
             const int value = menuOpen ? control(input.activeUniform, input.overlayActive) : 0;
             SetValue(effect, uniform, &value, 1);
+            break;
         }
-        else if (source == "overlay_hovered" || source == "ui_hovered")
+        case UniformSource::OverlayHovered:
         {
             const int value = menuOpen ? control(input.hoveredUniform, input.overlayHovered) : 0;
             SetValue(effect, uniform, &value, 1);
+            break;
         }
-        else if (source == "screenshot")
+        case UniformSource::Screenshot:
         {
             const int value = input.screenshot;
             SetValue(effect, uniform, &value, 1);
+            break;
         }
-        // Others, such as depth the host cannot provide, stay zero.
+        }
     }
 }
 

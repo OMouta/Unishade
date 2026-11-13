@@ -27,6 +27,42 @@
 // so they move between Windows and here unchanged.
 namespace fx
 {
+// The values the host sets in uniforms, by their source annotation.
+enum class UniformSource : uint8_t
+{
+    None,
+    Other, // one the host cannot provide, such as depth, which stays zero
+    FrameTime,
+    FrameCount,
+    Timer,
+    Date,
+    Random,
+    PingPong,
+    Key,
+    MouseButton,
+    MousePoint,
+    MouseDelta,
+    MouseWheel,
+    OverlayOpen,
+    OverlayActive,
+    OverlayHovered,
+    Screenshot,
+};
+
+// The annotations a source reads, taken once, so setting the values every frame needs no lookups.
+struct SourceSettings
+{
+    int randomMin = 0;
+    int randomMax = 32767;
+    float min = 0;     // pingpong and mousewheel
+    float max = 0;
+    float step[2]{};   // pingpong's range of steps, or mousewheel's step
+    float smoothing = 0;
+    int keycode = 0;   // key and mousebutton
+    bool toggle = false;
+    bool press = false;
+};
+
 struct Uniform
 {
     std::string name;
@@ -37,6 +73,8 @@ struct Uniform
     std::string items; // separated by '\0' and ending in two, as ImGui::Combo takes them
     std::string text;  // ui_text, shown above the control
     std::string source; // set by the host each frame, such as the timer, and not shown
+    UniformSource sourceKind = UniformSource::None;
+    SourceSettings sourceSettings;
     reshadefx::type type;
     uint32_t offset = 0;
     uint32_t size = 0;
