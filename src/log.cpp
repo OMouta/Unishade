@@ -164,9 +164,11 @@ void Write(LogLevel level, bool notice, const wchar_t* format, va_list args)
         shared.lastLevel = level;
         shared.lastThread = thread;
         shared.lastText = std::move(text);
+        // Only a line that was written is flushed. An error that repeats every frame would otherwise hold the
+        // mutex for a disk flush each time, and other threads wait on it to log.
+        if (level == LogLevel::Error && file != INVALID_HANDLE_VALUE)
+            FlushFileBuffers(file);
     }
-    if (level == LogLevel::Error && file != INVALID_HANDLE_VALUE)
-        FlushFileBuffers(file);
     if (!notice && level != LogLevel::Warning && level != LogLevel::Error)
         return;
     auto& notices = shared.notices;
