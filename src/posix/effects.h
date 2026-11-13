@@ -144,6 +144,12 @@ std::string TechniqueKey(const Technique& technique, const Effect& effect);
 // effect's together in the order the file declares them, as in ReShade.
 void OrderTechniques(std::vector<Technique>& techniques, const std::vector<Effect>& effects, const std::vector<std::string>& sorting);
 
+// The order techniques run in, as a preset saves it while effects are still loading: order lists the techniques
+// that are loaded, and the keys of previous that pending accepts, because their effect is not loaded yet, keep
+// their places among them.
+std::vector<std::string> MergeSorting(const std::vector<std::string>& order, const std::vector<std::string>& previous,
+                                      const std::function<bool(const std::string&)>& pending);
+
 // Where a uniform's value i is in the effect's uniform data, in ReShade's layout: every array element and every
 // matrix row starts on 16 bytes.
 size_t ComponentOffset(const Uniform& uniform, size_t i);
@@ -158,6 +164,8 @@ struct CompileOptions
     uint32_t device = 0;
     std::vector<fs::path> includePaths;
     fs::path cacheDirectory; // empty to compile without the cache
+    // Also searched. An entry found only there moves to cacheDirectory, so an effect that changes folders keeps it.
+    fs::path otherCacheDirectory;
 };
 
 // The macros an effect is compiled with: ReShade's own, such as BUFFER_WIDTH, then the given definitions.
@@ -185,10 +193,17 @@ public:
     uint32_t Height() const { return height; }
 
     // Finds the effects again and compiles them on worker threads, starting at the next Update, since the frame
-    // being recorded may still use the current ones. Effects the current preset uses come first.
+    // being recorded may still use the current ones. Effects the current preset uses come first. The rest follow
+    // on fewer threads at low priority, so a game keeps its cores.
     void Reload() { reloadRequested = true; }
     // Includes the loader's final results until Update takes them and prepares the enabled effects.
-    bool Loading() const { return loaderRunning || summaryPending || reloadRequested || resizePending || (preparingEffects && !gpu.lost); }
+    bool Loading() const { return loaderRunning || summaryPending || PresetLoading(); }
+    // The same for the effects the preset uses, which are done before the rest. Presets can be saved meanwhile:
+    // techniques and sections of effects not loaded yet stay as they are.
+    bool PresetLoading() const
+    {
+        return presetLoaderRunning || presetSummaryPending || reloadRequested || resizePending || (preparingEffects && !gpu.lost);
+    }
     // How many effect files are compiled out of how many were found.
     std::pair<size_t, size_t> LoadingProgress() const { return { loadedCount.load(), totalCount.load() }; }
     // Takes in compiled effects and prepares the ones that are on. Call once per frame on the main thread.
@@ -288,6 +303,8 @@ private:
     void AddEffect(Effect&& effect);
     void ShareTextures(Effect& effect, size_t index);
     void SortTechniques();
+    // The order of the techniques for the preset, with those of effects not loaded yet in their places.
+    std::vector<std::string> SortingKeys() const;
     void ApplyPreset(Effect& effect, size_t effectIndex);
     // Sets or, with an empty value, removes a definition in the preset's section for the effect.
     void PutDefinition(const std::string& file, const std::string& name, const std::string& value);
@@ -360,9 +377,14 @@ private:
     std::vector<std::unique_ptr<Loader>> loaders;
     std::atomic<uint64_t> generation = 0;
     std::atomic<bool> loaderRunning = false;
+    std::atomic<bool> presetLoaderRunning = false; // still compiling the effects the preset uses
     bool reloadRequested = false;
     bool preparingEffects = false;
     bool summaryPending = false;
+    bool presetSummaryPending = false;
+    size_t presetEffectCount = 0; // the first effects to arrive are the preset's
+    // Every effect found has arrived. Until then a saved preset keeps the order of techniques not loaded yet.
+    bool effectsComplete = false;
     std::atomic<size_t> loadedCount = 0;
     std::atomic<size_t> totalCount = 0;
     std::mutex finishedMutex;

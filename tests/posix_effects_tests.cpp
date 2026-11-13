@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
+#include <iterator>
 
 namespace
 {
@@ -145,6 +146,18 @@ int main()
     ok &= Check(fx::CompileEffect(fourth, effectPath, {}, options) && !fourth.cached && fourth.module.textures[0].width == 1280,
                 "another size compiles again");
     ok &= Check(!fx::CompileEffect(missing, directory / "Shaders" / "Missing.fx", {}, options), "a missing effect does not compile");
+    // An entry in the other folder moves over rather than compiling again.
+    fx::CompileOptions moved = options;
+    moved.cacheDirectory = directory / "other";
+    moved.otherCacheDirectory = options.cacheDirectory;
+    fx::Effect fifth;
+    ok &= Check(fx::CompileEffect(fifth, effectPath, {}, moved) && fifth.cached && fifth.module.textures[0].width == 1280,
+                "takes an entry from the other folder");
+    const auto entries = [](const fs::path& folder) {
+        std::error_code ignored;
+        return std::distance(fs::directory_iterator(folder, ignored), fs::directory_iterator());
+    };
+    ok &= Check(entries(moved.cacheDirectory) == 1 && entries(options.cacheDirectory) == 2, "and moves it there");
     options.cacheDirectory.clear();
     ok &= Check(!fx::CompileEffect(stopped, effectPath, {}, options, [] { return true; }) && !stopped.compiled, "a cancelled compile stops");
     std::error_code error;
@@ -166,6 +179,16 @@ int main()
     std::reverse(techniques.begin(), techniques.end());
     fx::OrderTechniques(techniques, effects, { "B@b.fx", "A" });
     ok &= Check(Names(techniques) == order, "the order does not depend on the order before");
+
+    // A preset saved while effects load keeps the places of techniques whose effect has not arrived.
+    const auto pending = [](const std::string& key) { return key.ends_with("@late.fx"); };
+    ok &= Check(fx::MergeSorting({ "A@a.fx", "B@b.fx" }, { "A@a.fx", "L@late.fx", "B@b.fx", "Gone@gone.fx" }, pending) ==
+                    std::vector<std::string>{ "A@a.fx", "L@late.fx", "B@b.fx" },
+                "keeps pending techniques where they were");
+    ok &= Check(fx::MergeSorting({ "B@b.fx", "A@a.fx", "C@c.fx" }, { "A@a.fx", "L@late.fx", "B@b.fx" }, pending) ==
+                    std::vector<std::string>{ "B@b.fx", "A@a.fx", "L@late.fx", "C@c.fx" },
+                "and the loaded ones in their own order");
+    ok &= Check(fx::MergeSorting({ "A@a.fx" }, {}, pending) == std::vector<std::string>{ "A@a.fx" }, "with nothing before, the order is the loaded one");
 
     std::printf(ok ? "All effect tests passed.\n" : "Some effect tests failed.\n");
     return ok ? 0 : 1;

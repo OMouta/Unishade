@@ -7,7 +7,14 @@
 
 #include <stb_image_resize2.h>
 
+#include <sys/resource.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <pthread.h>
+#include <sys/qos.h>
+#else
+#include <sys/syscall.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -82,8 +89,14 @@ constexpr const char* kCompatibilityMacros =
 constexpr auto kResizeDelay = std::chrono::milliseconds(250);
 // How long Update may spend preparing effects on the graphics card, between individual effects.
 constexpr auto kPrepareBudget = std::chrono::milliseconds(8);
-// The compile cache drops the entries used longest ago beyond this.
-constexpr uintmax_t kCacheLimit = 256 * 1024 * 1024;
+// The compile cache drops the entries used longest ago beyond these, down to three quarters. Effects the preset
+// uses have a folder and a share of their own, so compiling the rest of the effects for another size cannot push
+// them out. The rest of the effects have the larger share, since a large collection takes about 150 MB for one
+// size, and what is left after pruning should still hold that.
+constexpr uintmax_t kPresetCacheLimit = 32 * 1024 * 1024;
+constexpr uintmax_t kLibraryCacheLimit = 224 * 1024 * 1024;
+// Threads for the effects the preset does not use. They compile at low priority, after the preset's.
+constexpr unsigned kLibraryThreads = 2;
 
 const reshadefx::annotation* FindAnnotation(const std::vector<reshadefx::annotation>& annotations, std::string_view name)
 {
@@ -260,8 +273,20 @@ struct CompileJob
 {
     fs::path path;
     Definitions definitions;
-    bool decode = false; // the preset uses it, so its images are decoded right away
+    bool preset = false; // the preset uses it, so it compiles first and its images are decoded right away
 };
+
+// For threads that compile effects the preset does not use, so the game and the preset's effects go first. The
+// priority stays moderate, since shutting down waits for the step a compile is on.
+void LowerThreadPriority()
+{
+#ifdef __APPLE__
+    pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+#else
+    // Linux sets the nice value of a single thread through its thread ID.
+    setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), 10);
+#endif
+}
 
 void BuildUniforms(Effect& effect)
 {
@@ -735,8 +760,8 @@ void WriteCache(Effect& effect, const fs::path& entry, const Definitions& macros
     WriteCacheFile(entry, out.data + payload.data);
 }
 
-// Keeps the compile cache under its limit, dropping the entries used longest ago.
-void PruneCache(const fs::path& directory)
+// Keeps a folder of the compile cache under its limit, dropping the entries used longest ago.
+void PruneCache(const fs::path& directory, uintmax_t limit)
 {
     std::vector<std::tuple<fs::file_time_type, uintmax_t, fs::path>> entries;
     uintmax_t total = 0;
@@ -752,12 +777,12 @@ void PruneCache(const fs::path& directory)
         entries.emplace_back(time, size, entry.path());
         total += size;
     }
-    if (total <= kCacheLimit)
+    if (total <= limit)
         return;
     std::sort(entries.begin(), entries.end());
     for (const auto& [time, size, path] : entries)
     {
-        if (total <= kCacheLimit / 4 * 3)
+        if (total <= limit / 4 * 3)
             break;
         if (fs::remove(path, error))
             total -= size;
@@ -962,6 +987,42 @@ void OrderTechniques(std::vector<Technique>& techniques, const std::vector<Effec
     techniques = std::move(result);
 }
 
+std::vector<std::string> MergeSorting(const std::vector<std::string>& order, const std::vector<std::string>& previous,
+                                      const std::function<bool(const std::string&)>& pending)
+{
+    // Each key of previous that is loaded brings along the loaded keys before it, so pending keys land after the
+    // loaded ones that preceded them, and the loaded keys keep their own order.
+    std::vector<std::string> merged;
+    std::set<std::string> taken;
+    size_t at = 0;
+    for (const std::string& key : previous)
+    {
+        if (std::find(order.begin(), order.end(), key) != order.end())
+        {
+            if (taken.count(key))
+                continue;
+            for (; at < order.size(); ++at)
+            {
+                const std::string& loaded = order[at];
+                if (!taken.insert(loaded).second)
+                    continue;
+                merged.push_back(loaded);
+                if (loaded == key)
+                {
+                    ++at;
+                    break;
+                }
+            }
+        }
+        else if (pending(key) && taken.insert(key).second)
+            merged.push_back(key);
+    }
+    for (; at < order.size(); ++at)
+        if (taken.insert(order[at]).second)
+            merged.push_back(order[at]);
+    return merged;
+}
+
 size_t ComponentOffset(const Uniform& uniform, size_t i)
 {
     const reshadefx::type& type = uniform.type;
@@ -1027,6 +1088,17 @@ bool CompileEffect(Effect& effect, const fs::path& path, const Definitions& defi
     if (!options.cacheDirectory.empty())
     {
         entry = CacheEntry(options, path, macros);
+        std::error_code error;
+        if (!options.otherCacheDirectory.empty() && !fs::exists(entry, error))
+        {
+            // Moved rather than copied, so an entry is in one folder and counts against one limit.
+            const fs::path other = options.otherCacheDirectory / entry.filename();
+            if (fs::exists(other, error))
+            {
+                fs::create_directories(entry.parent_path(), error);
+                fs::rename(other, entry, error);
+            }
+        }
         if (ReadCache(effect, entry, macros))
         {
             BuildUniforms(effect);
@@ -1186,7 +1258,9 @@ void Runtime::StopLoader()
     std::lock_guard lock(finishedMutex);
     ++generation;
     loaderRunning = false;
+    presetLoaderRunning = false;
     summaryPending = false;
+    presetSummaryPending = false;
     finished.clear();
 }
 
@@ -1288,10 +1362,13 @@ void Runtime::ReloadNow()
     compiledWidth = width;
     compiledHeight = height;
 
-    // Effects the preset uses compile first, so the picture has its effects as soon as possible.
+    // Effects the preset uses compile first, so the picture has its effects as soon as possible. So does the one
+    // whose definition changed, since Update checks it compiled once those are done.
     std::set<std::string> used;
     for (const std::string& file : PresetEffectFiles(presetIni))
         used.insert(Lowercase(file));
+    if (definitionChange)
+        used.insert(Lowercase(definitionChange->file));
 
     std::vector<CompileJob> jobs;
     std::set<std::string> seen;
@@ -1317,68 +1394,97 @@ void Runtime::ReloadNow()
             jobs.push_back(std::move(job));
         }
     }
-    std::stable_sort(jobs.begin(), jobs.end(), [](const CompileJob& a, const CompileJob& b) { return a.decode > b.decode; });
+    std::stable_sort(jobs.begin(), jobs.end(), [](const CompileJob& a, const CompileJob& b) { return a.preset > b.preset; });
+    const size_t presetJobs = std::count_if(jobs.begin(), jobs.end(), [](const CompileJob& job) { return job.preset; });
 
-    CompileOptions options;
-    options.width = width;
-    options.height = height;
-    options.vendor = gpu.properties.vendorID;
-    options.device = gpu.properties.deviceID;
-    options.includePaths = settings.effectPaths;
-    options.cacheDirectory = CacheDirectory() / "effects";
+    // Each phase keeps its entries in a folder of its own, and takes an entry from the other's when the preset
+    // starts or stops using an effect.
+    CompileOptions presetOptions;
+    presetOptions.width = width;
+    presetOptions.height = height;
+    presetOptions.vendor = gpu.properties.vendorID;
+    presetOptions.device = gpu.properties.deviceID;
+    presetOptions.includePaths = settings.effectPaths;
+    presetOptions.cacheDirectory = CacheDirectory() / "preset-effects";
+    presetOptions.otherCacheDirectory = CacheDirectory() / "effects";
+    CompileOptions libraryOptions = presetOptions;
+    std::swap(libraryOptions.cacheDirectory, libraryOptions.otherCacheDirectory);
 
     loadedCount = 0;
     totalCount = jobs.size();
+    presetEffectCount = presetJobs;
+    effectsComplete = jobs.empty();
     if (jobs.empty())
     {
         Log(LogLevel::Warning, "No effects were found. Install them from the launcher.");
         return;
     }
-    Log(LogLevel::Info, "Compiling %zu effects for %ux%u...", jobs.size(), width, height);
+    Log(LogLevel::Info, "Compiling %zu effects for %ux%u, %zu of them for the preset first...", jobs.size(), width, height, presetJobs);
     const uint64_t current = generation;
     loaderRunning = true;
+    presetLoaderRunning = true;
     summaryPending = true;
+    presetSummaryPending = true;
     Loader& loader = *loaders.emplace_back(std::make_unique<Loader>());
-    loader.thread = std::thread([this, &loader, jobs = std::move(jobs), options, texturePaths = settings.texturePaths, current] {
+    loader.thread = std::thread([this, &loader, jobs = std::move(jobs), presetJobs, presetOptions, libraryOptions,
+                                 texturePaths = settings.texturePaths, current] {
         const auto cancelled = [this, current] { return generation != current; };
         try
         {
             const TextureIndex textureIndex = ScanTextures(texturePaths);
             std::atomic<size_t> next = 0;
-            std::vector<std::future<void>> workers;
-            const unsigned count = std::max(1u, std::min(std::thread::hardware_concurrency(), 8u));
-            for (unsigned i = 0; i < count; ++i)
-                workers.emplace_back(std::async(std::launch::async, [&] {
-                    for (size_t index; !cancelled() && (index = next++) < jobs.size();)
-                    {
-                        Effect effect;
-                        try
+            // Compiles jobs up to end on count threads, which take the next job until none is left.
+            const auto compile = [&](size_t end, unsigned count, const CompileOptions& options, bool background) {
+                std::vector<std::future<void>> workers;
+                for (unsigned i = 0; i < count; ++i)
+                    workers.emplace_back(std::async(std::launch::async, [&] {
+                        if (background)
+                            LowerThreadPriority();
+                        for (size_t index; !cancelled() && (index = next++) < end;)
                         {
-                            CompileEffect(effect, jobs[index].path, jobs[index].definitions, options, cancelled);
-                            if (effect.compiled && jobs[index].decode)
-                                DecodeImages(effect, textureIndex, cancelled);
+                            Effect effect;
+                            try
+                            {
+                                CompileEffect(effect, jobs[index].path, jobs[index].definitions, options, cancelled);
+                                if (effect.compiled && jobs[index].preset)
+                                    DecodeImages(effect, textureIndex, cancelled);
+                            }
+                            catch (const std::bad_alloc&)
+                            {
+                                effect.compiled = false;
+                                effect.errors = "out of memory";
+                            }
+                            catch (const std::exception& e)
+                            {
+                                effect.compiled = false;
+                                effect.errors = e.what();
+                            }
+                            std::lock_guard lock(finishedMutex);
+                            if (cancelled())
+                                return;
+                            ++loadedCount;
+                            finished.push_back(std::move(effect));
                         }
-                        catch (const std::bad_alloc&)
-                        {
-                            effect.compiled = false;
-                            effect.errors = "out of memory";
-                        }
-                        catch (const std::exception& e)
-                        {
-                            effect.compiled = false;
-                            effect.errors = e.what();
-                        }
-                        std::lock_guard lock(finishedMutex);
-                        if (cancelled())
-                            return;
-                        ++loadedCount;
-                        finished.push_back(std::move(effect));
-                    }
-                }));
-            for (std::future<void>& worker : workers)
-                worker.get();
+                    }));
+                for (std::future<void>& worker : workers)
+                    worker.get();
+            };
+            const unsigned cores = std::max(1u, std::thread::hardware_concurrency());
+            if (presetJobs)
+                compile(presetJobs, static_cast<unsigned>(std::min<size_t>({ cores, 8u, presetJobs })), presetOptions, false);
+            {
+                std::lock_guard lock(finishedMutex);
+                if (!cancelled())
+                    presetLoaderRunning = false;
+            }
             if (!cancelled())
-                PruneCache(options.cacheDirectory);
+                PruneCache(presetOptions.cacheDirectory, kPresetCacheLimit);
+            // The first phase's workers each took a number past its end.
+            next = presetJobs;
+            if (!cancelled() && presetJobs < jobs.size())
+                compile(jobs.size(), std::min(cores, kLibraryThreads), libraryOptions, true);
+            if (!cancelled())
+                PruneCache(libraryOptions.cacheDirectory, kLibraryCacheLimit);
         }
         catch (const std::exception& e)
         {
@@ -1388,7 +1494,7 @@ void Runtime::ReloadNow()
         {
             std::lock_guard lock(finishedMutex);
             if (!cancelled())
-                loaderRunning = false;
+                presetLoaderRunning = loaderRunning = false;
         }
         loader.done = true;
     });
@@ -1402,27 +1508,33 @@ void Runtime::Update()
     if (reloadRequested)
         ReloadNow();
     std::deque<Effect> arrived;
-    bool running;
+    bool running, presetRunning;
     {
         std::lock_guard lock(finishedMutex);
         arrived.swap(finished);
         running = loaderRunning;
+        presetRunning = presetLoaderRunning;
     }
     for (Effect& effect : arrived)
         AddEffect(std::move(effect));
     if (!arrived.empty())
         SortTechniques();
-    // The loader is done once it stops running and everything it finished has been taken.
-    if (summaryPending && !running)
-    {
-        summaryPending = false;
+    const auto summary = [this](const char* what, size_t count) {
         size_t failed = 0, cached = 0;
-        for (const Effect& effect : effects)
+        for (size_t i = 0; i < count; ++i)
         {
-            failed += !effect.compiled;
-            cached += effect.cached;
+            failed += !effects[i].compiled;
+            cached += effects[i].cached;
         }
-        Log(LogLevel::Info, "Effects loaded: %zu compiled (%zu from the cache), %zu failed.", effects.size() - failed, cached, failed);
+        Log(LogLevel::Info, "%s: %zu compiled (%zu from the cache), %zu failed.", what, count - failed, cached, failed);
+    };
+    // A phase is done once it stops running and everything it finished has been taken. What concerns the preset
+    // only needs its effects, which come first.
+    if (presetSummaryPending && !presetRunning)
+    {
+        presetSummaryPending = false;
+        if (presetEffectCount)
+            summary("Effects the preset uses loaded", std::min(presetEffectCount, effects.size()));
         // An effect that stops compiling would also leave the menu, and its definitions with it.
         bool reverted = false;
         if (const std::optional<DefinitionChange> change = std::exchange(definitionChange, std::nullopt))
@@ -1441,6 +1553,12 @@ void Runtime::Update()
         if (!reverted)
             for (const std::string& missing : MissingTechniques())
                 Report(LogLevel::Warning, "The preset uses %s, which is not installed.", missing.c_str());
+    }
+    if (summaryPending && !running)
+    {
+        summaryPending = false;
+        effectsComplete = true;
+        summary("Effects loaded", effects.size());
     }
     PrepareEffects(kPrepareBudget);
 }
@@ -1531,6 +1649,25 @@ void Runtime::SortTechniques()
     OrderTechniques(techniques, effects, sorting);
 }
 
+std::vector<std::string> Runtime::SortingKeys() const
+{
+    std::vector<std::string> order;
+    order.reserve(techniques.size());
+    for (const Technique& technique : techniques)
+        order.push_back(TechniqueKey(technique, effects[technique.effect]));
+    if (effectsComplete)
+        return order;
+    // A key names its effect after the @, or is a technique's name alone, as older presets write it.
+    const auto pending = [this](const std::string& key) {
+        const size_t at = key.find('@');
+        if (at == std::string::npos)
+            return std::none_of(techniques.begin(), techniques.end(), [&key](const Technique& technique) { return technique.name == key; });
+        const std::string file = Lowercase(key.substr(at + 1));
+        return std::none_of(effects.begin(), effects.end(), [&file](const Effect& effect) { return Lowercase(effect.file) == file; });
+    };
+    return MergeSorting(order, sorting, pending);
+}
+
 void Runtime::Enable(Technique& technique, bool enabled)
 {
     technique.enabled = enabled;
@@ -1611,7 +1748,12 @@ bool Runtime::LoadPreset(const fs::path& path)
         if (presetIni.Get(file, "PreprocessorDefinitions", value))
             definitions.effects[file] = ParseDefinitions(value);
 
-    if (definitions != presetDefinitions || effects.empty())
+    // Effects still loading at low priority would keep the new preset waiting, so they load again with its own
+    // first. Most come from the cache.
+    const bool waiting = !effectsComplete && std::ranges::any_of(PresetEffectFiles(presetIni), [this](const std::string& file) {
+        return std::none_of(effects.begin(), effects.end(), [&file](const Effect& effect) { return PresetIni::Same(effect.file, file); });
+    });
+    if (definitions != presetDefinitions || effects.empty() || waiting)
     {
         presetDefinitions = std::move(definitions);
         Reload();
@@ -1634,12 +1776,12 @@ bool Runtime::SavePreset()
 
 bool Runtime::WritePreset(const fs::path& path, PresetIni preset)
 {
-    std::vector<std::string> enabled, order;
+    std::vector<std::string> enabled, loaded;
     std::set<size_t> used;
     for (const Technique& technique : techniques)
     {
         const std::string key = TechniqueKey(technique, effects[technique.effect]);
-        order.push_back(key);
+        loaded.push_back(key);
         if (technique.enabled && !(technique.hidden && technique.enabledByDefault))
         {
             enabled.push_back(key);
@@ -1648,13 +1790,16 @@ bool Runtime::WritePreset(const fs::path& path, PresetIni preset)
         if (technique.toggleKeyInPreset)
             preset.Set("", "Key" + key, FormatKey(technique.toggleKey));
     }
-    // Techniques whose effect did not load stay in the preset, so it still works where they are installed.
+    // Techniques whose effect did not load stay in the preset, so it still works where they are installed. Their
+    // sections stay as well, since only loaded effects write theirs.
     std::string value;
     if (preset.Get("", "Techniques", value))
         for (const std::string& key : PresetIni::Split(value))
-            if (std::find(order.begin(), order.end(), key) == order.end())
+            if (std::find(loaded.begin(), loaded.end(), key) == loaded.end())
                 enabled.push_back(key);
     preset.Set("", "Techniques", PresetIni::Join(enabled));
+    // While effects load, the order keeps the places of the techniques still to come.
+    std::vector<std::string> order = SortingKeys();
     preset.Set("", "TechniqueSorting", PresetIni::Join(order));
     // Each effect's definitions, which the menu changes. The preset's own are left as they are.
     for (const std::string& section : preset.SectionNames())
@@ -1787,9 +1932,7 @@ void Runtime::MoveTechnique(size_t from, size_t to)
     Technique moved = std::move(techniques[from]);
     techniques.erase(techniques.begin() + from);
     techniques.insert(techniques.begin() + to, std::move(moved));
-    sorting.clear();
-    for (const Technique& technique : techniques)
-        sorting.push_back(TechniqueKey(technique, effects[technique.effect]));
+    sorting = SortingKeys();
     dirty = true;
 }
 
@@ -1899,10 +2042,11 @@ void Runtime::ResetValue(Effect& effect, const Uniform& uniform)
     }
 }
 
-// Technique shortcuts. As in ReShade, they wait while effects load and need the modifiers exactly.
+// Technique shortcuts. As in ReShade, they wait while effects load and need the modifiers exactly. Only the
+// preset's effects count: the rest can take a while at low priority, and their techniques work once they arrive.
 void Runtime::HandleToggleKeys()
 {
-    if (Loading())
+    if (PresetLoading())
         return;
     const auto down = [this](std::initializer_list<int> keys) {
         return std::any_of(keys.begin(), keys.end(), [this](int key) { return input.keysDown[key]; });
