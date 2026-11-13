@@ -14,13 +14,15 @@ ReShade is Windows only, so this host runs ReShade effects itself. It follows th
 
 Frames stay on the graphics card where the system allows it, and are copied through memory otherwise: on Linux without DRI3 1.2 (no GPU, some NVIDIA setups on Xorg, remote X), without the Vulkan extensions above, or when the driver cannot import the X server's buffer layout. Copies go through shared memory (XShm), or without it where the X server cannot reach Unishade's memory, such as over the network. The log says which one runs. `--render ... --gpu-source` exercises the graphics-card path of the effect runtime without a window.
 
-On Linux, frames are copied when XDamage says the game drew, at most about once per refresh of the monitor the game is on. Without XDamage they are copied once per refresh. While the overlay is hidden, because another window is in front, a few frames a second are copied. Frames handed over as dma-bufs are not synchronised with the game's drawing, so one can now and then show a picture still being drawn.
+On Linux, frames are copied when XDamage says the game drew, at most about once per refresh of the monitor the game is on. Without XDamage they are copied once per refresh. While the overlay is hidden, because another window is in front, a few frames a second are copied. On macOS the stream itself is slowed to five frames a second then. Frames handed over as dma-bufs are not synchronised with the game's drawing, so one can now and then show a picture still being drawn.
 
 Under a Wayland desktop only games that run through XWayland have a window Unishade can see. When a saved game runs without one, the launcher says so and how to switch the game to XWayland, such as `SDL_VIDEODRIVER=x11` or turning off Wayland in Wine, Proton or the game's launcher.
 
 Effects compile with ReShade's own compiler (`effect_*.cpp` from ReShade 6.8.0, BSD-3-Clause) to SPIR-V, the same path ReShade takes in Vulkan games. `effects.cpp` runs what it produces: textures, render targets, stencil tests, storage, compute passes, blending, mipmaps and the uniforms ReShade sets itself, such as `timer` and `frametime`. Presets are ReShade's `.ini` files. The launcher and the menu use Dear ImGui with GLFW. Release builds turn off Dear ImGui's red outline around controls that share an ID, which users took for a border Unishade draws.
 
-Compiled effects are kept in `cache` in the data folder, each effect's SPIR-V in `cache/effects` and Vulkan's pipeline cache in `cache/pipelines.bin`, so effects start faster the next time. Beyond 256 MB the entries used longest ago are dropped.
+The effects the preset uses compile first. The rest of the library compiles after them on two threads at low priority, so a game keeps its cores, and the menu lists them as they arrive.
+
+Compiled effects are kept in `cache` in the data folder, so effects start faster the next time: the SPIR-V of the effects the preset uses in `cache/preset-effects`, that of the rest in `cache/effects`, and Vulkan's pipeline cache in `cache/pipelines.bin`. An effect is compiled for the size of the game's picture, so every size has entries of its own. The preset's effects have 32 MB and the rest 224 MB, and beyond that the entries used longest ago are dropped, so the library compiled for another size cannot push out the effects in use.
 
 ## The overlay on macOS
 
@@ -70,13 +72,17 @@ Nobody sees the terminal there, so a failed start and a second Unishade show an 
 
 The overlay never has focus and the launcher is often covered, which App Nap takes for a program nobody uses. An `NSProcessInfo` activity, latency critical and allowing idle sleep, holds while capture runs. The capture queue runs at user-interactive priority and releases each frame's objects when the frame is done.
 
+### Presenting
+
+MoltenVK offers no mailbox mode, only FIFO and immediate. In FIFO the overlay would wait for the display on top of the game's own wait, so it presents in immediate mode, which does not tear on macOS, where every window is composited. The launcher keeps FIFO. The log says which mode each window got. While the menu is open, frames that no new picture of the game caused are held to the refresh rate of the overlay's monitor.
+
 ## Shortcuts, screenshots and input
 
 Shortcuts are written as on Windows, such as `Ctrl+F9`, including the number pad keys `Numpad0` to `Numpad9`, `NumpadMultiply`, `NumpadAdd`, `NumpadSubtract`, `NumpadDecimal` and `NumpadDivide`. macOS has function keys up to F20.
 
 Screenshots go to `Unishade` in the pictures folder: `~/Pictures` on macOS, and on Linux the one `XDG_PICTURES_DIR` names in the environment or in `~/.config/user-dirs.dirs`, which is not always `~/Pictures`. Files are named after the game, with anything that does not belong in a file name left out.
 
-Effects that read the keyboard and mouse, through uniforms such as `key` and `mousebutton`, see Windows virtual-key codes, as on Windows. Unishade reads them for the whole system, so only while the game or the menu is in front. The mouse wheel only reaches effects while the menu is open, and X11 cannot tell the back and forward mouse buttons.
+Effects that read the keyboard and mouse, through uniforms such as `key` and `mousebutton`, see Windows virtual-key codes, as on Windows. Unishade reads them for the whole system, so only while the game or the menu is in front, and only while something uses them: a technique with a shortcut, or such a uniform in an effect that is on. The mouse wheel only reaches effects while the menu is open, and X11 cannot tell the back and forward mouse buttons.
 
 Technique shortcuts work as in ReShade: a preset's `Key` entries, or an effect's `toggle` annotations, turn a technique on or off. Like the keys effects read, they work while the game or the menu is in front, and not while typing in the menu.
 
@@ -107,6 +113,8 @@ The Mac app runs on macOS 13 and newer. The top-level `CMakeLists.txt` sets `CMA
 ## Checking effects without a game
 
 `unishade --render in.png preset.ini out.png` applies a preset to an image with the overlay's own code and no window. It exits with 1 when a technique the preset turns on is missing or fails to start. CI renders the repository's presets this way on Mesa's software Vulkan driver.
+
+`--render` and `--install-effects` write their log to the terminal only and do not take the lock that keeps a second Unishade from starting, so the app can start while one runs. Ctrl-C, `SIGTERM` and `SIGHUP` quit the app the way closing the launcher does, and cancel a terminal install.
 
 Set `UNISHADE_VALIDATION=1` to run with the Vulkan validation layers.
 
