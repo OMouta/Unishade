@@ -2195,6 +2195,13 @@ bool InitUi(UiWindow& ui, std::string& error)
     glfwSetWindowContentScaleCallback(ui.window, [](GLFWwindow* window, float, float) {
         static_cast<UiWindow*>(glfwGetWindowUserPointer(window))->rescale = true;
     });
+    // A shortcut waiting for its keys in the launcher lets go of every shortcut, so it stops waiting once the user
+    // goes elsewhere, such as to the game. The launcher may not be drawn again before then, as when it is minimized.
+    // Set before Dear ImGui's, which calls it.
+    glfwSetWindowFocusCallback(ui.window, [](GLFWwindow* window, int focused) {
+        if (!focused && window == app.launcher.window)
+            StopShortcut(app);
+    });
 
     // Headings fall back to the regular font.
     const auto fallbacks = [](bool bold) {
