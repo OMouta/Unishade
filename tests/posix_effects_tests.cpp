@@ -231,6 +231,24 @@ int main()
                 "and the loaded ones in their own order");
     ok &= Check(fx::MergeSorting({ "A@a.fx" }, {}, pending) == std::vector<std::string>{ "A@a.fx" }, "with nothing before, the order is the loaded one");
 
+    // The keyboard and mouse are read only while something loaded reads them.
+    {
+        fx::Runtime runtime;
+        runtime.Effects().resize(2);
+        fx::Uniform key = MakeUniform(reshadefx::type::t_bool, 1, 1, 0, 0);
+        key.sourceKind = fx::UniformSource::MouseButton;
+        runtime.Effects()[1].uniforms.push_back(key);
+        runtime.Techniques() = { MakeTechnique("Plain", "", 0, 0), MakeTechnique("Keyed", "", 1, 0) };
+        ok &= Check(!runtime.ReadsInput(), "nothing reads input while the effect reading it is off");
+        runtime.Techniques()[0].enabled = true;
+        ok &= Check(!runtime.ReadsInput(), "nor while only effects without it are on");
+        runtime.Techniques()[1].enabled = true;
+        ok &= Check(runtime.ReadsInput(), "an effect with a mousebutton uniform reads it once on");
+        runtime.Techniques()[1].enabled = false;
+        runtime.Techniques()[1].toggleKey = { 0x70, 0, 0, 0 };
+        ok &= Check(runtime.ReadsInput(), "a shortcut reads it for a technique that is off");
+    }
+
     std::printf(ok ? "All effect tests passed.\n" : "Some effect tests failed.\n");
     return ok ? 0 : 1;
 }

@@ -564,13 +564,20 @@ void App::RenderOverlay()
 }
 
 // What effects read of the keyboard and mouse. Keys are read for the whole system, so only while they go to the game
-// or the menu.
+// or the menu, and only while something loaded reads them.
 void App::UpdateInput()
 {
     std::array<bool, 256> keys{};
     std::array<bool, 5> buttons{};
-    if (menuOpen || inFront)
+    const bool reachable = menuOpen || inFront;
+    const bool read = reachable && runtime.ReadsInput();
+    if (read)
         platform::ReadInput(keys, buttons);
+    // Keys count as let go while they are not read. When reading starts again because something now reads them, a
+    // key held all along is held rather than just pressed, as it would be had it been read all along. Coming back to
+    // the game still counts a held key as pressed, as before.
+    const bool resumed = read && inputSkipped;
+    inputSkipped = reachable && !read;
     // Windows also has a code for Shift, Ctrl and Alt on either side, and counts the mouse buttons as keys.
     keys[0x10] = keys[0xA0] || keys[0xA1];
     keys[0x11] = keys[0xA2] || keys[0xA3];
@@ -586,12 +593,12 @@ void App::UpdateInput()
     const bool typing = menuOpen && menuTyping;
     for (size_t i = 0; i < keys.size(); ++i)
     {
-        input.keysPressed[i] = keys[i] && !input.keysDown[i] && !typing;
+        input.keysPressed[i] = keys[i] && !input.keysDown[i] && !typing && !resumed;
         input.keysDown[i] = keys[i];
     }
     for (size_t i = 0; i < buttons.size(); ++i)
     {
-        input.buttonsPressed[i] = buttons[i] && !input.buttonsDown[i];
+        input.buttonsPressed[i] = buttons[i] && !input.buttonsDown[i] && !resumed;
         input.buttonsDown[i] = buttons[i];
     }
     // The first frame of a capture has nothing to compare with.

@@ -2132,6 +2132,24 @@ void Runtime::HandleToggleKeys()
     }
 }
 
+bool Runtime::ReadsInput() const
+{
+    // An effect's techniques usually run one after the other, so its uniforms are looked at once for them.
+    size_t checked = effects.size();
+    for (const Technique& technique : techniques)
+    {
+        if (technique.toggleKey[0] != 0)
+            return true;
+        if (!technique.enabled || technique.effect == checked || technique.effect >= effects.size())
+            continue;
+        checked = technique.effect;
+        for (const Uniform& uniform : effects[technique.effect].uniforms)
+            if (uniform.sourceKind == UniformSource::Key || uniform.sourceKind == UniformSource::MouseButton)
+                return true;
+    }
+    return false;
+}
+
 // Values the host sets every frame, named by the source annotation, as ReShade 6.8 sets them.
 void Runtime::UpdateSpecialUniforms(Effect& effect)
 {

@@ -170,6 +170,7 @@ private:
     bool menuActive = false;
     bool menuHovered = false;
     bool menuTyping = false; // a text field has the keyboard
+    bool inputSkipped = false; // the keys could be read for the last frame, but nothing read them
     double nextSearch = 0;
     double nextScan = 0;                   // of every process
     platform::WindowId notGame = 0;        // the window in front, when it was not a saved game's

@@ -299,6 +299,11 @@ public:
     void SetValue(Effect& effect, const Uniform& uniform, const int* values, size_t count);
     void ResetValue(Effect& effect, const Uniform& uniform);
 
+    // Whether anything loaded reads the keys and mouse buttons in input: a technique shortcut, which works for
+    // techniques that are off too, or a key or mousebutton uniform of an effect with a technique on. Reading them
+    // for the whole system takes a hundred calls or a round trip to the X server, so the host skips it otherwise.
+    bool ReadsInput() const;
+
     // For uniforms with a source.
     bool menuOpen = false;
     float mouseX = 0;
