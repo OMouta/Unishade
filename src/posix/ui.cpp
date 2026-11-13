@@ -1747,6 +1747,16 @@ std::string RenameGame(App& app, size_t index, std::string name)
     return {};
 }
 
+// Downloads effects and presets, over what is installed. Effects load again once it finishes, which goes back to how
+// the preset was saved, so unsaved changes have to be saved or discarded first.
+void DownloadEffects(App& app)
+{
+    if (app.runtime.Dirty() && !app.settings.autoSavePresets)
+        Report(LogLevel::Warning, "Save or discard the changes to %s in the menu before downloading effects.", app.runtime.PresetPath().stem().c_str());
+    else
+        app.setup.Start();
+}
+
 void UseWindow(App& app, bool add, const platform::Window& window)
 {
     if (add)
@@ -1925,6 +1935,11 @@ public:
         app.ChangeHotkeys(hotkeys, launcherState.shortcutError);
     }
 
+    void DownloadEffects() override
+    {
+        ::DownloadEffects(app);
+    }
+
 private:
     App& app;
 };
@@ -2016,6 +2031,7 @@ void DescribeCards(App& app, launcher::Model& model)
                .progress = total ? float(loaded) / float(total) : 0.0f });
     }
     const EffectSetup::State setup = app.setup.Read();
+    model.settings.downloadEffects = !setup.running;
     if (setup.running)
         card({ .title = "Installing effects",
                .text = setup.status + (setup.detail.empty() ? "" : "\n" + setup.detail),
@@ -2028,9 +2044,10 @@ void DescribeCards(App& app, launcher::Model& model)
         for (const std::string& note : setup.notes)
             text += "\nSkipped " + note;
         launcher::Card finished{ .title = setup.error.empty() ? "Effects are installed" : "Installing effects failed", .text = text };
-        if (!setup.error.empty())
+        // Packages that were skipped, such as ones that timed out, can be downloaded again.
+        if (!setup.error.empty() || !setup.notes.empty())
             finished.buttons = { "Try again" };
-        card(std::move(finished), { [&app] { app.setup.Start(); } });
+        card(std::move(finished), { [&app] { DownloadEffects(app); } });
     }
     else if (!app.EffectsInstalled())
         card({ .title = "Effects are not installed yet",
@@ -2038,7 +2055,7 @@ void DescribeCards(App& app, launcher::Model& model)
                        "the data folder.",
                .attention = true,
                .buttons = { "Download effects and presets" } },
-             { [&app] { app.setup.Start(); } });
+             { [&app] { DownloadEffects(app); } });
 }
 
 launcher::Model DescribeLauncher(App& app)

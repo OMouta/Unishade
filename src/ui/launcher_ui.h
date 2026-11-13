@@ -130,6 +130,8 @@ struct Settings
     std::optional<bool> updateChecks;
     std::optional<Performance> performance; // for every game without its own
     std::optional<bool> debugInfo;
+    // Offers to download effects and presets again, where the launcher installs them. False while they download.
+    std::optional<bool> downloadEffects;
     std::vector<Shortcut> shortcuts;
     int recording = -1; // the shortcut waiting for its keys
     std::string shortcutError;
@@ -216,6 +218,8 @@ public:
     virtual void RecordShortcut(int shortcut) = 0;
     virtual void ClearShortcut(size_t shortcut) = 0;
     virtual void ResetShortcuts() = 0;
+    // Only where Settings offers it.
+    virtual void DownloadEffects() {}
 
 protected:
     ~Host() = default;

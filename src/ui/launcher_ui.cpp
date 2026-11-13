@@ -244,6 +244,19 @@ bool SwitchRow(const Page& page, float& y, const char* id, bool on, const std::s
     return clicked;
 }
 
+// A card row with a button on the right. Returns true when the button is clicked.
+bool ButtonRow(const Page& page, float& y, const char* label, bool enabled, const std::string& title, const std::string& description)
+{
+    const float pad = S(20);
+    std::string text = label;
+    const ImVec2 size(Measure(text.substr(0, text.find("##")), kBody).x + S(32), S(32));
+    const float textHeight = SettingText(page, page.left + pad, page.right - pad - size.x - S(20), y + S(16), title, description);
+    const float height = std::max(textHeight, size.y) + S(32);
+    const bool clicked = PlacedButton(label, page.At(page.right - pad - size.x, y + (height - size.y) / 2), size, false, enabled);
+    y += height;
+    return clicked;
+}
+
 // The value the choices show as selected: the place of value among them, or past the last for one that is none.
 template <size_t N>
 int ChoiceOf(const int (&values)[N], int value)
@@ -995,6 +1008,12 @@ void GeneralSettings(const Settings& settings, Host& host, const Page& page, flo
                       "Turn off to try changes first and save them with the icon at the top of the menu."))
             host.SetSwitch(Switch::AutoSavePresets, !settings.autoSavePresets);
     });
+    if (settings.downloadEffects)
+        section("EFFECTS", [&] {
+            if (ButtonRow(page, y, "Download again##effects", *settings.downloadEffects, "Download effects and presets again",
+                          "Gets every package from ReShade's list again, such as ones that were skipped. Your presets are kept."))
+                host.DownloadEffects();
+        });
     if (settings.menuSize || settings.keepEffectsVisible)
         section("DISPLAY", [&] {
             if (settings.menuSize)
