@@ -201,11 +201,14 @@ struct Scaler
     winrt::com_ptr<ID3D11Texture2D> frame;
     winrt::com_ptr<ID3D11ShaderResourceView> view;
     std::optional<int64_t> lastInput;
+    // Set when a view on a captured texture could not be made, so frames are copied from then on.
+    bool copyFrames = false;
 };
 Scaler scaler;
 
 // Draws the frame into a back buffer of another size, or an HDR frame as SDR. Capture's textures are not promised to
-// be readable by shaders, so the frame is copied into one that is.
+// be readable by shaders. When the frame's is, it is drawn from directly through a view made for this draw only, so
+// none outlives the frame's return to the pool. Otherwise the frame is copied into a texture that is.
 void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& size, ID3D11Texture2D* backBuffer, UINT width, UINT height, int64_t frameTimestamp)
 {
     if (!scaler.sampler)
@@ -230,10 +233,30 @@ void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& size, ID3D11T
         winrt::check_hresult(g.device->CreateSamplerState(&desc, scaler.sampler.put()));
     }
 
+    winrt::com_ptr<ID3D11ShaderResourceView> direct;
+    if (!scaler.copyFrames && (size.BindFlags & D3D11_BIND_SHADER_RESOURCE))
+    {
+        if (const HRESULT made = g.device->CreateShaderResourceView(frame, nullptr, direct.put()); FAILED(made))
+        {
+            if (DeviceLost(made))
+                winrt::throw_hresult(made);
+            direct = nullptr;
+            scaler.copyFrames = true;
+            Log(LogLevel::Info, L"Captured frames cannot be read directly (0x%08X), so they are copied first.", static_cast<unsigned>(made));
+        }
+    }
+
     D3D11_TEXTURE2D_DESC copy{};
     if (scaler.frame)
         scaler.frame->GetDesc(&copy);
-    if (copy.Width != size.Width || copy.Height != size.Height || copy.Format != size.Format)
+    if (direct)
+    {
+        // Not needed while frames are read directly.
+        scaler.view = nullptr;
+        scaler.frame = nullptr;
+        scaler.lastInput.reset();
+    }
+    else if (copy.Width != size.Width || copy.Height != size.Height || copy.Format != size.Format)
     {
         copy = size;
         copy.MipLevels = 1;
@@ -249,7 +272,7 @@ void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& size, ID3D11T
         winrt::check_hresult(g.device->CreateShaderResourceView(scaler.frame.get(), nullptr, scaler.view.put()));
         scaler.lastInput.reset();
     }
-    if (!scaler.lastInput || *scaler.lastInput != frameTimestamp)
+    if (!direct && (!scaler.lastInput || *scaler.lastInput != frameTimestamp))
     {
         g.context->CopyResource(scaler.frame.get(), frame);
         scaler.lastInput = frameTimestamp;
@@ -264,7 +287,7 @@ void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& size, ID3D11T
         winrt::check_hresult(g.device->CreateRenderTargetView(backBuffer, nullptr, scaleTarget.put()));
     const D3D11_VIEWPORT viewport{ 0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1 };
     ID3D11RenderTargetView* targets[] = { scaleTarget.get() };
-    ID3D11ShaderResourceView* views[] = { scaler.view.get() };
+    ID3D11ShaderResourceView* views[] = { direct ? direct.get() : scaler.view.get() };
     ID3D11SamplerState* samplers[] = { scaler.sampler.get() };
     ID3D11Buffer* constants[] = { scaler.sdrWhite.get() };
     g.context->IASetInputLayout(nullptr);
