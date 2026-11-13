@@ -723,8 +723,8 @@ void TakeScan()
     std::lock_guard lock(scanner.mutex);
     if (scanner.version == m.scanVersion)
         return;
-    m.scan = std::move(scanner.folders);
-    scanner.folders.clear();
+    // Copied, not moved: the launcher reads the same folders through GamePresets until the next scan.
+    m.scan = scanner.folders;
     m.scanVersion = scanner.version;
     m.scannedAt = scanner.scannedAt;
     m.foldersDirty = true;
