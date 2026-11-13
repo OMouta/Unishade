@@ -47,7 +47,8 @@ constexpr const wchar_t* kLogs[] = { L"Unishade.log", L"Unishade.old.log", L"Rob
                                      L"DiscordIcons.txt.tmp" };
 // The user's settings, saved games and presets, deleted only when the user asks. The folders go with everything in
 // them, including effects the user added to reshade-shaders.
-constexpr const wchar_t* kUserFiles[] = { L"ReShade.ini", L"ReShadePreset.ini", L"RobloxShadeHost.ini", L"games.ini", L"games.ini.tmp" };
+constexpr const wchar_t* kUserFiles[] = { L"ReShade.ini", L"ReShadePreset.ini", L"RobloxShadeHost.ini", L"RobloxShadeHost.ini.tmp",
+                                          L"games.ini", L"games.ini.tmp" };
 constexpr const wchar_t* kUserFolders[] = { L"presets", L"reshade-shaders" };
 
 // The files of each add-on, under the names the host loads them by. Where each one comes from and its SHA-256 are in
