@@ -114,7 +114,9 @@ bool GameWindowCovered(const Window& game);
 
 // The game's picture. Where the platform can, it stays on the graphics card: image is then an image in
 // VK_IMAGE_LAYOUT_GENERAL whose part at (x, y) of width by height is the window, and stays valid until capture
-// stops. Otherwise pixels holds it, copied by a thread of the platform's: BGRA, top row first, with opaque alpha.
+// stops. Otherwise it is in memory, BGRA and top row first: memory points at the window's first pixel in the
+// platform's own buffer, with rows stride bytes apart and alpha undefined, valid for as long as hold is held, so the
+// host copies it once, straight to the graphics card. pixels is for a frame copied out, with opaque alpha.
 struct Frame
 {
     std::vector<uint32_t> pixels;
@@ -127,6 +129,8 @@ struct Frame
     bool foreign = false; // written outside Vulkan, so each use acquires it from outside first
     // Keeps the platform from reusing the frame's buffer. Held until the graphics card is done with the frame.
     std::shared_ptr<void> hold;
+    const uint8_t* memory = nullptr;
+    size_t stride = 0;
 };
 
 // Starts copying the window. Frames arrive on another thread, which calls glfwPostEmptyEvent so the main loop

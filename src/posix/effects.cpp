@@ -3069,9 +3069,19 @@ void Runtime::Render(VkCommandBuffer commands, const Source& source, bool enable
         // Straight from the capture on the graphics card. Alpha is whatever the window has, as in games where
         // ReShade runs.
         CopySource(commands, source, backbuffer.image, width, height);
-    else if (source.pixels && staging.mapped)
+    else if ((source.pixels || source.memory) && staging.mapped)
     {
-        std::memcpy(staging.mapped, source.pixels, size_t(width) * height * 4);
+        if (source.pixels)
+            std::memcpy(staging.mapped, source.pixels, size_t(width) * height * 4);
+        else
+            // From the platform's buffer in one pass, rather than copying it out first.
+            for (uint32_t y = 0; y < height; ++y)
+            {
+                const uint32_t* row = reinterpret_cast<const uint32_t*>(source.memory + y * source.stride);
+                uint32_t* out = static_cast<uint32_t*>(staging.mapped) + size_t(y) * width;
+                for (uint32_t x = 0; x < width; ++x)
+                    out[x] = row[x] | 0xFF000000u;
+            }
         VkBufferImageCopy copy{};
         copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
         copy.imageExtent = { width, height, 1 };

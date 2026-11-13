@@ -1046,12 +1046,12 @@ void App::RequestScreenshot(bool beforeAfter)
 
 bool App::HasFrame() const
 {
-    return frame.image || !frame.pixels.empty();
+    return frame.image || frame.memory || !frame.pixels.empty();
 }
 
 fx::Runtime::Source App::Source() const
 {
-    return { frame.pixels.empty() ? nullptr : frame.pixels.data(), frame.image, frame.x, frame.y, frame.foreign };
+    return { frame.pixels.empty() ? nullptr : frame.pixels.data(), frame.image, frame.x, frame.y, frame.foreign, frame.memory, frame.stride };
 }
 
 void App::SaveScreenshot()
@@ -1068,6 +1068,13 @@ void App::SaveScreenshot()
     const bool beforeAfter = beforeAfterRequested && frame.width == width && frame.height == height;
     if (beforeAfter && frame.image)
         before = runtime.ReadSource(Source());
+    else if (beforeAfter && frame.memory)
+    {
+        // The platform's buffer goes back to it while the screenshot is written, so its rows are copied now.
+        beforePixels.resize(size_t(width) * height);
+        for (uint32_t y = 0; y < height; ++y)
+            std::memcpy(&beforePixels[size_t(y) * width], frame.memory + y * frame.stride, size_t(width) * 4);
+    }
     else if (beforeAfter)
         beforePixels = frame.pixels;
 

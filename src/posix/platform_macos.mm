@@ -260,39 +260,40 @@ void UpdateStream(SCStream* stream, uint64_t generation)
     platform::Frame& back = _back;
     back.width = uint32_t(width);
     back.height = uint32_t(height);
+    back.pixels.clear();
+    back.image = VK_NULL_HANDLE; // set by TakeFrame on the graphics card
     if (capture.onGpu && CVPixelBufferGetIOSurface(image))
     {
         // The frame stays on the graphics card. The main thread wraps its IOSurface in a Vulkan image, and the
         // pixel buffer is held until the frame is drawn, so ScreenCaptureKit does not reuse it before then.
-        back.pixels.clear();
-        back.image = VK_NULL_HANDLE; // set by TakeFrame
+        back.memory = nullptr;
+        back.stride = 0;
         back.x = uint32_t(x0);
         back.y = uint32_t(y0);
         back.hold = std::shared_ptr<void>(const_cast<void*>(CFRetain(image)), [](void* buffer) { CFRelease(buffer); });
     }
     else
     {
-        back.image = VK_NULL_HANDLE;
+        // The main thread copies the window's rows straight from the pixel buffer to the graphics card, so the
+        // buffer stays locked for reading and held until the main thread lets go of the frame.
         back.x = back.y = 0;
         back.hold.reset();
-        CVPixelBufferLockBaseAddress(image, kCVPixelBufferLock_ReadOnly);
-        const uint8_t* base = static_cast<const uint8_t*>(CVPixelBufferGetBaseAddress(image));
-        const size_t stride = CVPixelBufferGetBytesPerRow(image);
-        back.pixels.clear();
-        if (base && CVPixelBufferGetPixelFormatType(image) == kCVPixelFormatType_32BGRA)
-        {
-            back.pixels.resize(width * height);
-            for (size_t y = 0; y < height; ++y)
-            {
-                const uint32_t* row = reinterpret_cast<const uint32_t*>(base + (y0 + y) * stride) + x0;
-                uint32_t* out = back.pixels.data() + y * width;
-                for (size_t x = 0; x < width; ++x)
-                    out[x] = row[x] | 0xFF000000u;
-            }
-        }
-        CVPixelBufferUnlockBaseAddress(image, kCVPixelBufferLock_ReadOnly);
-        if (back.pixels.empty())
+        back.memory = nullptr;
+        if (CVPixelBufferGetPixelFormatType(image) != kCVPixelFormatType_32BGRA ||
+            CVPixelBufferLockBaseAddress(image, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess)
             return;
+        const uint8_t* base = static_cast<const uint8_t*>(CVPixelBufferGetBaseAddress(image));
+        if (!base)
+        {
+            CVPixelBufferUnlockBaseAddress(image, kCVPixelBufferLock_ReadOnly);
+            return;
+        }
+        back.stride = CVPixelBufferGetBytesPerRow(image);
+        back.memory = base + y0 * back.stride + x0 * 4;
+        back.hold = std::shared_ptr<void>(const_cast<void*>(CFRetain(image)), [](void* buffer) {
+            CVPixelBufferUnlockBaseAddress(static_cast<CVPixelBufferRef>(buffer), kCVPixelBufferLock_ReadOnly);
+            CFRelease(buffer);
+        });
     }
     bool current = false;
     {
@@ -1324,7 +1325,8 @@ bool TakeFrame(Frame& frame)
             return false;
         std::swap(frame, capture.ready);
     }
-    if (frame.hold)
+    // A frame in memory holds its pixel buffer too, but is copied from memory.
+    if (frame.hold && !frame.memory)
     {
         frame.image = Import(CVPixelBufferGetIOSurface(static_cast<CVPixelBufferRef>(frame.hold.get())));
         if (!frame.image)

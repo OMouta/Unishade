@@ -247,7 +247,7 @@ public:
     // Takes in compiled effects and prepares the ones that are on. Call once per frame on the main thread.
     void Update();
 
-    // The game's picture: pixels in memory, or the part at (x, y) of an image on the graphics card, in
+    // The game's picture: pixels or rows in memory, or the part at (x, y) of an image on the graphics card, in
     // VK_IMAGE_LAYOUT_GENERAL. Either way it is the size given to SetSize.
     struct Source
     {
@@ -256,6 +256,10 @@ public:
         uint32_t x = 0;
         uint32_t y = 0;
         bool foreign = false; // owned by something outside Vulkan, such as the X server
+        // Or rows in memory stride bytes apart, such as the capture's own buffer, whose alpha is made opaque as
+        // they are copied, since windows without an alpha channel leave it undefined.
+        const uint8_t* memory = nullptr;
+        size_t stride = 0;
     };
     // Copies the game's picture in and runs every enabled technique on it, or none when effects is false.
     void Render(VkCommandBuffer commands, const Source& source, bool effects);
