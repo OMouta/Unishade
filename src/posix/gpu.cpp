@@ -640,12 +640,23 @@ bool Surface::CreateSwapchain()
     vkGetPhysicalDeviceSurfacePresentModesKHR(gpu.physicalDevice, surface, &count, nullptr);
     std::vector<VkPresentModeKHR> modes(count);
     vkGetPhysicalDeviceSurfacePresentModesKHR(gpu.physicalDevice, surface, &count, modes.data());
-    // The overlay shows each frame as soon as it is ready, since the game already waited for the display. Without
-    // mailbox it waits for the display too, in FIFO mode, which every device has and which never tears.
-    const bool mailbox = std::find(modes.begin(), modes.end(), VK_PRESENT_MODE_MAILBOX_KHR) != modes.end();
-    const VkPresentModeKHR mode = lowLatency && mailbox ? VK_PRESENT_MODE_MAILBOX_KHR : VK_PRESENT_MODE_FIFO_KHR;
+    const auto listed = [&modes](VkPresentModeKHR mode) { return std::find(modes.begin(), modes.end(), mode) != modes.end(); };
+    // The overlay shows each frame as soon as it is ready, since the game already waited for the display. FIFO, which
+    // every device has and which never tears, would wait for the display a second time. MoltenVK lists only FIFO and
+    // immediate, never mailbox, but macOS composites every window, so immediate does not tear there: the window server
+    // takes the newest picture when it next draws the screen. On X11 without a compositor immediate tears, so Linux
+    // falls back to FIFO. The launcher has no reason to draw faster than the display.
+    VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
+    if (lowLatency && listed(VK_PRESENT_MODE_MAILBOX_KHR))
+        mode = VK_PRESENT_MODE_MAILBOX_KHR;
+#ifdef __APPLE__
+    else if (lowLatency && listed(VK_PRESENT_MODE_IMMEDIATE_KHR))
+        mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+#endif
 
-    minImageCount = std::max(caps.minImageCount, 2u);
+    // Without FIFO the window server holds the image on screen until it takes the next one, so a third image lets a
+    // frame start without waiting for that, as mailbox expects.
+    minImageCount = std::max(caps.minImageCount, mode == VK_PRESENT_MODE_FIFO_KHR ? 2u : 3u);
     if (caps.maxImageCount)
         minImageCount = std::min(minImageCount, caps.maxImageCount);
 
@@ -680,6 +691,8 @@ bool Surface::CreateSwapchain()
     if (result != VK_SUCCESS)
         return false;
     swapchain = created;
+    Log(LogLevel::Info, "The %s presents in %s mode.", lowLatency ? "overlay" : "launcher",
+        mode == VK_PRESENT_MODE_MAILBOX_KHR ? "mailbox" : mode == VK_PRESENT_MODE_IMMEDIATE_KHR ? "immediate" : "FIFO");
 
     vkGetSwapchainImagesKHR(gpu.device, swapchain, &imageCount, nullptr);
     images.resize(imageCount);
