@@ -523,8 +523,9 @@ void App::RenderOverlay()
     Surface& surface = overlay.surface;
     if (!surface.BeginFrame())
         return;
-    // The previous frame's commands are done, so its buffer can go back to the platform.
-    inFlight = frame.hold;
+    // The previous frame's commands are done, so its buffer can go back to the platform. A frame in memory is copied
+    // to the graphics card during Render, so only frames on the graphics card are held here.
+    inFlight = frame.image ? frame.hold : nullptr;
     lastOverlayFrame = Now();
     runtime.menuOpen = menuOpen;
     double x = 0, y = 0;

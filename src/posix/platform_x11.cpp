@@ -448,6 +448,42 @@ bool AttachShm(Display* d, XImage* image, XShmSegmentInfo& segment)
     return attached;
 }
 
+// Shared memory the X server copies a frame into. The main thread reads a frame's rows from it while the next frame
+// is copied, so the capture thread goes round a few of these and copies into one only once no frame holds it. The
+// memory stays mapped until the capture thread and every frame are done with it.
+struct ShmImage
+{
+    XImage* image = nullptr;
+    XShmSegmentInfo segment{};
+    std::shared_ptr<void> mapping;
+};
+// The frame being copied, the one waiting for the main thread and the one it holds.
+constexpr size_t kShmImages = 3;
+
+bool CreateShmImage(Display* d, Visual* visual, int depth, int width, int height, ShmImage& shm)
+{
+    shm = {};
+    shm.image = XShmCreateImage(d, visual, depth, ZPixmap, nullptr, &shm.segment, width, height);
+    if (shm.image && !AttachShm(d, shm.image, shm.segment))
+    {
+        XDestroyImage(shm.image);
+        shm.image = nullptr;
+    }
+    if (!shm.image)
+        return false;
+    shm.mapping = std::shared_ptr<void>(shm.segment.shmaddr, [](void* address) { shmdt(address); });
+    return true;
+}
+
+void DestroyShmImage(Display* d, ShmImage& shm)
+{
+    // The X server lets go of the memory now, and frames that still hold it keep it mapped until they go.
+    XShmDetach(d, &shm.segment);
+    shm.image->data = nullptr;
+    XDestroyImage(shm.image);
+    shm = {};
+}
+
 void CaptureThread(::Window target)
 {
     Display* d = XOpenDisplay(nullptr);
@@ -471,8 +507,9 @@ void CaptureThread(::Window target)
 
     Pixmap pixmap = 0;
     std::shared_ptr<DmaBuffer> buffer;
-    XImage* image = nullptr;
-    XShmSegmentInfo segment{};
+    std::vector<ShmImage> images; // empty when copying without shared memory
+    Visual* visual = nullptr;
+    int depth = 0;
     int width = 0, height = 0;
     Frame back;
     uint64_t serial = 0;
@@ -481,17 +518,9 @@ void CaptureThread(::Window target)
     int failures = 0;    // copies in a row that failed
 
     const auto release = [&] {
-        if (image)
-        {
-            if (segment.shmaddr)
-            {
-                XShmDetach(d, &segment);
-                shmdt(segment.shmaddr);
-                segment = {};
-            }
-            XDestroyImage(image);
-            image = nullptr;
-        }
+        for (ShmImage& shmImage : images)
+            DestroyShmImage(d, shmImage);
+        images.clear();
         if (pixmap)
             XFreePixmap(d, pixmap);
         pixmap = 0;
@@ -578,20 +607,20 @@ void CaptureThread(::Window target)
                     Log(LogLevel::Info, "The X server cannot share the game's picture on the graphics card. Copying it instead.");
                 }
             }
+            visual = attributes.visual;
+            depth = attributes.depth;
             if (shm && !buffer)
             {
-                image = XShmCreateImage(d, attributes.visual, attributes.depth, ZPixmap, nullptr, &segment, width, height);
-                if (image && !AttachShm(d, image, segment))
-                {
-                    XDestroyImage(image);
-                    image = nullptr;
-                }
-                if (!image)
+                ShmImage first;
+                if (CreateShmImage(d, visual, depth, width, height, first))
+                    images.push_back(std::move(first));
+                else
                 {
                     shm = false;
                     Log(LogLevel::Info, "The X server cannot share memory with Unishade, so copying the game's picture takes longer.");
                 }
             }
+            const XImage* image = images.empty() ? nullptr : images.front().image;
             if (image && (image->bits_per_pixel != 32 || image->red_mask != 0xFF0000 || image->blue_mask != 0xFF))
             {
                 failure = "The game's window uses a pixel format Unishade cannot read.";
@@ -613,11 +642,46 @@ void CaptureThread(::Window target)
             // now and then show the game's picture half drawn.
             XFlush(d);
             back.pixels.clear();
+            back.memory = nullptr;
+            back.stride = 0;
             back.width = width;
             back.height = height;
             back.hold = buffer;
             publish();
             continue;
+        }
+
+        // An image no frame holds anymore. Once images is all that holds it, nothing else can take it again, and the
+        // fence orders the main thread's reads of the frame that held it before the X server writes over it.
+        XImage* image = nullptr;
+        std::shared_ptr<void> mapping;
+        if (!images.empty())
+        {
+            for (ShmImage& candidate : images)
+                if (candidate.mapping.use_count() == 1)
+                {
+                    std::atomic_thread_fence(std::memory_order_acquire);
+                    image = candidate.image;
+                    mapping = candidate.mapping;
+                    break;
+                }
+            if (!image && images.size() < kShmImages)
+            {
+                ShmImage another;
+                if (CreateShmImage(d, visual, depth, width, height, another))
+                {
+                    image = another.image;
+                    mapping = another.mapping;
+                    images.push_back(std::move(another));
+                }
+            }
+            if (!image)
+            {
+                // The main thread still reads every one. It takes the newest frame soon.
+                changed = true;
+                WaitUntil(nullptr, std::chrono::steady_clock::now() + std::chrono::milliseconds(2));
+                continue;
+            }
         }
 
         XImage* got = nullptr;
@@ -657,20 +721,17 @@ void CaptureThread(::Window target)
             break;
         }
 
+        // The main thread copies the rows straight to the graphics card, making alpha opaque, from shared memory
+        // or from the image XGetImage made, which is the frame's own.
         back.width = width;
         back.height = height;
-        back.hold.reset();
-        back.pixels.resize(size_t(width) * height);
-        for (int y = 0; y < height; ++y)
-        {
-            const uint32_t* row = reinterpret_cast<const uint32_t*>(got->data + size_t(y) * got->bytes_per_line);
-            uint32_t* out = back.pixels.data() + size_t(y) * width;
-            // Windows without an alpha channel leave it undefined.
-            for (int x = 0; x < width; ++x)
-                out[x] = row[x] | 0xFF000000u;
-        }
-        if (got != image)
-            XDestroyImage(got);
+        back.pixels.clear();
+        back.memory = reinterpret_cast<const uint8_t*>(got->data);
+        back.stride = size_t(got->bytes_per_line);
+        if (got == image)
+            back.hold = std::move(mapping);
+        else
+            back.hold = std::shared_ptr<void>(got, [](void* own) { XDestroyImage(static_cast<XImage*>(own)); });
         publish();
     }
 
@@ -1597,7 +1658,8 @@ bool TakeFrame(Frame& frame)
     }
     frame.image = VK_NULL_HANDLE;
     frame.foreign = false;
-    if (frame.hold)
+    // A frame in memory holds its memory, not a dma-buf.
+    if (frame.hold && !frame.memory)
     {
         frame.image = Import(frame.hold);
         frame.foreign = true;
