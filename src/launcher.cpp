@@ -1301,6 +1301,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             break;
         }
         return 0;
+    // Windows ends the process once this returns, at shutdown or sign-out, without the main loop's quit, so what it
+    // saves is saved here, within the few seconds Windows waits. No one can be asked about unsaved preset changes
+    // now: with auto-save off they stay unsaved, as when the user answers No when quitting, since writing them would
+    // overwrite a preset the user chose not to save.
+    case WM_ENDSESSION:
+        if (wParam)
+        {
+            Log(LogLevel::Info, L"Windows is shutting down or signing out. Saving presets and the launcher's place.");
+            if (MenuHasUnsavedChanges())
+                Log(LogLevel::Warning, L"The unsaved changes to %ls were not saved.", ActivePresetName().c_str());
+            FlushPresets();
+            ForgetRemoved();
+            SavePlace();
+            FlushLog();
+        }
+        return 0;
     case WM_DESTROY:
         SavePlace();
         RemoveTrayIcon();
