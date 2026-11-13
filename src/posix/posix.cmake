@@ -296,6 +296,10 @@ if(BUILD_TESTING)
     set_target_properties(ini_text_tests PROPERTIES CXX_EXTENSIONS OFF)
     add_test(NAME ini_text_tests COMMAND ini_text_tests)
 
+    add_executable(preset_ini_tests "${CMAKE_SOURCE_DIR}/tests/preset_ini_tests.cpp")
+    target_compile_options(preset_ini_tests PRIVATE -Wall -Wextra)
+    add_test(NAME preset_ini_tests COMMAND preset_ini_tests)
+
     add_executable(posix_tests "${CMAKE_SOURCE_DIR}/tests/posix_tests.cpp")
     target_link_libraries(posix_tests PRIVATE unishade_core)
     add_test(NAME posix_tests COMMAND posix_tests)

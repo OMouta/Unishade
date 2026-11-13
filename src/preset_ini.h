@@ -1,13 +1,16 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 // A ReShade preset: keys before the first section, such as Techniques, then a section per effect file. Keeps
-// the order of sections and keys, so saving a preset changes only what changed. Section and key names compare
+// the order of sections and keys, so saving a preset changes only what changed. Comments, blank lines and other
+// lines that are not keys stay where they were, and so do sections without keys. Section and key names compare
 // without case, since effect files are named without case on Windows. Shared by every platform's host and
 // Setup.
 class PresetIni
@@ -17,6 +20,9 @@ public:
     {
         std::string name; // empty for the keys before the first section
         std::vector<std::pair<std::string, std::string>> values;
+        // Lines that are not keys, such as comments, each with the number of keys before it in the section.
+        std::vector<std::pair<size_t, std::string>> otherLines;
+        bool fromText = false; // a section the text had, which is written even without keys
     };
 
     PresetIni() { sections.push_back({}); }
@@ -30,29 +36,38 @@ public:
             while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t'))
                 line.pop_back();
             const size_t first = line.find_first_not_of(" \t");
-            if (first == std::string::npos || line[first] == ';' || line[first] == '#')
-                continue;
-            line.erase(0, first);
-            if (line.front() == '[' && line.back() == ']')
+            if (first != std::string::npos && line[first] != ';' && line[first] != '#')
             {
-                const std::string name = line.substr(1, line.size() - 2);
-                current = FindSection(name);
-                if (!current)
+                const std::string_view content = std::string_view(line).substr(first);
+                if (content.front() == '[' && content.back() == ']')
                 {
-                    sections.push_back({ name, {} });
-                    current = &sections.back();
+                    const std::string name(content.substr(1, content.size() - 2));
+                    current = FindSection(name);
+                    if (!current)
+                    {
+                        sections.push_back({ name, {}, {}, true });
+                        current = &sections.back();
+                    }
+                    current->fromText = true;
+                    continue;
                 }
-                continue;
+                if (const size_t equals = content.find('='); equals != std::string_view::npos)
+                {
+                    std::string key(content.substr(0, equals));
+                    while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
+                        key.pop_back();
+                    std::string value(content.substr(equals + 1));
+                    value.erase(0, value.find_first_not_of(" \t"));
+                    const auto known = std::find_if(current->values.begin(), current->values.end(),
+                                                    [&key](const auto& entry) { return Same(entry.first, key); });
+                    if (known != current->values.end())
+                        known->second = std::move(value);
+                    else
+                        current->values.emplace_back(std::move(key), std::move(value));
+                    continue;
+                }
             }
-            const size_t equals = line.find('=');
-            if (equals == std::string::npos)
-                continue;
-            std::string key = line.substr(0, equals);
-            while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
-                key.pop_back();
-            std::string value = line.substr(equals + 1);
-            value.erase(0, value.find_first_not_of(" \t"));
-            SetIn(*current, key, value);
+            current->otherLines.emplace_back(current->values.size(), std::move(line));
         }
     }
 
@@ -84,7 +99,7 @@ public:
         Section* found = FindSection(section);
         if (!found)
         {
-            sections.push_back({ section, {} });
+            sections.push_back({ section, {}, {}, false });
             found = &sections.back();
         }
         SetIn(*found, key, value);
@@ -92,8 +107,18 @@ public:
 
     void Remove(const std::string& section, const std::string& key)
     {
-        if (Section* found = FindSection(section))
-            std::erase_if(found->values, [&key](const auto& entry) { return Same(entry.first, key); });
+        Section* found = FindSection(section);
+        if (!found)
+            return;
+        for (size_t index = found->values.size(); index-- > 0;)
+            if (Same(found->values[index].first, key))
+            {
+                found->values.erase(found->values.begin() + static_cast<std::ptrdiff_t>(index));
+                // The lines after it move up with the keys.
+                for (auto& other : found->otherLines)
+                    if (other.first > index)
+                        --other.first;
+            }
     }
 
     std::string Text() const
@@ -103,12 +128,22 @@ public:
         {
             if (!section.name.empty())
             {
-                if (section.values.empty())
+                if (section.values.empty() && section.otherLines.empty() && !section.fromText)
                     continue;
-                text += (text.empty() ? "[" : "\n[") + section.name + "]\n";
+                // A blank line before a new section, unless the preset ends with one. Sections the text had stay
+                // as they were.
+                if (!section.fromText && !text.empty() && !text.ends_with("\n\n"))
+                    text += "\n";
+                text += "[" + section.name + "]\n";
             }
-            for (const auto& [key, value] : section.values)
-                text += key + "=" + value + "\n";
+            size_t other = 0;
+            for (size_t index = 0; index <= section.values.size(); ++index)
+            {
+                for (; other < section.otherLines.size() && section.otherLines[other].first <= index; ++other)
+                    text += section.otherLines[other].second + "\n";
+                if (index < section.values.size())
+                    text += section.values[index].first + "=" + section.values[index].second + "\n";
+            }
         }
         return text;
     }
@@ -159,6 +194,10 @@ private:
                 entry.second = value;
                 return;
             }
+        // After the last key, before the blank lines and comments that end the section.
+        for (auto& other : section.otherLines)
+            if (other.first == section.values.size())
+                ++other.first;
         section.values.emplace_back(key, value);
     }
 
