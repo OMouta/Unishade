@@ -308,6 +308,24 @@ struct MenuState
     // The effects listed under Active since the menu opened or the preset changed, as presets name them.
     std::set<std::string> active;
     fs::path activePreset;
+    // The Effects tab's lists, made again only when the techniques, the search or what is listed under Active
+    // changes. Each technique as it was when they were made, checked on every frame without allocating, so a reload
+    // or a new order can never leave them with indices that no longer fit.
+    struct ListedTechnique
+    {
+        std::string name;
+        std::string label;
+        std::string file;
+        std::string key; // as presets name it
+        size_t effect = 0;
+        bool enabled = false;
+        bool hidden = false;
+    };
+    std::vector<ListedTechnique> listed;
+    std::string listedSearch;
+    std::vector<int> activeRows; // in the order they run
+    std::vector<int> otherRows;  // by name
+    bool listStale = true;
     std::vector<PresetFolder> folders;
     double presetsListed = -10;
     fs::path pendingPreset; // waiting for an answer about unsaved changes
@@ -909,11 +927,10 @@ void ConfirmDialog(App& app)
 }
 
 // Effects that are on can be dragged onto each other to change the order they run in, which from and to take.
-void TechniqueRow(App& app, int index, int& moveFrom, int& moveTo)
+void TechniqueRow(App& app, int index, const std::string& key, int& moveFrom, int& moveTo)
 {
     fx::Technique& technique = app.runtime.Techniques()[index];
     fx::Effect& effect = app.runtime.Effects()[technique.effect];
-    const std::string key = fx::TechniqueKey(technique, effect);
     const std::string& label = technique.label.empty() ? technique.name : technique.label;
     const bool expanded = menu.expanded == key;
     ImGui::PushID(key.c_str());
@@ -1006,47 +1023,62 @@ void EffectsTab(App& app)
     if (techniques.empty())
         return;
 
-    const std::string filter = Lowercase(menu.search);
-    const auto label = [](const fx::Technique& technique) -> const std::string& { return technique.label.empty() ? technique.name : technique.label; };
-    const auto shown = [&](const fx::Technique& technique) {
-        return !technique.hidden &&
-               (filter.empty() || Lowercase(label(technique)).find(filter) != std::string::npos ||
-                Lowercase(effects[technique.effect].file).find(filter) != std::string::npos);
-    };
-
     // An effect turned off stays in Active until the menu closes, so it can be turned back on where it was.
     if (menu.activePreset != app.runtime.PresetPath())
     {
         menu.active.clear();
         menu.activePreset = app.runtime.PresetPath();
+        menu.listStale = true;
     }
-    for (const fx::Technique& technique : techniques)
-        if (technique.enabled)
-            menu.active.insert(fx::TechniqueKey(technique, effects[technique.effect]));
-    const auto active = [&](const fx::Technique& technique) { return menu.active.count(fx::TechniqueKey(technique, effects[technique.effect])) != 0; };
+    const auto label = [](const fx::Technique& technique) -> const std::string& { return technique.label.empty() ? technique.name : technique.label; };
+    bool same = !menu.listStale && menu.listed.size() == techniques.size() && menu.listedSearch == menu.search;
+    for (size_t i = 0; same && i < techniques.size(); ++i)
+    {
+        const fx::Technique& technique = techniques[i];
+        const MenuState::ListedTechnique& listed = menu.listed[i];
+        same = technique.effect < effects.size() && listed.effect == technique.effect && listed.enabled == technique.enabled &&
+               listed.hidden == technique.hidden && listed.name == technique.name && listed.label == technique.label &&
+               listed.file == effects[technique.effect].file;
+    }
+    if (!same)
+    {
+        menu.listStale = false;
+        menu.listedSearch = menu.search;
+        menu.listed.clear();
+        for (const fx::Technique& technique : techniques)
+        {
+            const fx::Effect& effect = effects[technique.effect];
+            menu.listed.push_back({ technique.name, technique.label, effect.file, fx::TechniqueKey(technique, effect), technique.effect, technique.enabled,
+                                    technique.hidden });
+            if (technique.enabled)
+                menu.active.insert(menu.listed.back().key);
+        }
+        const std::string filter = Lowercase(menu.search);
+        const auto shown = [&](const fx::Technique& technique) {
+            return !technique.hidden &&
+                   (filter.empty() || Lowercase(label(technique)).find(filter) != std::string::npos ||
+                    Lowercase(effects[technique.effect].file).find(filter) != std::string::npos);
+        };
+        menu.activeRows.clear();
+        menu.otherRows.clear();
+        for (int i = 0; i < static_cast<int>(techniques.size()); ++i)
+            if (shown(techniques[i]))
+                (menu.active.count(menu.listed[i].key) ? menu.activeRows : menu.otherRows).push_back(i);
+        // The rest by name.
+        std::sort(menu.otherRows.begin(), menu.otherRows.end(),
+                  [&](int a, int b) { return strcasecmp(label(techniques[a]).c_str(), label(techniques[b]).c_str()) < 0; });
+    }
 
-    const int count = static_cast<int>(techniques.size());
+    const bool searching = menu.search[0] != 0;
     int moveFrom = -1, moveTo = -1;
     Heading("ACTIVE");
-    bool any = false;
-    for (int i = 0; i < count; ++i)
-        if (active(techniques[i]) && shown(techniques[i]))
-        {
-            TechniqueRow(app, i, moveFrom, moveTo);
-            any = true;
-        }
-    if (!any)
-        Text(filter.empty() ? "No effects are on. Pick a preset or turn effects on below." : "No active effects match.", kDim, 13.5f);
+    for (int index : menu.activeRows)
+        TechniqueRow(app, index, menu.listed[index].key, moveFrom, moveTo);
+    if (menu.activeRows.empty())
+        Text(searching ? "No active effects match." : "No effects are on. Pick a preset or turn effects on below.", kDim, 13.5f);
 
     ImGui::Dummy(ImVec2(0, S(4)));
-    // The rest by name.
-    std::vector<int> others;
-    for (int i = 0; i < count; ++i)
-        if (!active(techniques[i]) && shown(techniques[i]))
-            others.push_back(i);
-    std::sort(others.begin(), others.end(), [&](int a, int b) { return strcasecmp(label(techniques[a]).c_str(), label(techniques[b]).c_str()) < 0; });
-    const bool searching = !filter.empty();
-    const std::string title = "ALL EFFECTS (" + std::to_string(others.size()) + ")";
+    const std::string title = "ALL EFFECTS (" + std::to_string(menu.otherRows.size()) + ")";
     PushSize(12);
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
     ImGui::SetNextItemOpen(searching || menu.showAll);
@@ -1057,8 +1089,8 @@ void EffectsTab(App& app)
     ImGui::PopStyleColor();
     ImGui::PopFont();
     if (open)
-        for (int index : others)
-            TechniqueRow(app, index, moveFrom, moveTo);
+        for (int index : menu.otherRows)
+            TechniqueRow(app, index, menu.listed[index].key, moveFrom, moveTo);
 
     if (moveFrom >= 0)
         app.runtime.MoveTechnique(moveFrom, moveTo);
@@ -2285,6 +2317,7 @@ void ResetMenu(App& app)
     StopRecording(app);
     app.compareButton = false;
     menu.active.clear();
+    menu.listStale = true;
     // A switch still waiting for an answer about unsaved changes is dropped.
     menu.pendingPreset.clear();
     menu.openUnsavedPopup = false;
