@@ -7,6 +7,8 @@
 #include <atomic>
 #include <cwchar>
 #include <iterator>
+#include <string>
+#include <string_view>
 
 namespace
 {
@@ -29,6 +31,92 @@ std::wstring IniPath()
 {
     // Keep the existing filename so upgrades retain shortcuts and menu settings.
     return ExeDirectory() + L"RobloxShadeHost.ini";
+}
+
+// The profile functions keep a file in the system's ANSI code page unless it starts with a UTF-16LE byte order mark,
+// and then they read and write UTF-16. In the code page, a game or preset name it cannot hold, such as a Japanese
+// title on an English Windows, is saved as question marks and never found again. So the file gets the mark before
+// its first entry, and a file from an older version is converted once. When that fails the old file stays in use.
+void MakeIniUnicode(const std::wstring& path)
+{
+    std::string bytes;
+    const HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file != INVALID_HANDLE_VALUE)
+    {
+        LARGE_INTEGER size{};
+        // Settings are a few kilobytes. Anything near this is not a file the host wrote, so it is left alone.
+        bool read = GetFileSizeEx(file, &size) && size.QuadPart < 16 * 1024 * 1024;
+        if (read && size.QuadPart > 0)
+        {
+            bytes.resize(static_cast<size_t>(size.QuadPart));
+            DWORD count = 0;
+            read = ReadFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &count, nullptr) && count == bytes.size();
+        }
+        CloseHandle(file);
+        if (!read)
+        {
+            Log(LogLevel::Warning, L"Could not read %ls to save it as Unicode.", path.c_str());
+            return;
+        }
+        if (bytes.size() >= 2 && bytes[0] == '\xFF' && bytes[1] == '\xFE')
+            return;
+    }
+    else if (const DWORD error = GetLastError(); error != ERROR_FILE_NOT_FOUND)
+    {
+        Log(LogLevel::Warning, L"Could not open %ls to save it as Unicode (Windows error %lu).", path.c_str(), error);
+        return;
+    }
+
+    // What the profile functions read from a file without the mark: the code page, or UTF-8 after its own mark,
+    // which they would misread. Text that is valid UTF-8 was written by an editor such as Notepad, since the host
+    // only wrote the code page.
+    std::string_view text = bytes;
+    UINT codePage = CP_UTF8;
+    DWORD flags = MB_ERR_INVALID_CHARS;
+    if (text.starts_with("\xEF\xBB\xBF"))
+        text.remove_prefix(3);
+    else if (!text.empty() && !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0))
+    {
+        codePage = CP_ACP;
+        flags = 0;
+    }
+    std::wstring unicode(1, L'\xFEFF');
+    if (!text.empty())
+    {
+        const int size = MultiByteToWideChar(codePage, flags, text.data(), static_cast<int>(text.size()), nullptr, 0);
+        if (size <= 0)
+        {
+            Log(LogLevel::Warning, L"Could not convert %ls to Unicode (Windows error %lu).", path.c_str(), GetLastError());
+            return;
+        }
+        unicode.resize(1 + static_cast<size_t>(size));
+        MultiByteToWideChar(codePage, flags, text.data(), static_cast<int>(text.size()), unicode.data() + 1, size);
+    }
+
+    // Written beside it and moved over it, so a crash while writing cannot lose the settings.
+    const std::wstring temporary = path + L".tmp";
+    const HANDLE output = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    bool written = output != INVALID_HANDLE_VALUE;
+    if (written)
+    {
+        const DWORD size = static_cast<DWORD>(unicode.size() * sizeof(wchar_t));
+        DWORD count = 0;
+        written = WriteFile(output, unicode.data(), size, &count, nullptr) && count == size;
+        CloseHandle(output);
+    }
+    if (!written || !MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    {
+        const DWORD error = GetLastError();
+        DeleteFileW(temporary.c_str());
+        Log(LogLevel::Warning, L"Could not save %ls as Unicode (Windows error %lu), so names outside the system's code page are not "
+                               L"kept.", path.c_str(), error);
+        return;
+    }
+    // Drops any copy Windows cached of the file as it was.
+    WritePrivateProfileStringW(nullptr, nullptr, nullptr, path.c_str());
+    if (!bytes.empty())
+        Log(LogLevel::Info, L"Saved %ls as Unicode.", path.c_str());
 }
 
 bool CachedFlag(std::atomic<int>& cached, const wchar_t* name, bool fallback)
@@ -213,7 +301,9 @@ std::wstring ExeDirectory()
 void LoadInputHotkeys()
 {
     const std::wstring path = IniPath();
-    if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES)
+    const bool existed = GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+    MakeIniUnicode(path);
+    if (!existed)
     {
         bool written = true;
         for (const Shortcut& shortcut : kShortcuts)
