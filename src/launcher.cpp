@@ -26,6 +26,7 @@
 #include <wincodec.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <map>
@@ -36,6 +37,8 @@
 #include <vector>
 
 namespace fs = std::filesystem;
+using Clock = std::chrono::steady_clock;
+using std::chrono::milliseconds;
 
 namespace
 {
@@ -124,6 +127,9 @@ struct Launcher
     std::vector<uint32_t> pixels;
     // Frames still to draw after input, so hover and clicks settle.
     int settle = 0;
+    // When the window last painted, and when the frame timer fires while it is set.
+    Clock::time_point lastPaint;
+    std::optional<Clock::time_point> frameDue;
 
     // Where games saved by filename were found running.
     std::map<std::wstring, fs::path> located;
@@ -530,12 +536,41 @@ Shown CurrentShown()
     return shown;
 }
 
+// The window draws on the CPU, on the thread that shows the game's frames, so it paints at most once a display frame,
+// and about 30 times a second while the effects show over a game.
+milliseconds PaintInterval()
+{
+    return milliseconds(g.target && g.overlayVisible ? 33 : 16);
+}
+
+// Paints when the frame timer fires after delay, unless it already fires sooner.
+void PaintIn(milliseconds delay)
+{
+    const Clock::time_point due = Clock::now() + delay;
+    if (!g.launcher || (l.frameDue && *l.frameDue <= due))
+        return;
+    l.frameDue = due;
+    SetTimer(g.launcher, kFrameTimer, static_cast<UINT>(std::max<milliseconds::rep>(delay.count(), USER_TIMER_MINIMUM)), nullptr);
+}
+
+// Paints now, or once the last paint is a frame old. Input keeps reaching Dear ImGui meanwhile, and the paint after
+// the last of it shows where it left things.
+void PaintSoon()
+{
+    if (!g.launcher)
+        return;
+    const milliseconds wait = std::chrono::ceil<milliseconds>(l.lastPaint + PaintInterval() - Clock::now());
+    if (wait.count() <= 0)
+        InvalidateRect(g.launcher, nullptr, FALSE);
+    else
+        PaintIn(wait);
+}
+
 // Draws again for a few frames, which lets hover and clicks settle.
 void Wake()
 {
     l.settle = 3;
-    if (g.launcher)
-        InvalidateRect(g.launcher, nullptr, FALSE);
+    PaintSoon();
 }
 
 void Refresh()
@@ -995,6 +1030,9 @@ void Paint(HWND window)
                           DIB_RGB_COLORS);
     }
     EndPaint(window, &paint);
+    l.lastPaint = Clock::now();
+    KillTimer(window, kFrameTimer);
+    l.frameDue.reset();
 
     // What the user did shows in the next frame.
     if (std::exchange(l.dirty, false))
@@ -1005,9 +1043,7 @@ void Paint(HWND window)
         next = next ? std::min(next, 16u) : 16;
     }
     if (next)
-        SetTimer(window, kFrameTimer, next, nullptr);
-    else
-        KillTimer(window, kFrameTimer);
+        PaintIn(std::max(milliseconds(next), PaintInterval()));
 }
 
 NOTIFYICONDATAW TrayData()
@@ -1129,7 +1165,7 @@ void TrayMenu(int x, int y)
     }
 }
 
-// Mouse and keyboard input, after which the window draws again.
+// Mouse and keyboard input, after which the window draws again, no sooner than a frame after it last did.
 bool Input(UINT message)
 {
     return (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) || (message >= WM_KEYFIRST && message <= WM_KEYLAST) || message == WM_MOUSELEAVE ||
@@ -1174,6 +1210,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         if (wParam == kFrameTimer)
         {
             KillTimer(hwnd, kFrameTimer);
+            l.frameDue.reset();
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         else if (wParam == kUndoTimer)
