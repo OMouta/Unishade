@@ -37,6 +37,10 @@ bool waitingForFrame = false;
 FrameStatistics::Clock::time_point capacityWaitStarted{};
 double capacityWaitMs = 0;
 winrt::com_ptr<ID3D11RenderTargetView> scaleTarget;
+// HDR can be turned on or off, SDR brightness changed and the game moved to another display while it is captured,
+// so the display is asked again this often. Asking takes QueryDisplayConfig, which is too slow for every frame.
+constexpr ULONGLONG kHdrCheckInterval = 1000;
+ULONGLONG nextHdrCheck = 0;
 
 enum class FrameStage : uint8_t { Idle, Swapchain, Resize, Prepare, Depth, Present, Capacity };
 // Time and stage share one atomic so the monitor cannot combine two different frames.
@@ -206,10 +210,12 @@ struct Scaler
 };
 Scaler scaler;
 
-// Draws the frame into a back buffer of another size, or an HDR frame as SDR. Capture's textures are not promised to
+// Draws the frame into a back buffer of another size, or an HDR frame as SDR. hdr comes from the frame's own format,
+// since a frame captured before HDR was turned on or off can still arrive. Capture's textures are not promised to
 // be readable by shaders. When the frame's is, it is drawn from directly through a view made for this draw only, so
 // none outlives the frame's return to the pool. Otherwise the frame is copied into a texture that is.
-void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& size, ID3D11Texture2D* backBuffer, UINT width, UINT height, int64_t frameTimestamp)
+void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& size, ID3D11Texture2D* backBuffer, UINT width, UINT height, int64_t frameTimestamp,
+               bool hdr)
 {
     if (!scaler.sampler)
     {
@@ -277,9 +283,9 @@ void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& size, ID3D11T
         g.context->CopyResource(scaler.frame.get(), frame);
         scaler.lastInput = frameTimestamp;
     }
-    if (g.hdrWhiteLevel)
+    if (hdr)
     {
-        const float sdrWhite[4] = { *g.hdrWhiteLevel / 80 };
+        const float sdrWhite[4] = { g.hdrWhiteLevel.value_or(80) / 80 };
         g.context->UpdateSubresource(scaler.sdrWhite.get(), 0, nullptr, sdrWhite, 0, 0);
     }
 
@@ -293,7 +299,7 @@ void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& size, ID3D11T
     g.context->IASetInputLayout(nullptr);
     g.context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     g.context->VSSetShader(scaler.vertexShader.get(), nullptr, 0);
-    g.context->PSSetShader(g.hdrWhiteLevel ? scaler.tonemapShader.get() : scaler.pixelShader.get(), nullptr, 0);
+    g.context->PSSetShader(hdr ? scaler.tonemapShader.get() : scaler.pixelShader.get(), nullptr, 0);
     g.context->PSSetShaderResources(0, 1, views);
     g.context->PSSetSamplers(0, 1, samplers);
     g.context->PSSetConstantBuffers(0, 1, constants);
@@ -436,6 +442,7 @@ void StartCapture(HWND target)
     winrt::check_hresult(interop->CreateForWindow(target, winrt::guid_of<GraphicsCaptureItem>(), winrt::put_abi(item)));
 
     g.hdrWhiteLevel = HdrWhiteLevel(target);
+    nextHdrCheck = GetTickCount64() + kHdrCheckInterval;
     g.poolSize = item.Size();
     Log(LogLevel::Info, L"Creating capture pool: hwnd=%p, size=%dx%d, buffers=%d, format=%d, SDR_white=%.1f nits, border_required=%d.",
         target, g.poolSize.Width, g.poolSize.Height, kFrameBuffers, static_cast<int>(g.hdrWhiteLevel ? kHdrPixelFormat : kPixelFormat),
@@ -512,6 +519,40 @@ void StopCapture()
     g.activeGame.reset();
     SetPerformanceGame({});
     g.frameStatistics.Reset(FrameStatistics::Clock::now(), g.capturedFrames.load(std::memory_order_relaxed));
+}
+
+void UpdateHdr()
+{
+    // Without a pool, capture is paused and asks again when it starts.
+    if (!g.target || !g.pool)
+        return;
+    const ULONGLONG now = GetTickCount64();
+    if (now < nextHdrCheck)
+        return;
+    nextHdrCheck = now + kHdrCheckInterval;
+    const std::optional<float> level = HdrWhiteLevel(g.target);
+    if (level.has_value() == g.hdrWhiteLevel.has_value())
+    {
+        if (level != g.hdrWhiteLevel)
+            Log(LogLevel::Info, L"SDR white on the game's display changed: %.1f -> %.1f nits.", *g.hdrWhiteLevel, *level);
+        g.hdrWhiteLevel = level;
+        return;
+    }
+
+    // Frames in the old format are dropped, and capture goes on in the new one.
+    g.latestFrame = nullptr;
+    {
+        const std::lock_guard lock(g.frameMutex);
+        g.arrivedFrame = nullptr;
+    }
+    g.hdrWhiteLevel = level;
+    g.pool.Recreate(g.captureDevice, level ? kHdrPixelFormat : kPixelFormat, kFrameBuffers, g.poolSize);
+    scaler.view = nullptr;
+    scaler.frame = nullptr;
+    scaler.lastInput.reset();
+    ResetDepthInput();
+    Log(LogLevel::Info, L"HDR turned %ls on the game's display, so capture continues in format %d, SDR_white=%.1f nits.",
+        level ? L"on" : L"off", static_cast<int>(level ? kHdrPixelFormat : kPixelFormat), level.value_or(80));
 }
 
 void SetCaptureIdle(bool idle)
@@ -648,10 +689,11 @@ bool PresentLatestFrame()
 
     winrt::com_ptr<ID3D11Texture2D> backBuffer;
     winrt::check_hresult(g.swapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), backBuffer.put_void()));
-    if (width == size.Width && height == size.Height && !g.hdrWhiteLevel)
+    const bool hdr = size.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+    if (width == size.Width && height == size.Height && !hdr)
         g.context->CopyResource(backBuffer.get(), surface.get());
     else
-        DrawFrame(surface.get(), size, backBuffer.get(), width, height, frameTimestamp);
+        DrawFrame(surface.get(), size, backBuffer.get(), width, height, frameTimestamp, hdr);
     const auto prepared = FrameStatistics::Clock::now();
     if (gpu)
         g.context->End(gpu->stamps[1].get());

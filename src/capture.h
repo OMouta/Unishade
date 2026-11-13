@@ -23,6 +23,10 @@ void StartCapture(HWND target);
 // Ends capture, releases input, and clears the target.
 void StopCapture();
 
+// Asks the game's display about once a second whether HDR is on and how bright SDR white is, and captures in the
+// matching format. Call it from the frame loop while capturing.
+void UpdateHdr();
+
 // Slows capture while the overlay is hidden. Older Windows versions pause it until the overlay shows again.
 void SetCaptureIdle(bool idle);
 

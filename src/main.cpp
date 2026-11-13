@@ -330,6 +330,8 @@ int64_t RefreshInterval(ULONGLONG now)
 // used, though no faster than the monitor refreshes. Otherwise the last frame is shown again every kRepeatInterval.
 void ShowFrames()
 {
+    UpdateHdr();
+
     // Only the newest frame matters. The capture worker keeps it, and the one shown before goes back to the pool.
     bool fresh = false;
     {
