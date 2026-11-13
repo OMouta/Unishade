@@ -27,13 +27,6 @@ bool HaveDataDirectory()
     return false;
 }
 
-// Rotating the log while another Unishade writes to it would split that one's log, so only the first one does.
-void InitLogUnlessRunning(const FileLock& instance)
-{
-    if (!instance.Busy())
-        InitLog();
-}
-
 void Usage()
 {
     printf("Unishade %s\n\n"
@@ -204,9 +197,9 @@ int main(int argc, char** argv)
         {
             if (!HaveDataDirectory())
                 return 1;
-            // Setup takes a lock of its own, so this cannot mix with an install the launcher runs.
-            const FileLock instance(DataDirectory() / "unishade.lock");
-            InitLogUnlessRunning(instance);
+            // Setup takes a lock of its own, so this cannot mix with an install the launcher runs. The single-instance
+            // lock is the launcher's alone, so the launcher can start while this runs.
+            InitTerminalLog();
             const int result = EffectSetup::RunInTerminal();
             Log(LogLevel::Info, "Session ended: exit_code=%d.", result);
             FlushLog();
@@ -221,8 +214,7 @@ int main(int argc, char** argv)
             }
             if (!HaveDataDirectory())
                 return 1;
-            const FileLock instance(DataDirectory() / "unishade.lock");
-            InitLogUnlessRunning(instance);
+            InitTerminalLog();
             const bool gpuSource = i + 4 < argc && !strcmp(argv[i + 4], "--gpu-source");
             const int result = Render(argv[i + 1], argv[i + 2], argv[i + 3], gpuSource);
             Log(LogLevel::Info, "Session ended: exit_code=%d.", result);

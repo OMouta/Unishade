@@ -218,6 +218,18 @@ void Write(LogLevel level, bool report, const char* format, va_list args)
         notices.erase(notices.begin());
     notices.push_back({ level, text });
 }
+
+// Crashes are written to crashPath, when there is one, and to stderr.
+void InstallCrashHandlers()
+{
+    struct sigaction action{};
+    action.sa_sigaction = OnCrash;
+    action.sa_flags = SA_SIGINFO | SA_RESETHAND;
+    sigemptyset(&action.sa_mask);
+    for (int signal : { SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE })
+        sigaction(signal, &action, nullptr);
+    std::set_terminate(OnTerminate);
+}
 } // namespace
 
 void InitLog()
@@ -231,13 +243,7 @@ void InitLog()
     const auto size = std::filesystem::file_size(path, sizeError);
     logSize = sizeError ? 0 : static_cast<size_t>(size);
     snprintf(crashPath, sizeof(crashPath), "%s", path.c_str());
-    struct sigaction action{};
-    action.sa_sigaction = OnCrash;
-    action.sa_flags = SA_SIGINFO | SA_RESETHAND;
-    sigemptyset(&action.sa_mask);
-    for (int signal : { SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE })
-        sigaction(signal, &action, nullptr);
-    std::set_terminate(OnTerminate);
+    InstallCrashHandlers();
 
     utsname system{};
     uname(&system);
@@ -251,6 +257,14 @@ void InitLog()
     for (uint32_t i = 0; i < _dyld_image_count(); ++i)
         Log(LogLevel::Info, "Module: %s, base=%p.", _dyld_get_image_name(i), static_cast<const void*>(_dyld_get_image_header(i)));
 #endif
+}
+
+void InitTerminalLog()
+{
+    InstallCrashHandlers();
+    utsname system{};
+    uname(&system);
+    Log(LogLevel::Info, "Unishade %s on %s %s (%s)", UNISHADE_VERSION, system.sysname, system.release, system.machine);
 }
 
 void FlushLog()

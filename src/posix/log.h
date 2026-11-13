@@ -21,6 +21,9 @@ struct Notice
 // Opens Unishade.log in the data folder and writes a header with the version and system. The previous run's log
 // is kept as Unishade.old.log. Lines also go to stderr.
 void InitLog();
+// For the command-line modes, which may run beside the launcher: lines go to stderr only, so the launcher's log is
+// neither rotated away nor written by two processes. Crashes are reported on stderr too.
+void InitTerminalLog();
 
 // Writes a timestamped line to the log. Warnings and errors are also shown in the launcher and the menu.
 // printf-style. Safe from any thread. At 16 MB the file rolls over to Unishade.previous.log.
