@@ -62,6 +62,17 @@ enum Timer : UINT_PTR
     kUndoTimer = 1,
     kTrayTimer,
     kFrameTimer,
+    kModalTimer,
+};
+
+// What holds the launcher in a modal loop, while the main loop waits for it to end.
+enum Modal : unsigned
+{
+    kMoveLoop = 1 << 0,
+    kMenuLoop = 1 << 1,
+    kHeldFrame = 1 << 2,
+    kTrayMenu = 1 << 3,
+    kQuitPrompt = 1 << 4,
 };
 
 // Sent to the launcher by its notification area icon.
@@ -130,6 +141,8 @@ struct Launcher
     // When the window last painted, and when the frame timer fires while it is set.
     Clock::time_point lastPaint;
     std::optional<Clock::time_point> frameDue;
+    // The modal loops running, as Modal flags.
+    unsigned modal = 0;
 
     // Where games saved by filename were found running.
     std::map<std::wstring, fs::path> located;
@@ -1104,6 +1117,25 @@ void RemoveTrayIcon()
     l.trayIcon = nullptr;
 }
 
+// Moving or sizing the window, its menus and message boxes run modal loops that keep the main loop from running, so
+// the overlay would show the same frame over the live game until they end. Window timers still fire inside them, so
+// one shows the game's frames meanwhile. Windows makes it fire at most every 10 ms.
+void BeginModal(Modal reason)
+{
+    if (!g.launcher)
+        return;
+    if (!l.modal)
+        SetTimer(g.launcher, kModalTimer, USER_TIMER_MINIMUM, nullptr);
+    l.modal |= reason;
+}
+
+void EndModal(Modal reason)
+{
+    l.modal &= ~static_cast<unsigned>(reason);
+    if (!l.modal && g.launcher)
+        KillTimer(g.launcher, kModalTimer);
+}
+
 // Brings the launcher back from the notification area or the taskbar, maximized if it was.
 void ShowLauncher()
 {
@@ -1133,7 +1165,10 @@ bool ConfirmQuit()
     }
     const std::wstring name = ActivePresetName();
     const std::wstring question = L"Save the changes to " + (name.empty() ? std::wstring(L"the preset") : name) + L" before quitting?";
-    switch (MessageBoxW(g.launcher, question.c_str(), L"Unishade", MB_YESNOCANCEL | MB_ICONWARNING))
+    BeginModal(kQuitPrompt);
+    const int answer = MessageBoxW(g.launcher, question.c_str(), L"Unishade", MB_YESNOCANCEL | MB_ICONWARNING);
+    EndModal(kQuitPrompt);
+    switch (answer)
     {
     case IDYES:
         FlushPresets(true);
@@ -1159,8 +1194,10 @@ void TrayMenu(int x, int y)
     // Otherwise the menu stays open when clicking elsewhere.
     SetForegroundWindow(g.launcher);
     const UINT align = GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN : TPM_LEFTALIGN;
+    BeginModal(kTrayMenu);
     const UINT command =
         static_cast<UINT>(TrackPopupMenuEx(menu, align | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, x, y, g.launcher, nullptr));
+    EndModal(kTrayMenu);
     PostMessageW(g.launcher, WM_NULL, 0, 0);
     DestroyMenu(menu);
     switch (command)
@@ -1236,7 +1273,30 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             KillTimer(hwnd, kTrayTimer);
             AddTrayIcon();
         }
+        else if (wParam == kModalTimer)
+            PumpFrames();
         return 0;
+    case WM_ENTERSIZEMOVE:
+        BeginModal(kMoveLoop);
+        break;
+    case WM_EXITSIZEMOVE:
+        EndModal(kMoveLoop);
+        break;
+    case WM_ENTERMENULOOP:
+        BeginModal(kMenuLoop);
+        break;
+    case WM_EXITMENULOOP:
+        EndModal(kMenuLoop);
+        break;
+    // A click held on the title bar or a border is already in the move or size loop, which only sends
+    // WM_ENTERSIZEMOVE once the mouse moves. The loop ends before DefWindowProcW returns.
+    case WM_NCLBUTTONDOWN:
+    {
+        BeginModal(kHeldFrame);
+        const LRESULT result = DefWindowProcW(hwnd, message, wParam, lParam);
+        EndModal(kHeldFrame);
+        return result;
+    }
     case WM_SIZE:
         if (wParam != SIZE_MINIMIZED)
             Wake();
@@ -1318,6 +1378,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         }
         return 0;
     case WM_DESTROY:
+        KillTimer(hwnd, kModalTimer);
+        l.modal = 0;
         SavePlace();
         RemoveTrayIcon();
         g.launcher = nullptr;
