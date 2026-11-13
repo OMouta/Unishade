@@ -122,7 +122,7 @@ struct Launcher
     // While the window draws, what the user does only sets dirty, since the model it draws must not change.
     bool drawing = false;
     bool dirty = false;
-    // Goes up when pictures may have changed.
+    // Goes up when pictures may have changed, which makes the window check each picture's stamp.
     unsigned pictures = 0;
     std::vector<uint32_t> pixels;
     // Frames still to draw after input, so hover and clicks settle.
@@ -314,6 +314,19 @@ public:
         const bool copied = SUCCEEDED(l.imaging->CreateBitmapFromHICON(icon, bitmap.put())) && CopyScaled(bitmap.get(), size, rgba);
         DestroyIcon(icon);
         return copied;
+    }
+
+    // When the picture's file was last written, or 0 when there is none, so a logo the menu saved or an executable a
+    // game's update replaced loads again. The logo is part of Unishade and never changes.
+    uint64_t Stamp(std::string_view key) override
+    {
+        if (!key.starts_with("png:") && !key.starts_with("exe:"))
+            return 0;
+        WIN32_FILE_ATTRIBUTE_DATA data{};
+        if (!GetFileAttributesExW(Wide(key.substr(4)).c_str(), GetFileExInfoStandard, &data))
+            return 0;
+        return (uint64_t(data.ftLastWriteTime.dwHighDateTime) << 32 | data.ftLastWriteTime.dwLowDateTime) ^
+               (uint64_t(data.nFileSizeHigh) << 32 | data.nFileSizeLow);
     }
 };
 Pictures pictures;

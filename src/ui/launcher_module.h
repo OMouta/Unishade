@@ -26,6 +26,9 @@ class LauncherPictures
 public:
     // Fills rgba with the picture, size by size pixels of red, green, blue and alpha. Returns false when there is none.
     virtual bool Pixels(std::string_view key, int size, uint8_t* rgba) = 0;
+    // Changes when the picture may have, such as when its file was written again, and stays the same otherwise. When
+    // the model's pictures go up, only the pictures whose stamp changed are loaded again.
+    virtual uint64_t Stamp(std::string_view key) = 0;
 
 protected:
     ~LauncherPictures() = default;

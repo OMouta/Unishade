@@ -23,6 +23,8 @@ struct Picture
 {
     ImTextureID texture = ImTextureID_Invalid;
     ImU32 tint = 0;
+    // The source's stamp when it was loaded.
+    uint64_t stamp = 0;
 };
 
 class Module final : public LauncherUi
@@ -72,7 +74,7 @@ public:
         ImGui::SetCurrentContext(context);
         if (model.pictures != picturesVersion)
         {
-            ForgetPictures();
+            ForgetChangedPictures(source);
             picturesVersion = model.pictures;
         }
         current = this;
@@ -102,6 +104,8 @@ public:
         const auto [entry, added] = pictures.try_emplace({ key, size });
         if (!added || size <= 0 || !sourceNow)
             return entry->second.texture;
+        // Before the pixels, so a change while they load shows the next time pictures may have changed.
+        entry->second.stamp = sourceNow->Stamp(key);
         std::vector<uint8_t> rgba(static_cast<size_t>(size) * size * 4);
         if (!sourceNow->Pixels(key, size, rgba.data()))
             return ImTextureID_Invalid;
@@ -176,9 +180,34 @@ private:
         pictures.clear();
     }
 
+    // Extracting and scaling every icon again takes long on the thread that shows the game's frames, so only the
+    // pictures whose source changed are forgotten, at every size they were loaded.
+    void ForgetChangedPictures(LauncherPictures& source)
+    {
+        std::string key;
+        uint64_t stamp = 0;
+        for (auto entry = pictures.begin(); entry != pictures.end();)
+        {
+            // The map is sorted by key, so each key's sizes come together and its stamp is asked once.
+            if (entry == pictures.begin() || entry->first.first != key)
+            {
+                key = entry->first.first;
+                stamp = source.Stamp(key);
+            }
+            if (entry->second.stamp == stamp)
+            {
+                ++entry;
+                continue;
+            }
+            if (entry->second.texture != ImTextureID_Invalid)
+                soft::DestroyTexture(entry->second.texture);
+            entry = pictures.erase(entry);
+        }
+    }
+
     ImGuiContext* context = nullptr;
     LauncherPictures* sourceNow = nullptr;
-    // By key and size in pixels. A picture without pixels keeps an empty entry until the model's pictures change.
+    // By key and size in pixels. A picture without pixels keeps an empty entry until its stamp changes.
     std::map<std::pair<std::string, int>, Picture> pictures;
     unsigned picturesVersion = 0;
 };
