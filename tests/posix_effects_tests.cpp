@@ -249,6 +249,42 @@ int main()
         ok &= Check(runtime.ReadsInput(), "a shortcut reads it for a technique that is off");
     }
 
+    // Effects loaded again with the preset's unsaved changes take them, and the file stays as it was.
+    {
+        const fs::path folder = fs::temp_directory_path() / ("unishade-keep-tests-" + std::to_string(getpid()));
+        fs::create_directories(folder);
+        const std::string original = "Techniques=\n\n[A.fx]\nStrength=0.500000\n";
+        Write(folder / "Preset.ini", original);
+        const auto read = [](const fs::path& path) {
+            std::ifstream file(path, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        };
+        fx::Runtime runtime;
+        runtime.LoadPreset(folder / "Preset.ini");
+        runtime.Effects().resize(1);
+        fx::Effect& effect = runtime.Effects()[0];
+        effect.file = "A.fx";
+        effect.compiled = true;
+        fx::Uniform strength = MakeUniform(reshadefx::type::t_float, 1, 1, 0, 0);
+        strength.name = "Strength";
+        effect.uniforms.push_back(strength);
+        effect.uniformData.resize(16);
+        runtime.Techniques() = { MakeTechnique("T", "", 0, 0) };
+        const float value = 0.75f;
+        runtime.SetValue(effect, effect.uniforms[0], &value, 1);
+        runtime.SetEnabled(0, true);
+        runtime.ReloadKeepingChanges();
+        ok &= Check(runtime.Dirty() && read(folder / "Preset.ini") == original, "the changes stay unsaved");
+        // As when the reload takes the effects away, before they arrive again.
+        runtime.Effects().clear();
+        runtime.Techniques().clear();
+        ok &= Check(runtime.MissingTechniques() == std::vector<std::string>{ "T@A.fx" }, "a technique turned on stays on");
+        ok &= Check(runtime.SavePresetAs(folder / "Kept.ini") && read(folder / "Kept.ini").find("Strength=0.750000") != std::string::npos,
+                    "and a value changed keeps its value");
+        std::error_code ignored;
+        fs::remove_all(folder, ignored);
+    }
+
     std::printf(ok ? "All effect tests passed.\n" : "Some effect tests failed.\n");
     return ok ? 0 : 1;
 }

@@ -134,8 +134,15 @@ void App::Run()
         if (setup.TakeFinished())
         {
             effectsCheckTime = -10;
-            runtime.LoadPreset(settings.preset);
-            runtime.Reload();
+            // The launcher asks to save or discard changes before downloading, but the menu can make more meanwhile.
+            // Those stay, unsaved, rather than the preset being read again from its file.
+            if (runtime.Dirty())
+                runtime.ReloadKeepingChanges();
+            else
+            {
+                runtime.LoadPreset(settings.preset);
+                runtime.Reload();
+            }
         }
         TakeScreenshots();
 

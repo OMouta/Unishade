@@ -234,6 +234,9 @@ public:
     // being recorded may still use the current ones. Effects the current preset uses come first. The rest follow
     // on fewer threads at low priority, so a game keeps its cores.
     void Reload() { reloadRequested = true; }
+    // The same, keeping the changes made since the preset was loaded or saved, which Reload would drop: the effects
+    // that arrive take them, and they stay unsaved. For new effects installed while the preset had changes.
+    void ReloadKeepingChanges();
     // Includes the loader's final results until Update takes them and prepares the enabled effects.
     bool Loading() const { return loaderRunning || summaryPending || PresetLoading(); }
     // The same for the effects the preset uses, which are done before the rest. Presets can be saved meanwhile:
@@ -356,6 +359,8 @@ private:
     // Sets or, with an empty value, removes a definition in the preset's section for the effect.
     void PutDefinition(const std::string& file, const std::string& name, const std::string& value);
     bool WritePreset(const fs::path& path, PresetIni preset);
+    // The preset with the effects as they are, as WritePreset saves it, in the given order.
+    PresetIni ComposePreset(PresetIni preset, const std::vector<std::string>& order) const;
     void Enable(Technique& technique, bool enabled);
     bool ImagesReady(Effect& effect);
     bool CreateGpu(Effect& effect);

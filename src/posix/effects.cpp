@@ -1845,6 +1845,31 @@ bool Runtime::SavePreset()
 
 bool Runtime::WritePreset(const fs::path& path, PresetIni preset)
 {
+    const std::vector<std::string> order = SortingKeys();
+    preset = ComposePreset(std::move(preset), order);
+    if (!WriteFile(path, preset.Text()))
+    {
+        Log(LogLevel::Warning, "Could not save the preset %s.", path.c_str());
+        return false;
+    }
+    sorting = order;
+    presetIni = std::move(preset);
+    dirty = false;
+    return true;
+}
+
+void Runtime::ReloadKeepingChanges()
+{
+    // The effects that arrive take their state from presetIni, so it takes the changes, while the file stays as it
+    // was and the preset stays unsaved.
+    std::vector<std::string> order = SortingKeys();
+    presetIni = ComposePreset(presetIni, order);
+    sorting = std::move(order);
+    Reload();
+}
+
+PresetIni Runtime::ComposePreset(PresetIni preset, const std::vector<std::string>& order) const
+{
     std::vector<std::string> enabled, loaded;
     std::set<size_t> used;
     for (const Technique& technique : techniques)
@@ -1868,7 +1893,6 @@ bool Runtime::WritePreset(const fs::path& path, PresetIni preset)
                 enabled.push_back(key);
     preset.Set("", "Techniques", PresetIni::Join(enabled));
     // While effects load, the order keeps the places of the techniques still to come.
-    std::vector<std::string> order = SortingKeys();
     preset.Set("", "TechniqueSorting", PresetIni::Join(order));
     // Each effect's definitions, which the menu changes. The preset's own are left as they are.
     for (const std::string& section : preset.SectionNames())
@@ -1905,15 +1929,7 @@ bool Runtime::WritePreset(const fs::path& path, PresetIni preset)
             preset.Set(effect.file, uniform.name, text);
         }
     }
-    if (!WriteFile(path, preset.Text()))
-    {
-        Log(LogLevel::Warning, "Could not save the preset %s.", path.c_str());
-        return false;
-    }
-    sorting = order;
-    presetIni = std::move(preset);
-    dirty = false;
-    return true;
+    return preset;
 }
 
 bool Runtime::SavePresetAs(const fs::path& path)
