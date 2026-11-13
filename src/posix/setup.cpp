@@ -305,29 +305,3 @@ void EffectSetup::Run()
     state.notes = notes;
     finishedFlag = true;
 }
-
-int EffectSetup::RunInTerminal()
-{
-    EffectSetup setup;
-    setup.Start();
-    std::string last;
-    for (State state = setup.Read(); state.running; state = setup.Read())
-    {
-        const std::string line = state.status + (state.detail.empty() ? "" : " - " + state.detail);
-        if (line != last)
-            printf("%3d%%  %s\n", int(state.fraction * 100), line.c_str());
-        last = line;
-        usleep(200'000);
-    }
-    setup.thread.join();
-    const State state = setup.Read();
-    for (const std::string& note : state.notes)
-        printf("Skipped %s\n", note.c_str());
-    if (!state.error.empty())
-    {
-        fprintf(stderr, "%s\n", state.error.c_str());
-        return 1;
-    }
-    printf("%s\n", state.status.c_str());
-    return 0;
-}

@@ -31,9 +31,6 @@ public:
     // Returns true once after a run finished, so the caller can reload effects.
     bool TakeFinished();
 
-    // Runs in the calling thread and prints progress, for --install-effects.
-    static int RunInTerminal();
-
 private:
     void Run();
     void Status(const std::string& status, const std::string& detail = {});
