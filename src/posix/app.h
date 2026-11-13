@@ -126,6 +126,7 @@ private:
     void UpdateGameHotkeys();
     void UpdateInput();
     void RenderOverlay();
+    void UpdateOverlayInterval();
     void RenderLauncher();
     void SaveScreenshot();
     void TakeScreenshots();
@@ -175,6 +176,11 @@ private:
     std::map<int, double> windowlessSince; // saved games' processes without a window, since when
     std::set<int> windowlessNoticed;
     double lastOverlayFrame = 0;
+    // Renders no new frame asked for, such as the menu's, are held to the refresh rate of the overlay's monitor. This
+    // is the time between two of them, looked up again now and then since the overlay moves with the game.
+    double overlayInterval = 1.0 / 60;
+    double nextRefreshCheck = 0;
+    bool renderHeld = false; // a render was held back and is due once overlayInterval has passed
     double lastLauncherFrame = 0;
     double lastAutoSave = 0;
     double captureRetry = 0;

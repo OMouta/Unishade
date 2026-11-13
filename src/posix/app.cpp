@@ -124,7 +124,11 @@ void App::Run()
     double nextStateLog = Now();
     while (!glfwWindowShouldClose(launcher.window))
     {
-        glfwWaitEventsTimeout(overlayVisible ? (menuOpen ? 1.0 / 60 : 0.1) : 0.25);
+        // A render held back happens as soon as it is due, so the last change in the menu always gets drawn.
+        double timeout = overlayVisible ? (menuOpen ? overlayInterval : 0.1) : 0.25;
+        if (overlayVisible && renderHeld)
+            timeout = std::min(timeout, lastOverlayFrame + overlayInterval - Now());
+        glfwWaitEventsTimeout(std::max(timeout, 0.001));
         platform::PollHotkeys();
         runtime.Update();
         if (setup.TakeFinished())
@@ -169,9 +173,20 @@ void App::Run()
                 runtime.Loading(), gpu.lost, runtime.PresetPath().c_str());
             nextStateLog = Now() + 30;
         }
+        // A new frame is drawn at once. Other renders, for the menu, a message or to keep effects that move going,
+        // are held to the display's rate: mouse events wake the loop far more often, and each render runs the whole
+        // effect chain.
         const bool toastShowing = !toast.empty() && Now() < toastUntil;
-        if (overlayVisible && HasFrame() && (newFrame || menuOpen || toastShowing || Now() - lastOverlayFrame > 0.1))
-            RenderOverlay();
+        renderHeld = false;
+        if (overlayVisible && HasFrame())
+        {
+            UpdateOverlayInterval();
+            const bool wanted = menuOpen || toastShowing || Now() - lastOverlayFrame > 0.1;
+            if (newFrame || (wanted && Now() - lastOverlayFrame >= overlayInterval))
+                RenderOverlay();
+            else
+                renderHeld = wanted;
+        }
 
         // While effects compile, the ones not done yet would be missing from the preset's order.
         if (settings.autoSavePresets && runtime.Dirty() && !runtime.Loading() && Now() - lastAutoSave > 1.0)
@@ -452,6 +467,36 @@ bool App::GameCovered()
         nextCoverCheck = Now() + 0.25;
     }
     return gameCovered;
+}
+
+// The refresh interval of the monitor with the middle of the overlay, or of the first monitor when none has it. GLFW
+// only tells a window's monitor in full screen, so the monitors' places are compared.
+void App::UpdateOverlayInterval()
+{
+    if (Now() < nextRefreshCheck)
+        return;
+    nextRefreshCheck = Now() + 2;
+    int x = 0, y = 0, width = 0, height = 0;
+    glfwGetWindowPos(overlay.window, &x, &y);
+    glfwGetWindowSize(overlay.window, &width, &height);
+    const int centerX = x + width / 2, centerY = y + height / 2;
+    int count = 0;
+    GLFWmonitor** monitors = glfwGetMonitors(&count);
+    int refreshRate = 0;
+    for (int i = 0; i < count; ++i)
+    {
+        const GLFWvidmode* mode = glfwGetVideoMode(monitors[i]);
+        if (!mode)
+            continue;
+        int monitorX = 0, monitorY = 0;
+        glfwGetMonitorPos(monitors[i], &monitorX, &monitorY);
+        const bool holds = centerX >= monitorX && centerX < monitorX + mode->width && centerY >= monitorY && centerY < monitorY + mode->height;
+        if (holds || i == 0)
+            refreshRate = mode->refreshRate;
+        if (holds)
+            break;
+    }
+    overlayInterval = 1.0 / (refreshRate > 0 ? refreshRate : 60);
 }
 
 void App::RenderOverlay()
