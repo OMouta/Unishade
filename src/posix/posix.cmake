@@ -1,7 +1,7 @@
 # The macOS and Linux host. Included from the top-level CMakeLists.txt, which already fetched Dear ImGui's core
 # files and miniz.
 #
-# Linux:  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel
+# Linux:  cmake -S . -B build && cmake --build build --parallel
 #         Needs the Vulkan loader and headers and the X11 development packages GLFW builds against.
 # macOS:  brew install molten-vk vulkan-headers, then the same commands. The build is Unishade.app, with
 #         MoltenVK copied inside so it runs without Homebrew.

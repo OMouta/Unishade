@@ -11,6 +11,14 @@ else()
     project(Unishade VERSION 0.6.2 LANGUAGES C CXX)
 endif()
 
+# Without a build type, single-config generators build without optimisation and with the asserts of the effect
+# compiler, stb and Dear ImGui on. The build type only takes effect when the build files are generated, so it can be
+# set after project(), where GENERATOR_IS_MULTI_CONFIG is known. Multi-config generators pick it per build instead.
+get_property(UNISHADE_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT UNISHADE_MULTI_CONFIG AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Debug, Release, RelWithDebInfo or MinSizeRel" FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
