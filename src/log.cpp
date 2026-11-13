@@ -20,6 +20,10 @@ namespace
 {
 constexpr size_t kMaxNotices = 40;
 constexpr unsigned long long kMaxLogSize = 16ull * 1024 * 1024;
+// After the log could not be moved aside, how much more is written before trying again, and the size at which it is
+// cleared instead so it cannot grow without end.
+constexpr unsigned long long kRotationRetry = 1024 * 1024;
+constexpr unsigned long long kMaxStuckLogSize = 4 * kMaxLogSize;
 
 // Never destroyed, since other threads, such as the update check, may still log while the host exits.
 struct Shared
@@ -27,6 +31,8 @@ struct Shared
     std::mutex mutex;
     std::vector<Notice> notices;
     unsigned long long size = 0;
+    // The size at which the log is moved to Unishade.previous.log.
+    unsigned long long rotateAt = kMaxLogSize;
     bool writeFailed = false;
     // The last line written, without its time, and how often it came again right after.
     LogLevel lastLevel = LogLevel::Info;
@@ -63,22 +69,42 @@ void WriteToFile(std::string text)
 {
     if (file == INVALID_HANDLE_VALUE || crashing.test())
         return;
-    if (shared.size + text.size() > kMaxLogSize)
+    if (shared.size + text.size() > shared.rotateAt)
     {
+        constexpr DWORD kShare = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
         CloseHandle(file);
         file = INVALID_HANDLE_VALUE;
-        if (!MoveFileExW(path.c_str(), (ExeDirectory() + L"Unishade.previous.log").c_str(), MOVEFILE_REPLACE_EXISTING))
+        if (MoveFileExW(path.c_str(), (ExeDirectory() + L"Unishade.previous.log").c_str(), MOVEFILE_REPLACE_EXISTING))
         {
-            const DWORD error = GetLastError();
-            file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-            WriteFailure(error);
-            return;
+            file = CreateFileW(path.c_str(), FILE_APPEND_DATA, kShare, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            shared.size = 0;
+            shared.rotateAt = kMaxLogSize;
+            text = "Unishade " UNISHADE_VERSION " log continued. Earlier entries are in Unishade.previous.log.\r\n" + text;
         }
-        file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                           nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        shared.size = 0;
-        text = "Unishade " UNISHADE_VERSION " log continued. Earlier entries are in Unishade.previous.log.\r\n" + text;
+        else
+        {
+            // Usually another program, such as an editor, holds the log open, which passes. So the log goes on where
+            // it is, with nothing lost, and the move is tried again a step later. Only once the log is far past the
+            // limit is it cleared, which loses its oldest lines rather than every line from then on.
+            const DWORD error = GetLastError();
+            if (shared.size >= kMaxStuckLogSize)
+                file = CreateFileW(path.c_str(), GENERIC_WRITE, kShare, nullptr, TRUNCATE_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            char note[256];
+            if (file != INVALID_HANDLE_VALUE)
+            {
+                shared.size = 0;
+                shared.rotateAt = kMaxLogSize;
+                snprintf(note, sizeof(note), "Unishade " UNISHADE_VERSION " log cleared, since it could not be moved to Unishade.previous.log "
+                                             "(Windows error %lu).\r\n", error);
+            }
+            else
+            {
+                file = CreateFileW(path.c_str(), FILE_APPEND_DATA, kShare, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+                shared.rotateAt = shared.size + kRotationRetry;
+                snprintf(note, sizeof(note), "Could not move the log to Unishade.previous.log (Windows error %lu). It goes on here.\r\n", error);
+            }
+            text = note + text;
+        }
         if (file == INVALID_HANDLE_VALUE)
         {
             WriteFailure(GetLastError());

@@ -27,7 +27,8 @@ void InitThreadLog();
 
 // Writes a timestamped line to the log file. Warnings and errors are also shown in the launcher and the
 // menu. printf-style; use %ls for wide strings and %hs for narrow ones. Safe from any thread. A line that
-// repeats on the same thread right away is counted. At 16 MB, the file rolls over to Unishade.previous.log.
+// repeats on the same thread right away is counted. At 16 MB, the file rolls over to Unishade.previous.log. When
+// it cannot, it goes on growing and the rollover is tried again every megabyte, until at 64 MB it is cleared.
 void Log(LogLevel level, const wchar_t* format, ...);
 
 // Like Log, but shown in the launcher and the menu at any level. For what the user should see at a glance,

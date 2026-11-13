@@ -171,6 +171,15 @@ int wmain(int argc, wchar_t** argv)
                 "bound rollover file size");
     ok &= Check(Read(rotated / "Unishade.log").find("Last entry after rollover") != std::string::npos, "keep logging after rollover");
 
+    // A folder in the way of Unishade.previous.log makes every rollover fail.
+    const fs::path stuck = root / "stuck rollover";
+    fs::create_directories(stuck / "Unishade.previous.log");
+    ok &= RunChild(stuck, L"rotate");
+    const std::string stuckLog = Read(stuck / "Unishade.log");
+    ok &= Check(stuckLog.find("Entry 0 ") != std::string::npos && stuckLog.find("Last entry after rollover") != std::string::npos,
+                "keep logging when the rollover fails");
+    ok &= Check(stuckLog.find("Could not move the log to Unishade.previous.log") != std::string::npos, "record the failed rollover");
+
     for (const wchar_t* mode : { L"crash", L"crash-after-rotate", L"terminate", L"abort", L"overflow" })
     {
         const fs::path folder = root / mode;
