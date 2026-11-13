@@ -188,8 +188,9 @@ void App::Run()
                 renderHeld = wanted;
         }
 
-        // While effects compile, the ones not done yet would be missing from the preset's order.
-        if (settings.autoSavePresets && runtime.Dirty() && !runtime.Loading() && Now() - lastAutoSave > 1.0)
+        // Once the preset's own effects are in. The rest of the library can take minutes at low priority, and a
+        // preset saved meanwhile keeps the techniques, order and sections of effects not loaded yet.
+        if (settings.autoSavePresets && runtime.Dirty() && !runtime.PresetLoading() && Now() - lastAutoSave > 1.0)
         {
             runtime.SavePreset();
             lastAutoSave = Now();
