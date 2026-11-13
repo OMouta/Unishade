@@ -82,9 +82,11 @@ struct Upscaler
     winrt::com_ptr<ID3D11PixelShader> rcas;
     winrt::com_ptr<ID3D11Buffer> constants;
     winrt::com_ptr<ID3D11SamplerState> sampler;
-    // The finished frame, copied out of the back buffer so shaders can read it.
+    // The finished frame, copied out of the back buffer so shaders can read it, when the back buffer cannot be read
+    // directly. copyInput is set once a view on the back buffer could not be made.
     winrt::com_ptr<ID3D11Texture2D> input;
     winrt::com_ptr<ID3D11ShaderResourceView> inputView;
+    bool copyInput = false;
     // EASU's output at the window's size, which RCAS reads.
     winrt::com_ptr<ID3D11Texture2D> upscaled;
     winrt::com_ptr<ID3D11RenderTargetView> upscaledTarget;
@@ -240,12 +242,13 @@ void Draw(ID3D11PixelShader* shader, ID3D11ShaderResourceView* view, ID3D11Rende
     g.context->PSSetShader(shader, nullptr, 0);
     g.context->PSSetConstantBuffers(0, 1, buffers);
     g.context->PSSetSamplers(0, 1, samplers);
-    g.context->PSSetShaderResources(0, 1, &view);
-    g.context->RSSetState(nullptr);
-    g.context->RSSetViewports(1, &viewport);
+    // The target goes first: ReShade can leave the back buffer bound as one, and D3D11 would drop it as an input.
     g.context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
     g.context->OMSetDepthStencilState(nullptr, 0);
     g.context->OMSetRenderTargets(1, &target, nullptr);
+    g.context->PSSetShaderResources(0, 1, &view);
+    g.context->RSSetState(nullptr);
+    g.context->RSSetViewports(1, &viewport);
     g.context->Draw(3, 0);
     // The next pass reads this target, and the input is written again next frame.
     ID3D11ShaderResourceView* none = nullptr;
@@ -277,14 +280,40 @@ void Upscale(UINT width, UINT height)
 
     winrt::com_ptr<ID3D11Texture2D> backBuffer;
     winrt::check_hresult(g.swapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), backBuffer.put_void()));
-    CopyInput(backBuffer.get());
     D3D11_TEXTURE2D_DESC input{};
-    u.input->GetDesc(&input);
+    backBuffer->GetDesc(&input);
+    // EASU reads the back buffer through a view made for this frame only, since a reference left on a back buffer
+    // makes ResizeBuffers fail and holds the swapchain. Without one, the frame is copied into a texture first.
+    winrt::com_ptr<ID3D11ShaderResourceView> inputView;
+    if (!u.copyInput && (input.BindFlags & D3D11_BIND_SHADER_RESOURCE))
+    {
+        if (const HRESULT made = g.device->CreateShaderResourceView(backBuffer.get(), nullptr, inputView.put()); FAILED(made))
+        {
+            if (DeviceLost(made))
+                winrt::throw_hresult(made);
+            inputView = nullptr;
+            u.copyInput = true;
+            Log(LogLevel::Info, L"FSR cannot read the back buffer directly (0x%08X), so it copies it first.", static_cast<unsigned>(made));
+        }
+    }
+    if (inputView)
+    {
+        u.inputView = nullptr;
+        u.input = nullptr;
+    }
+    else
+    {
+        CopyInput(backBuffer.get());
+        inputView = u.inputView;
+    }
 
     const float outputWidth = static_cast<float>(width);
     const float outputHeight = static_cast<float>(height);
-    Draw(u.easu.get(), u.inputView.get(), u.upscaledTarget.get(), { 0, 0, outputWidth, outputHeight, 0, 1 },
+    Draw(u.easu.get(), inputView.get(), u.upscaledTarget.get(), { 0, 0, outputWidth, outputHeight, 0, 1 },
          EasuConstants(static_cast<float>(input.Width), static_cast<float>(input.Height), outputWidth, outputHeight));
+    // Draw unbound it, so this releases the last reference on the back buffer besides the swapchain's own.
+    inputView = nullptr;
+    backBuffer = nullptr;
 
     winrt::com_ptr<ID3D11Texture2D> texture;
     POINT offset{};
