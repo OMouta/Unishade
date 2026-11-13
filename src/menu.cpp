@@ -291,6 +291,9 @@ struct Menu
     // When the scan was asked for that the folders come from, and when one was last asked for.
     ULONGLONG scannedAt = 0;
     ULONGLONG scanRequested = 0;
+    // When a preset was dropped from the scan by hand, so a scan asked for after it replaces the list even when the
+    // folders it found did not change. Zero when the list is as scanned.
+    ULONGLONG scanEditedAt = 0;
     // Folders opened or closed by hand, by path.
     std::map<std::wstring, bool> folderOpen;
     // The saved game being played, by its folder's name. Empty for a window picked for this session only.
@@ -377,7 +380,8 @@ struct PresetScanner
     std::vector<std::pair<fs::path, fs::path>> icons;
     // ReShade's effect search paths, to find out whether they hold any effect files.
     std::optional<std::vector<std::string>> effectPaths;
-    // What the last scan found, and when the request was made that it answers.
+    // What the last scan found, and when the request was made that it answers. The version changes only when the
+    // folders do, so the launcher describes itself again only then; scannedAt moves on with every scan.
     std::vector<ScannedFolder> folders;
     ULONGLONG scannedAt = 0;
     unsigned version = 0;
@@ -640,6 +644,15 @@ bool AnyEffectFiles(const std::vector<std::string>& searchPaths)
     return false;
 }
 
+// Whether two scans found the same folders, presets and logos.
+bool SameScan(const std::vector<ScannedFolder>& a, const std::vector<ScannedFolder>& b)
+{
+    const auto sameLogo = [](const Pixels& x, const Pixels& y) { return x && y ? *x == *y : x == y; };
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(), [&](const ScannedFolder& x, const ScannedFolder& y) {
+        return x.path == y.path && x.presets == y.presets && sameLogo(x.logo, y.logo);
+    });
+}
+
 // The presets folder itself, then each folder in it.
 std::vector<ScannedFolder> ScanLibrary(ScanCache& cache, unsigned generation)
 {
@@ -685,11 +698,14 @@ void ScanThread()
             std::vector<ScannedFolder> folders = ScanLibrary(cache, generation);
             const std::optional<bool> effectFiles = effectPaths ? std::optional(AnyEffectFiles(*effectPaths)) : std::nullopt;
             std::lock_guard lock(scanner.mutex);
-            scanner.folders = std::move(folders);
             scanner.scannedAt = requestedAt;
             if (effectFiles)
                 scanner.effectFiles = effectFiles;
-            ++scanner.version;
+            if (!scanner.version || !SameScan(folders, scanner.folders))
+            {
+                scanner.folders = std::move(folders);
+                ++scanner.version;
+            }
         }
         catch (const std::exception& e)
         {
@@ -721,13 +737,18 @@ void RequestScan(const fs::path& executable = {}, const fs::path& logo = {})
 void TakeScan()
 {
     std::lock_guard lock(scanner.mutex);
-    if (scanner.version == m.scanVersion)
-        return;
-    // Copied, not moved: the launcher reads the same folders through GamePresets until the next scan.
-    m.scan = scanner.folders;
-    m.scanVersion = scanner.version;
+    // A scan that found the same folders still answers the request it was made for, which preset steps wait on.
     m.scannedAt = scanner.scannedAt;
-    m.foldersDirty = true;
+    const bool edited = m.scanEditedAt && scanner.scannedAt >= m.scanEditedAt;
+    if (scanner.version != m.scanVersion || edited)
+    {
+        // Copied, not moved: the launcher reads the same folders through GamePresets until the next scan.
+        m.scan = scanner.folders;
+        m.scanVersion = scanner.version;
+        m.scanEditedAt = 0;
+        m.foldersDirty = true;
+    }
+    // Given apart from the folders, since a check asked for again can find the same answer.
     if (scanner.effectFiles)
     {
         m.effectFiles = std::exchange(scanner.effectFiles, std::nullopt);
@@ -1448,6 +1469,7 @@ void ForgetPreset(const fs::path& preset)
 {
     for (ScannedFolder& folder : m.scan)
         std::erase_if(folder.presets, [&](const fs::path& listed) { return SamePath(listed, preset); });
+    m.scanEditedAt = GetTickCount64();
     m.foldersDirty = true;
 }
 
