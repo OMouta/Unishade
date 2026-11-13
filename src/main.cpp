@@ -40,6 +40,7 @@ constexpr ULONGLONG kMaxCaptureRetry = 30000;
 constexpr ULONGLONG kRepeatInterval = 100;
 // After a shortcut, frames are shown on every wake-up for this long, so what it changed shows right away.
 constexpr ULONGLONG kShortcutResponse = 1000;
+constexpr ULONGLONG kRefreshReadInterval = 1000;
 // Recovery from a lost graphics device gives up after this many losses within kLossWindow, well before Windows stops
 // resetting a GPU that keeps hanging, or after failing to make a new device for kDeviceRetryLimit. A new device is
 // made kDeviceRetryInterval after a loss or a failed attempt, since a GPU reset can take a moment.
@@ -65,6 +66,12 @@ struct Loop
     ULONGLONG nextRepeat = 0;
     ULONGLONG fastUntil = 0;
     FrameLimit frameLimit;
+    // Holds presents that no new frame caused to the refresh rate of the overlay's monitor, read again every
+    // kRefreshReadInterval or when the overlay moves to another monitor.
+    FrameLimit refreshLimit;
+    HMONITOR refreshMonitor = nullptr;
+    ULONGLONG nextRefreshRead = 0;
+    int64_t refreshInterval = 1'000'000'000 / 60;
     bool presentPending = false;
     bool wasInteractive = false;
     bool wasVisible = false;
@@ -298,9 +305,29 @@ void SearchForGame()
         Attach(*game);
 }
 
+// The time between refreshes of the overlay's monitor in nanoseconds, or of 60 Hz when Windows does not say.
+int64_t RefreshInterval(ULONGLONG now)
+{
+    const HMONITOR monitor = MonitorFromWindow(g.overlay, MONITOR_DEFAULTTONEAREST);
+    if (monitor == loop.refreshMonitor && now < loop.nextRefreshRead)
+        return loop.refreshInterval;
+    loop.refreshMonitor = monitor;
+    loop.nextRefreshRead = now + kRefreshReadInterval;
+    MONITORINFOEXW info{};
+    info.cbSize = sizeof(info);
+    DEVMODEW mode{};
+    mode.dmSize = sizeof(mode);
+    // 0 and 1 stand for the hardware's default rate.
+    DWORD hertz = 60;
+    if (GetMonitorInfoW(monitor, &info) && EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1)
+        hertz = mode.dmDisplayFrequency;
+    loop.refreshInterval = 1'000'000'000 / static_cast<int64_t>(hertz);
+    return loop.refreshInterval;
+}
+
 // Effects run on every present, so the same picture is not shown over and over: a new frame is shown when it arrives,
 // and frames are shown on every wake-up only while the menu takes input, ReShade makes effects or a shortcut was just
-// used. Otherwise the last frame is shown again every kRepeatInterval.
+// used, though no faster than the monitor refreshes. Otherwise the last frame is shown again every kRepeatInterval.
 void ShowFrames()
 {
     // Only the newest frame matters. The capture worker keeps it, and the one shown before goes back to the pool.
@@ -340,18 +367,27 @@ void ShowFrames()
         return;
 
     const ULONGLONG now = GetTickCount64();
-    if (fresh || interactive || loop.presentPending || ReShadeLoadingEffects() || now < loop.fastUntil || now >= loop.nextRepeat)
+    const bool due = fresh || loop.presentPending || now >= loop.nextRepeat;
+    if (due || interactive || ReShadeLoadingEffects() || now < loop.fastUntil)
     {
         // Only advance the FPS schedule after submission. GPU capacity may hold this frame back too.
         const int limit = FrameRateLimit();
         const int64_t time = std::chrono::duration_cast<std::chrono::nanoseconds>(FrameStatistics::Clock::now().time_since_epoch()).count();
         const int64_t interval = limit ? 1'000'000'000 / limit : 0;
+        // Mouse messages wake the loop all the time while the menu is open, which would run the effects as fast as the
+        // GPU allows. Up to half a refresh early counts as on time, so a held present is ready again by the next
+        // wake-up, at most 16 ms later, and while nothing else wakes the loop, presents keep that pace as before.
+        const int64_t refresh = RefreshInterval(now);
+        if (!due && !loop.refreshLimit.Ready(time, refresh))
+            return;
         if (limit && !loop.frameLimit.Ready(time, interval))
             return;
         if (!PresentLatestFrame())
             return;
         if (limit)
             loop.frameLimit.Allow(time, interval);
+        // A new frame shown early still counts, so the next present without one waits for the refresh after it.
+        loop.refreshLimit.Allow(time, refresh);
         loop.presentPending = false;
         loop.nextRepeat = now + kRepeatInterval;
     }
