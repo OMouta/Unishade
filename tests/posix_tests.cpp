@@ -142,6 +142,28 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     }
     ok &= Check(rejected, "rejects a damaged game list");
 
+    // A damaged games.ini is kept beside it, since the next save replaces it.
+    const fs::path gamesDirectory = fs::temp_directory_path() / ("unishade-games-test-" + std::to_string(getpid()));
+    fs::create_directory(gamesDirectory);
+    const fs::path gamesFile = gamesDirectory / "games.ini";
+    const std::string damaged = "; my games\n[Games]\nCount=1\n";
+    std::string loadError;
+    if (WriteFile(gamesFile, damaged))
+        try
+        {
+            LoadAutoGames(gamesFile);
+        }
+        catch (const std::runtime_error& e)
+        {
+            loadError = e.what();
+        }
+    ok &= Check(ReadFile(gamesFile.string() + ".damaged") == damaged && loadError.find("games.ini.damaged") != std::string::npos,
+                "keeps a damaged game list as games.ini.damaged and says so");
+    ok &= Check(LoadAutoGames(gamesDirectory / "missing.ini").size() == DefaultAutoGames().size() &&
+                    !fs::exists(gamesDirectory / "missing.ini.damaged"),
+                "a missing game list is no damaged one");
+    fs::remove_all(gamesDirectory);
+
     const auto definitions = ParseDefinitions("A=1,B,,C=x=y");
     ok &= Check(definitions.size() == 3 && definitions[0] == std::pair<std::string, std::string>{ "A", "1" } && definitions[1].second.empty() &&
                     definitions[2].second == "x=y",

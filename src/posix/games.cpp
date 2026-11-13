@@ -3,6 +3,7 @@
 #include "game_list.h"
 
 #include <algorithm>
+#include <stdexcept>
 #include <strings.h>
 
 namespace
@@ -46,8 +47,23 @@ std::vector<AutoGame> LoadAutoGames(const std::filesystem::path& path)
     std::error_code error;
     if (!std::filesystem::exists(path, error))
         return DefaultAutoGames();
+    const std::string text = ReadFile(path);
+    std::vector<GameListEntry> entries;
+    try
+    {
+        entries = ParseGameList(text);
+    }
+    catch (const std::exception& e)
+    {
+        // The host falls back to the default list, and its next change to the list replaces the file, so the
+        // damaged one is kept beside it for the user to repair, as on Windows.
+        const std::filesystem::path kept = path.string() + ".damaged";
+        if (WriteFile(kept, text))
+            throw std::runtime_error(std::string(e.what()) + ". The old list was kept as " + kept.string() + ".");
+        throw std::runtime_error(std::string(e.what()) + ". The old list could not be kept as " + kept.string() + ".");
+    }
     std::vector<AutoGame> games;
-    for (GameListEntry& entry : ParseGameList(ReadFile(path)))
+    for (GameListEntry& entry : entries)
         games.push_back({ std::move(entry.executable), std::move(entry.name), entry.enabled });
     return games;
 }

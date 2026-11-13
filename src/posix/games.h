@@ -19,7 +19,8 @@ struct AutoGame
 
 // The games found automatically when games.ini does not exist yet.
 std::vector<AutoGame> DefaultAutoGames();
-// Throws std::runtime_error when the file is damaged.
+// Throws std::runtime_error when the file is damaged, after keeping a copy as games.ini.damaged, since the next
+// save replaces it. The message says where the copy is.
 std::vector<AutoGame> LoadAutoGames(const std::filesystem::path& path);
 bool SaveAutoGames(const std::filesystem::path& path, std::span<const AutoGame> games);
 
