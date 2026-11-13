@@ -10,9 +10,15 @@
 #include <stb_image.h>
 #include <stb_image_write.h>
 
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <cerrno>
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <optional>
 #include <thread>
 
@@ -25,6 +31,129 @@ bool HaveDataDirectory()
         return true;
     fprintf(stderr, "Unishade cannot find your home folder. Set HOME and try again.\n");
     return false;
+}
+
+// Ctrl-C, kill and logging out end Unishade the same way closing the launcher does, so App::Shutdown still saves
+// the preset and the pipeline cache and stops a download.
+constexpr int kStopSignals[] = { SIGINT, SIGTERM, SIGHUP };
+volatile sig_atomic_t stopSignal = 0;
+int signalPipe[2] = { -1, -1 };
+
+void OnStopSignal(int signal)
+{
+    const int savedErrno = errno;
+    // A second signal ends Unishade at once, in case quitting is stuck.
+    struct sigaction fallback{};
+    fallback.sa_handler = SIG_DFL;
+    sigemptyset(&fallback.sa_mask);
+    for (int stop : kStopSignals)
+        sigaction(stop, &fallback, nullptr);
+    stopSignal = signal;
+    if (signalPipe[1] >= 0)
+    {
+        const unsigned char byte = static_cast<unsigned char>(signal);
+        [[maybe_unused]] const ssize_t written = write(signalPipe[1], &byte, 1);
+    }
+    errno = savedErrno;
+}
+
+// A signal the shell set to be ignored, such as SIGHUP under nohup, stays ignored. A handler, unlike a blocked
+// signal, is not passed on to the programs Unishade starts.
+void CatchStopSignals()
+{
+    struct sigaction action{};
+    action.sa_handler = OnStopSignal;
+    action.sa_flags = SA_RESTART;
+    sigemptyset(&action.sa_mask);
+    for (int stop : kStopSignals)
+    {
+        struct sigaction previous{};
+        if (sigaction(stop, nullptr, &previous) == 0 && previous.sa_handler != SIG_IGN)
+            sigaction(stop, &action, nullptr);
+    }
+}
+
+// The launcher a stop signal closes. Never destroyed, since the thread that uses it may still wait while the
+// process exits.
+struct QuitRequest
+{
+    std::mutex mutex;
+    GLFWwindow* window = nullptr;
+    bool requested = false;
+};
+QuitRequest& quitRequest = *new QuitRequest;
+
+// Turns a stop signal into a request to close the launcher, from a thread of its own, since a signal handler may
+// not call GLFW. The thread is detached and only waits, so it does not keep the process alive.
+bool WatchStopSignals()
+{
+    if (pipe(signalPipe) != 0)
+        return false;
+    for (int fd : signalPipe)
+        fcntl(fd, F_SETFD, FD_CLOEXEC);
+    // The handler must never block on a full pipe. One byte is enough anyway.
+    fcntl(signalPipe[1], F_SETFL, fcntl(signalPipe[1], F_GETFL) | O_NONBLOCK);
+    std::thread([] {
+        unsigned char byte = 0;
+        ssize_t count;
+        while ((count = read(signalPipe[0], &byte, 1)) < 0 && errno == EINTR) {}
+        if (count != 1)
+            return;
+        std::lock_guard lock(quitRequest.mutex);
+        quitRequest.requested = true;
+        if (quitRequest.window)
+        {
+            glfwSetWindowShouldClose(quitRequest.window, GLFW_TRUE);
+            glfwPostEmptyEvent();
+        }
+    }).detach();
+    CatchStopSignals();
+    return true;
+}
+
+// The launcher a stop signal closes, or none once it is about to be destroyed. A signal that came before there was
+// a launcher closes it at once.
+void SetQuitWindow(GLFWwindow* window)
+{
+    std::lock_guard lock(quitRequest.mutex);
+    quitRequest.window = window;
+    if (window && quitRequest.requested)
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+}
+
+// --install-effects. A stop signal cancels the download, which also removes its temporary folder.
+int InstallEffects()
+{
+    CatchStopSignals();
+    EffectSetup setup;
+    setup.Start();
+    std::string last;
+    for (EffectSetup::State state = setup.Read(); state.running && !stopSignal; state = setup.Read())
+    {
+        const std::string line = state.status + (state.detail.empty() ? "" : " - " + state.detail);
+        if (line != last)
+            printf("%3d%%  %s\n", int(state.fraction * 100), line.c_str());
+        last = line;
+        usleep(200'000);
+    }
+    // Waits for the setup thread, and stops it first after a signal.
+    setup.Cancel();
+    const EffectSetup::State state = setup.Read();
+    if (stopSignal)
+    {
+        Log(LogLevel::Info, "Signal %d received. The install was cancelled.", int(stopSignal));
+        fprintf(stderr, "Cancelled.\n");
+        return 128 + stopSignal;
+    }
+    for (const std::string& note : state.notes)
+        printf("Skipped %s\n", note.c_str());
+    if (!state.error.empty())
+    {
+        fprintf(stderr, "%s\n", state.error.c_str());
+        return 1;
+    }
+    printf("%s\n", state.status.c_str());
+    return 0;
 }
 
 void Usage()
@@ -200,7 +329,7 @@ int main(int argc, char** argv)
             // Setup takes a lock of its own, so this cannot mix with an install the launcher runs. The single-instance
             // lock is the launcher's alone, so the launcher can start while this runs.
             InitTerminalLog();
-            const int result = EffectSetup::RunInTerminal();
+            const int result = InstallEffects();
             Log(LogLevel::Info, "Session ended: exit_code=%d.", result);
             FlushLog();
             return result;
@@ -263,10 +392,16 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    if (!WatchStopSignals())
+        Log(LogLevel::Warning, "Could not watch for signals to quit: %s.", strerror(errno));
+
     std::string error;
     int result = 0;
     if (app.Init(error))
+    {
+        SetQuitWindow(app.launcher.window);
         app.Run();
+    }
     else
     {
         Log(LogLevel::Error, "%s", error.c_str());
@@ -274,6 +409,10 @@ int main(int argc, char** argv)
         platform::ShowStartupError(error);
         result = 1;
     }
+    // The launcher is destroyed next, so the signal thread must leave it alone from here.
+    SetQuitWindow(nullptr);
+    if (stopSignal)
+        Log(LogLevel::Info, "Signal %d received. Quitting.", int(stopSignal));
     app.Shutdown();
     glfwTerminate();
     Log(LogLevel::Info, "Session ended: exit_code=%d.", result);
