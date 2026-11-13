@@ -56,8 +56,13 @@ struct CaptureState
     bool stoppedByUser = false;
     std::atomic<bool> running = false;
     std::atomic<uint64_t> generation = 0;
+    // The stream's size in pixels and whether it runs at the idle rate: what the window needs, and what the running
+    // stream was last given. UpdateStream brings the second to the first, one update at a time.
+    uint32_t wantedWidth = 0;
+    uint32_t wantedHeight = 0;
     uint32_t configWidth = 0;
     uint32_t configHeight = 0;
+    bool configIdle = false;
     bool reconfiguring = false;
     std::atomic<bool> onGpu = false; // frames go to the main thread as IOSurfaces instead of pixels
     std::atomic<bool> idle = false;  // nobody sees the frames, so a few a second do
@@ -113,8 +118,8 @@ void FailWithError(uint64_t generation, NSError* error, const char* what)
     FailCapture(generation, std::string(what) + ": " + (error ? error.localizedDescription.UTF8String : "unknown error"));
 }
 
-// One configuration for starting and resizing the stream, so the two never differ.
-SCStreamConfiguration* StreamConfiguration(size_t width, size_t height)
+// One configuration for starting, resizing and slowing down the stream, so they never differ.
+SCStreamConfiguration* StreamConfiguration(size_t width, size_t height, bool idle)
 {
     SCStreamConfiguration* config = [[SCStreamConfiguration alloc] init];
     config.width = width;
@@ -122,8 +127,10 @@ SCStreamConfiguration* StreamConfiguration(size_t width, size_t height)
     config.pixelFormat = kCVPixelFormatType_32BGRA;
     config.colorSpaceName = kCGColorSpaceSRGB;
     config.showsCursor = NO;
-    // As fast as the game draws, so the overlay adds no delay of its own.
-    config.minimumFrameInterval = CMTimeMake(1, 240);
+    // As fast as the game draws, so the overlay adds no delay of its own. While nobody sees the frames, five a second
+    // keep the overlay from showing an old one when it comes back, and spare the window server and the graphics card
+    // the copies of the rest, as the Windows host does.
+    config.minimumFrameInterval = idle ? CMTimeMake(1, 5) : CMTimeMake(1, 240);
     config.queueDepth = 8;
     // The background stays clear and shouldBeOpaque stays off. Only the rounded corners of a window are not covered
     // by it, and the host makes every pixel opaque, which turns them black. shouldBeOpaque would make them white,
@@ -140,6 +147,41 @@ SCStreamConfiguration* StreamConfiguration(size_t width, size_t height)
     // includeChildWindows stays as it is: it only applies to display and application filters, and a filter of one
     // window has none of the game's other windows in it either way.
     return config;
+}
+
+// Gives a running stream the size and rate it should have, when they differ from what it was last given. Resizes come
+// from the capture queue and rate changes from the main thread, so one update runs at a time, each built from the
+// whole wanted state, and one finished looks again for what changed meanwhile. A failed update is tried again with
+// the next frame.
+void UpdateStream(SCStream* stream, uint64_t generation)
+{
+    uint32_t width = 0, height = 0;
+    bool idle = false;
+    {
+        std::lock_guard lock(capture.mutex);
+        idle = capture.idle;
+        width = capture.wantedWidth;
+        height = capture.wantedHeight;
+        if (!stream || generation != capture.generation || capture.reconfiguring || width == 0 || height == 0 ||
+            (width == capture.configWidth && height == capture.configHeight && idle == capture.configIdle))
+            return;
+        capture.reconfiguring = true;
+    }
+    [stream updateConfiguration:StreamConfiguration(width, height, idle)
+              completionHandler:^(NSError* error) {
+                {
+                    std::lock_guard lock(capture.mutex);
+                    if (generation != capture.generation)
+                        return;
+                    capture.reconfiguring = false;
+                    if (error)
+                        return;
+                    capture.configWidth = width;
+                    capture.configHeight = height;
+                    capture.configIdle = idle;
+                }
+                UpdateStream(stream, generation);
+              }];
 }
 } // namespace
 
@@ -159,9 +201,12 @@ SCStreamConfiguration* StreamConfiguration(size_t width, size_t height)
 {
     if (type != SCStreamOutputTypeScreen || self.generation != capture.generation || !CMSampleBufferIsValid(sampleBuffer))
         return;
-    // While the overlay is hidden, a few frames a second keep it from showing an old one when it comes back.
+    // While the overlay is hidden, a few frames a second keep it from showing an old one when it comes back. The
+    // stream itself slows down to five a second then, so this only catches the frames of the moment before it does.
+    // It allows a little more than five, since frames that arrive a few milliseconds early would otherwise be
+    // dropped and halve the rate.
     const auto now = std::chrono::steady_clock::now();
-    if (capture.idle && now - _handedOver < std::chrono::milliseconds(200))
+    if (capture.idle && now - _handedOver < std::chrono::milliseconds(150))
         return;
     CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
     if (!attachments || CFArrayGetCount(attachments) == 0)
@@ -198,32 +243,18 @@ SCStreamConfiguration* StreamConfiguration(size_t width, size_t height)
         {
             const uint32_t wantedWidth = uint32_t(std::lround(content.size.width / contentScale * scaleFactor));
             const uint32_t wantedHeight = uint32_t(std::lround(content.size.height / contentScale * scaleFactor));
-            bool reconfigure = false;
             {
                 std::lock_guard lock(capture.mutex);
-                reconfigure = self.generation == capture.generation && !capture.reconfiguring && wantedWidth > 0 && wantedHeight > 0 &&
-                              (wantedWidth != capture.configWidth || wantedHeight != capture.configHeight);
-                capture.reconfiguring |= reconfigure;
-            }
-            if (reconfigure)
-            {
-                SCStreamConfiguration* config = StreamConfiguration(wantedWidth, wantedHeight);
-                const uint64_t generation = self.generation;
-                [stream updateConfiguration:config
-                          completionHandler:^(NSError* error) {
-                            std::lock_guard lock(capture.mutex);
-                            if (generation != capture.generation)
-                                return;
-                            capture.reconfiguring = false;
-                            if (!error)
-                            {
-                                capture.configWidth = wantedWidth;
-                                capture.configHeight = wantedHeight;
-                            }
-                          }];
+                if (self.generation == capture.generation && wantedWidth > 0 && wantedHeight > 0)
+                {
+                    capture.wantedWidth = wantedWidth;
+                    capture.wantedHeight = wantedHeight;
+                }
             }
         }
     }
+    // Also tries again an update that failed, of the size or of the rate.
+    UpdateStream(stream, self.generation);
 
     const size_t x0 = crop.x, y0 = crop.y, width = crop.width, height = crop.height;
     platform::Frame& back = _back;
@@ -1193,13 +1224,19 @@ bool StartCapture(const Window& window, std::string& error)
                                        double scale = screenScale;
                                        if (@available(macOS 14.0, *))
                                            scale = filter.pointPixelScale;
-                                       SCStreamConfiguration* config = StreamConfiguration(size_t(std::lround(target.frame.size.width * scale)),
-                                                                                           size_t(std::lround(target.frame.size.height * scale)));
+                                       const uint32_t width = uint32_t(std::lround(target.frame.size.width * scale));
+                                       const uint32_t height = uint32_t(std::lround(target.frame.size.height * scale));
+                                       // A stream that starts while the overlay is hidden starts at the idle rate. A
+                                       // change after this is applied once the main thread has the stream.
+                                       bool idle = false;
                                        {
                                            std::lock_guard lock(capture.mutex);
-                                           capture.configWidth = uint32_t(config.width);
-                                           capture.configHeight = uint32_t(config.height);
+                                           idle = capture.idle;
+                                           capture.wantedWidth = capture.configWidth = width;
+                                           capture.wantedHeight = capture.configHeight = height;
+                                           capture.configIdle = idle;
                                        }
+                                       SCStreamConfiguration* config = StreamConfiguration(width, height, idle);
 
                                        UnishadeStreamOutput* handler = [[UnishadeStreamOutput alloc] init];
                                        handler.generation = generation;
@@ -1219,6 +1256,7 @@ bool StartCapture(const Window& window, std::string& error)
                                              return;
                                          }
                                          output = handler;
+                                         UpdateStream(handler.stream, generation);
                                        });
                                        [stream startCaptureWithCompletionHandler:^(NSError* startError) {
                                          if (startError)
@@ -1262,7 +1300,12 @@ bool Capturing()
 
 void SetCaptureIdle(bool idle)
 {
-    capture.idle = idle;
+    // The host says so on every pass of its loop, so only a change goes to the stream. Coming back must be prompt,
+    // since the overlay shows the frame it has until a new one arrives.
+    if (capture.idle.exchange(idle) == idle)
+        return;
+    if (output)
+        UpdateStream(output.stream, output.generation);
 }
 
 bool TakeFrame(Frame& frame)
