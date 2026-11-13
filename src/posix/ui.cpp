@@ -54,6 +54,9 @@ constexpr double kUndoSeconds = 8;
 // The presets folder is read this often while the launcher shows.
 constexpr double kPresetsInterval = 2;
 
+// Reads the presets folder and Unishade.ini again for the launcher's next frame, after the user changed them.
+void RefreshLauncher();
+
 // Help is given on the Unishade Discord server.
 constexpr char kHelpUrl[] = "https://discord.gg/wVbVUdENas";
 
@@ -418,6 +421,7 @@ void NameDialog(App& app)
     if ((clicked == 1 || enter) && ApplyName(app))
     {
         menu.presetsListed = -10;
+        RefreshLauncher();
         ImGui::CloseCurrentPopup();
     }
     if (clicked == 0 || ImGui::IsKeyPressed(ImGuiKey_Escape))
@@ -464,6 +468,7 @@ void MoveMenu(App& app, const fs::path& preset)
             if (std::string error; !app.MovePreset(preset, folder, error))
                 app.ShowToast(error);
             menu.presetsListed = -10;
+            RefreshLauncher();
         }
     ImGui::Separator();
     if (ImGui::MenuItem("New folder..."))
@@ -1556,9 +1561,18 @@ struct LauncherState
     bool selectedOpen = true;
     double selectedChecked = -10;
     double picturesChecked = 0;
-    // Each folder's presets, by path, read now and then.
+    // What the launcher shows of the saved games comes from the presets folder and Unishade.ini, too slow to read on
+    // every frame. They are read again every kPresetsInterval and right after the user changes them. Each folder's
+    // presets by path, and each game's folder by name.
     std::map<std::string, std::vector<fs::path>> presets;
+    std::map<std::string, fs::path> folders;
     double presetsRead = -10;
+    // The games as last shown, made again when what they were made from changes: the saved games, the game being
+    // played and its preset, or what was read from disk. DrawLauncher lends them to the model.
+    std::vector<launcher::Game> games;
+    std::string gamesPlaying;
+    fs::path gamesInUse;
+    bool gamesStale = true;
     // What the cards' buttons and the links do.
     std::vector<std::vector<std::function<void()>>> cards;
     std::vector<std::function<void()>> links;
@@ -1574,6 +1588,22 @@ fs::path GameFolder(const std::string& folder)
         if (entry.is_directory(error) && !strcasecmp(entry.path().filename().c_str(), folder.c_str()))
             return entry.path();
     return root / folder;
+}
+
+// GameFolder, read once until the launcher reads the disk again.
+const fs::path& CachedGameFolder(const std::string& folder)
+{
+    auto [entry, added] = launcherState.folders.try_emplace(folder);
+    if (added)
+        entry->second = GameFolder(folder);
+    return entry->second;
+}
+
+void RefreshLauncher()
+{
+    launcherState.presets.clear();
+    launcherState.folders.clear();
+    launcherState.gamesStale = true;
 }
 
 const std::vector<fs::path>& PresetsOf(const fs::path& folder)
@@ -1680,7 +1710,7 @@ std::string RenameGame(App& app, size_t index, std::string name)
             app.SwitchPreset(to / current.filename(), false, true);
         }
     }
-    launcherState.presets.clear();
+    RefreshLauncher();
     Log(LogLevel::Info, "Renamed %s to %s.", key.c_str(), name.c_str());
     return {};
 }
@@ -1697,6 +1727,7 @@ void UseWindow(App& app, bool add, const platform::Window& window)
         // Detection follows the game in front, which is the one just added.
         app.Select(std::nullopt);
         app.SaveGames();
+        RefreshLauncher();
     }
     else
         app.Select(window);
@@ -1793,6 +1824,7 @@ public:
         launcherState.removedAt = glfwGetTime();
         app.autoGames.erase(app.autoGames.begin() + static_cast<std::ptrdiff_t>(game));
         app.SaveGames();
+        RefreshLauncher();
     }
 
     void UndoRemove() override
@@ -1806,6 +1838,7 @@ public:
             return;
         app.autoGames.insert(app.autoGames.begin() + static_cast<std::ptrdiff_t>(std::min(launcherState.removedIndex, app.autoGames.size())), removed);
         app.SaveGames();
+        RefreshLauncher();
     }
 
     void UsePreset(size_t game, std::string_view preset) override
@@ -1814,6 +1847,7 @@ public:
             return;
         const std::string folder = FolderName(app.autoGames[game].name);
         const fs::path path{ std::string(preset) };
+        RefreshLauncher();
         if (app.game.empty() || strcasecmp(app.game.c_str(), folder.c_str()))
             SetGamePreset(folder, path);
         // The launcher is not over the game, so what goes wrong is also reported here.
@@ -1830,6 +1864,7 @@ public:
         std::error_code error;
         fs::create_directories(folder, error);
         platform::Open(folder.string());
+        RefreshLauncher();
     }
 
     void SetPerformance(std::optional<size_t>, launcher::PerformanceSetting, int) override {}
@@ -1867,7 +1902,7 @@ launcher::Status DescribeStatus(App& app)
     launcher::Status status;
     const std::optional<platform::Window>& game = app.active ? app.active : app.selected;
     status.game = game ? game->title : std::string();
-    status.picture = app.active && !app.game.empty() ? GameFolder(app.game).string() : std::string();
+    status.picture = app.active && !app.game.empty() ? CachedGameFolder(app.game).string() : std::string();
     status.warning = app.lastCaptureError;
     status.effectsShown = app.captureEnabled;
     bool windowClosed = false;
@@ -1981,39 +2016,58 @@ launcher::Model DescribeLauncher(App& app)
     model.status = DescribeStatus(app);
     DescribeCards(app, model);
 
-    // The presets folder is read again now and then.
     if (glfwGetTime() - launcherState.presetsRead > kPresetsInterval)
     {
-        launcherState.presets.clear();
+        RefreshLauncher();
         launcherState.presetsRead = glfwGetTime();
     }
-    const fs::path root = PresetsDirectory();
-    for (const AutoGame& saved : app.autoGames)
+    const auto running = [&app](const AutoGame& saved) {
+        return saved.enabled && app.active && MatchesProcess(saved, app.activeExecutable, app.activeCommand);
+    };
+    std::vector<launcher::Game>& games = launcherState.games;
+    bool same = !launcherState.gamesStale && games.size() == app.autoGames.size() && launcherState.gamesPlaying == app.game &&
+                launcherState.gamesInUse == app.runtime.PresetPath();
+    for (size_t i = 0; same && i < games.size(); ++i)
     {
-        const std::string folder = FolderName(saved.name);
-        const fs::path path = GameFolder(folder);
-        launcher::Game game{ .id = saved.executable,
-                             .name = saved.name,
-                             .executable = saved.executable,
-                             .picture = folder.empty() ? std::string() : path.string(),
-                             .enabled = saved.enabled,
-                             .running = saved.enabled && app.active && MatchesProcess(saved, app.activeExecutable, app.activeCommand) };
-        const bool playing = !folder.empty() && !strcasecmp(app.game.c_str(), folder.c_str());
-        const fs::path inUse = playing ? app.runtime.PresetPath() : folder.empty() ? fs::path() : GamePreset(folder);
-        const auto add = [&](const fs::path& preset, const std::string& from) {
-            game.presets.push_back({ preset.string(), preset.stem().string(), from });
-            if (preset == inUse)
-                game.preset = preset.string();
-        };
-        if (!folder.empty())
-            for (const fs::path& preset : PresetsOf(path))
-                add(preset, "");
-        for (const fs::path& preset : PresetsOf(root))
-            add(preset, "All games");
-        if (game.preset.empty() && !inUse.empty())
-            add(inUse, inUse.parent_path().filename().string());
-        model.games.push_back(std::move(game));
+        const AutoGame& saved = app.autoGames[i];
+        same = games[i].id == saved.executable && games[i].name == saved.name && games[i].enabled == saved.enabled && games[i].running == running(saved);
     }
+    if (!same)
+    {
+        games.clear();
+        launcherState.gamesStale = false;
+        launcherState.gamesPlaying = app.game;
+        launcherState.gamesInUse = app.runtime.PresetPath();
+        const fs::path root = PresetsDirectory();
+        for (const AutoGame& saved : app.autoGames)
+        {
+            const std::string folder = FolderName(saved.name);
+            const fs::path path = folder.empty() ? fs::path() : CachedGameFolder(folder);
+            launcher::Game game{ .id = saved.executable,
+                                 .name = saved.name,
+                                 .executable = saved.executable,
+                                 .picture = path.string(),
+                                 .enabled = saved.enabled,
+                                 .running = running(saved) };
+            const bool playing = !folder.empty() && !strcasecmp(app.game.c_str(), folder.c_str());
+            const fs::path inUse = playing ? app.runtime.PresetPath() : folder.empty() ? fs::path() : GamePreset(folder);
+            const auto add = [&](const fs::path& preset, const std::string& from) {
+                game.presets.push_back({ preset.string(), preset.stem().string(), from });
+                if (preset == inUse)
+                    game.preset = preset.string();
+            };
+            if (!folder.empty())
+                for (const fs::path& preset : PresetsOf(path))
+                    add(preset, "");
+            for (const fs::path& preset : PresetsOf(root))
+                add(preset, "All games");
+            if (game.preset.empty() && !inUse.empty())
+                add(inUse, inUse.parent_path().filename().string());
+            games.push_back(std::move(game));
+        }
+    }
+    // Lent to the model, and given back once it is drawn.
+    model.games = std::move(games);
     if (launcherState.removed && glfwGetTime() - launcherState.removedAt > kUndoSeconds)
         launcherState.removed.reset();
     if (launcherState.removed)
@@ -2221,7 +2275,9 @@ void DrawLauncher(App& app)
     scale = app.launcher.scale;
     TakeShortcut(app);
     Host host(app);
-    launcher::Draw(DescribeLauncher(app), host, app.launcher.scale);
+    launcher::Model model = DescribeLauncher(app);
+    launcher::Draw(model, host, app.launcher.scale);
+    launcherState.games = std::move(model.games);
 }
 
 void ResetMenu(App& app)
