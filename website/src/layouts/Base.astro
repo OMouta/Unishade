@@ -26,7 +26,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
 
 // Small icons for browser tabs and home screens. The .ico stays for older browsers.
 const favicon = await getImage({ src: appIcon, width: 32, height: 32, format: 'png', layout: 'none' });
-const touchIcon = await getImage({ src: appIcon, width: 180, height: 180, format: 'png', background: '#0b0c1c', layout: 'none' });
+const touchIcon = await getImage({ src: appIcon, width: 180, height: 180, format: 'png', background: '#000000', layout: 'none' });
 // The picture link previews show, cropped to their 1.91:1. The banner is 600px tall, and images aren't enlarged.
 const preview = await getImage({ src: banner, width: 1146, height: 600, fit: 'cover', format: 'jpg', quality: 80, layout: 'none' });
 const previewUrl = new URL(preview.src, Astro.site);
@@ -62,7 +62,7 @@ const discordEmbed = {
     <title>{title}</title>
     <meta name="description" content={description} />
     {noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={canonical} />}
-    <meta name="theme-color" content="#0b0c1c" />
+    <meta name="theme-color" content="#000000" />
     <Font cssVariable="--font-archivo" preload />
     <link rel="icon" href={icon} sizes="48x48" />
     <link rel="icon" href={favicon.src} type="image/png" sizes="32x32" />
@@ -203,7 +203,7 @@ const discordEmbed = {
 
   .nav.scrolled {
     box-shadow: 0 1px 0 var(--line);
-    background-color: rgb(11 12 28 / 0.82);
+    background-color: rgb(0 0 0 / 0.72);
     backdrop-filter: blur(18px) saturate(1.4);
   }
 

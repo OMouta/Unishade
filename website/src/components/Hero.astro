@@ -5,25 +5,40 @@ import before from '../assets/compare-before.png';
 import after from '../assets/compare-after.png';
 ---
 
-<!-- The same scene without and with effects, filling the window. The after picture shows right of the line. -->
+<!-- Laid out like the logo: the game is the cube, and the ring goes round it. The after picture shows right of the line. -->
 <section class="hero">
-  <Image src={before} widths={[800, 1400, 1920]} sizes="100vw" alt="A game without effects" class="shot" priority />
-  <Image src={after} widths={[800, 1400, 1920]} sizes="100vw" alt="The same scene with Unishade's effects" class="shot after" priority />
-
-  <input class="compare-range" type="range" min="0" max="100" value="50" aria-label="Compare before and after" />
-  <div class="compare-line" aria-hidden="true">
-    <span class="compare-handle"><span>Before</span><span class="compare-grip"></span><span>After</span></span>
-  </div>
-
   <div class="hero-text">
-    <h1>Universal <span>post-processing</span> without injection.</h1>
+    <h1><span>Universal</span> <span>post-processing</span> <span>without injection.</span></h1>
     <p class="lede">Built for games where traditional ReShade injection isn't available or desirable. Formerly RobloxShadeHost.</p>
     <DownloadButton detect />
+  </div>
+
+  <div class="stage">
+    <div class="orbit" aria-hidden="true">
+      <div class="ring glow"><i></i></div>
+      <div class="ring"><i></i></div>
+    </div>
+
+    <div class="game">
+      <Image src={before} widths={[800, 1400, 1920]} sizes="(max-width: 1280px) 100vw, 1180px" alt="A game without effects" class="shot" priority />
+      <Image src={after} widths={[800, 1400, 1920]} sizes="(max-width: 1280px) 100vw, 1180px" alt="The same scene with Unishade's effects" class="shot after" priority />
+
+      <input class="compare-range" type="range" min="0" max="100" value="50" aria-label="Compare before and after" />
+      <div class="compare-line" aria-hidden="true">
+        <span class="compare-handle"><span>Before</span><span class="compare-grip"></span><span>After</span></span>
+      </div>
+
+      <!-- The near half of the ring passes in front of the game. -->
+      <div class="orbit orbit-front" aria-hidden="true">
+        <div class="ring glow"><i></i></div>
+        <div class="ring"><i></i></div>
+      </div>
+    </div>
   </div>
 </section>
 
 <script>
-  const hero = document.querySelector<HTMLElement>('.hero')!;
+  const hero = document.querySelector<HTMLElement>('.hero .game')!;
   const afterShot = hero.querySelector<HTMLImageElement>('.after')!;
   const range = hero.querySelector<HTMLInputElement>('.compare-range')!;
   const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -79,7 +94,7 @@ import after from '../assets/compare-after.png';
         if (target !== 1) return;
         sweep = 0;
         draw();
-      }, 300);
+      }, 900);
     if (afterShot.complete) start();
     else afterShot.addEventListener('load', start, { once: true });
   }
@@ -134,11 +149,65 @@ import after from '../assets/compare-after.png';
 <style>
   .hero {
     position: relative;
-    height: 100svh;
-    min-height: 620px;
-    max-height: 1200px;
+    padding: calc(var(--nav-height) + clamp(36px, 8svh, 96px)) 0 clamp(96px, 13vw, 200px);
+    /* The ring is wider than the window on small screens. */
+    overflow-x: clip;
+  }
+
+  .hero-text {
+    position: relative;
+    z-index: 3;
+    display: grid;
+    gap: 26px;
+    justify-items: center;
+    width: var(--page);
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  h1 {
+    font-size: clamp(2rem, 6.3vw, 6.4rem);
+    font-weight: 860;
+    line-height: 0.94;
+    letter-spacing: -0.04em;
+  }
+
+  h1 span {
+    display: block;
+    white-space: nowrap;
+  }
+
+  .lede {
+    color: var(--haze);
+    font-size: clamp(1.05rem, 1.4vw, 1.2rem);
+  }
+
+  .hero-text :global(.download) {
+    justify-content: center;
+    margin-top: 6px;
+  }
+
+  /* The version and size go on their own line, under the button. */
+  .hero-text :global(.download > .dim) {
+    flex-basis: 100%;
+  }
+
+  .stage {
+    position: relative;
+    width: min(1180px, 100% - 2 * var(--gutter));
+    margin: clamp(72px, 9vw, 132px) auto 0;
+  }
+
+  .game {
+    position: relative;
+    z-index: 1;
+    aspect-ratio: 16 / 9;
     overflow: hidden;
+    border-radius: clamp(10px, 1.4vw, 18px);
     background: var(--night-raised);
+    box-shadow:
+      0 0 0 1px rgb(255 255 255 / 0.14),
+      0 50px 120px -30px #000;
     cursor: ew-resize;
     touch-action: pan-y;
     user-select: none;
@@ -157,56 +226,78 @@ import after from '../assets/compare-after.png';
     clip-path: inset(0 0 0 var(--split, 50%));
   }
 
-  /* Darkens the top, behind the navigation and the text, and the bottom edge, where the page starts. The rest of the
-     picture is left as Unishade saved it. */
-  .hero::after {
+  /* A square around the middle of the game, turned like the logo's ring. The whole ring goes behind the game, and the
+     game draws the near half again over itself. */
+  .orbit {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 138%;
+    aspect-ratio: 1;
+    translate: -50% -50%;
+    rotate: -11deg;
+    scale: 1 0.5;
+    pointer-events: none;
+    animation: open 1.5s 0.15s var(--ease-out) backwards;
+  }
+
+  .orbit-front {
+    z-index: 2;
+    clip-path: inset(50% 0 0);
+    mix-blend-mode: screen;
+  }
+
+  /* Starts as a line of light and opens into the ring. */
+  @keyframes open {
+    from {
+      scale: 0.7 0.004;
+      opacity: 0;
+    }
+
+    25% {
+      opacity: 1;
+    }
+  }
+
+  /* The blur is on the element that turns, so the browser draws it once. */
+  .ring {
+    position: absolute;
+    inset: 0;
+    animation: turn 48s linear infinite;
+  }
+
+  .ring.glow {
+    filter: blur(26px) saturate(1.3);
+    opacity: 0.9;
+  }
+
+  .ring i {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(var(--spectrum), #ff4860);
+    mask-image: radial-gradient(closest-side, transparent 95.4%, #000 96.6%, #000 98.8%, transparent 100%);
+  }
+
+  .ring.glow i {
+    mask-image: radial-gradient(closest-side, transparent 91%, #000 94%, #000 99%, transparent 100%);
+  }
+
+  /* White in the middle of the tube, like the logo's. */
+  .ring:not(.glow) i::after {
     content: '';
     position: absolute;
     inset: 0;
-    background:
-      linear-gradient(to bottom, rgb(11 12 28 / 0.78), rgb(11 12 28 / 0.42) 32%, transparent 52%),
-      linear-gradient(to top, var(--night), transparent 14%);
-    pointer-events: none;
+    border-radius: 50%;
+    background: #fff;
+    mask-image: radial-gradient(closest-side, transparent 97%, #000 97.6%, #000 97.8%, transparent 98.4%);
+    opacity: 0.8;
   }
 
-  .hero-text {
-    position: absolute;
-    z-index: 2;
-    inset: calc(var(--nav-height) + clamp(24px, 6svh, 72px)) 0 auto;
-    display: grid;
-    gap: 22px;
-    justify-items: start;
-    width: var(--page);
-    margin: 0 auto;
-    pointer-events: none;
-  }
-
-  .hero-text :global(a) {
-    pointer-events: auto;
-  }
-
-  h1 {
-    font-size: clamp(2.4rem, 4.8vw, 4.2rem);
-    font-weight: 820;
-    line-height: 1;
-    letter-spacing: -0.03em;
-    text-shadow: 0 2px 30px rgb(11 12 28 / 0.6);
-  }
-
-  h1 span {
-    white-space: nowrap;
-  }
-
-  .lede {
-    max-width: 46ch;
-    color: #e4e5f4;
-    font-size: clamp(1.05rem, 1.4vw, 1.2rem);
-    text-shadow: 0 1px 16px rgb(11 12 28 / 0.8);
-  }
-
-  .hero-text :global(.download .dim) {
-    color: #d0d2ea;
-    text-shadow: 0 1px 12px rgb(11 12 28 / 0.9);
+  @keyframes turn {
+    to {
+      rotate: -1turn;
+    }
   }
 
   .compare-line {
@@ -241,7 +332,7 @@ import after from '../assets/compare-after.png';
     border: 1px solid rgb(255 255 255 / 0.16);
     border-radius: 999px;
     color: var(--ink);
-    background: rgb(11 12 28 / 0.62);
+    background: rgb(0 0 0 / 0.62);
     backdrop-filter: blur(12px);
     font-size: 0.82rem;
     font-weight: 650;
@@ -277,17 +368,22 @@ import after from '../assets/compare-after.png';
     outline-offset: 3px;
   }
 
-  /* On phones the text runs further down the picture. */
-  @media (max-width: 520px) {
+  @media (max-width: 600px) {
     h1 {
-      font-size: 9.2vw;
-      font-stretch: 108%;
+      font-size: 9.6vw;
+      font-stretch: 104%;
     }
 
-    .hero::after {
-      background:
-        linear-gradient(to bottom, rgb(11 12 28 / 0.82), rgb(11 12 28 / 0.55) 50%, transparent 70%),
-        linear-gradient(to top, var(--night), transparent 14%);
+    .compare-handle {
+      padding: 6px 10px;
+      font-size: 0.72rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .orbit,
+    .ring {
+      animation: none;
     }
   }
 </style>

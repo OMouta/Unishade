@@ -28,7 +28,7 @@ const [featured, ...more] = videos;
         <p class="dim">Creators trying DLSS5 in Greenville, Driving Empire and other Roblox games.</p>
       </div>
       <a class="video featured" href={featured.url}>
-        <Image src={featured.thumbnail} widths={[640, 1280]} sizes="(max-width: 900px) 100vw, 60vw" alt="" class="thumb" />
+        <Image src={featured.thumbnail} widths={[640, 1280]} sizes="(max-width: 900px) 100vw, 600px" alt="" class="thumb" />
         <span class="video-title">{featured.title}</span>
         <span class="dim">{featured.channel}</span>
       </a>
@@ -37,7 +37,7 @@ const [featured, ...more] = videos;
           more.map((video) => (
             <li>
               <a class="video" href={video.url}>
-                <Image src={video.thumbnail} widths={[320, 640]} sizes="(max-width: 600px) 100vw, 240px" alt="" class="thumb" />
+                <Image src={video.thumbnail} widths={[320, 640]} sizes="(max-width: 900px) 50vw, 290px" alt="" class="thumb" />
                 <span class="video-title">{video.title}</span>
                 <span class="dim">{video.channel}</span>
               </a>
@@ -48,7 +48,7 @@ const [featured, ...more] = videos;
     </section>
 
     <section class="closing">
-      <Image src={logo} widths={[360, 720]} sizes="360px" alt="" class="closing-logo" />
+      <Image src={logo} widths={[460, 920]} sizes="(max-width: 600px) 78vw, 460px" alt="" class="closing-logo" />
       <h2>Free and open source</h2>
       <DownloadButton>
         <a class="button button-secondary" href={links.github}><GithubIcon aria-hidden="true" />View on GitHub</a>
@@ -58,30 +58,31 @@ const [featured, ...more] = videos;
 </Base>
 
 <style>
+  /* The first video is four times the size of the rest, with the heading beside it. */
   .videos {
     display: grid;
-    grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
-    gap: 48px clamp(32px, 5vw, 64px);
-    align-items: end;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 36px 24px;
     width: var(--page);
     margin: clamp(96px, 13vw, 180px) auto 0;
   }
 
   .videos-text {
+    grid-column: 3 / span 2;
     display: grid;
     gap: 16px;
     align-self: center;
     max-width: 30ch;
+    padding-left: clamp(0px, 2vw, 28px);
   }
 
-  .video-grid {
-    grid-column: 1 / -1;
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 32px 24px;
-    margin: 0;
-    padding: 0;
-    list-style: none;
+  .featured {
+    grid-area: 1 / 1 / span 2 / span 2;
+  }
+
+  .video-grid,
+  .video-grid li {
+    display: contents;
   }
 
   .video {
@@ -136,8 +137,15 @@ const [featured, ...more] = videos;
     text-align: center;
   }
 
+  .closing h2 {
+    font-size: clamp(2.2rem, 6vw, 5.4rem);
+    font-weight: 860;
+    line-height: 0.94;
+    letter-spacing: -0.04em;
+  }
+
   .closing-logo {
-    width: min(320px, 70vw);
+    width: min(460px, 78vw);
     margin-bottom: 12px;
   }
 
@@ -159,7 +167,16 @@ const [featured, ...more] = videos;
 
   @media (max-width: 900px) {
     .videos {
-      grid-template-columns: minmax(0, 1fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .videos-text,
+    .featured {
+      grid-area: auto / 1 / auto / -1;
+    }
+
+    .videos-text {
+      padding-left: 0;
     }
   }
 
