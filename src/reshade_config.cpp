@@ -47,7 +47,7 @@ void ApplyTheme(IniText& ini)
         { "TextDisabled", Color(kDim) },
         { "WindowBg", Color(kBackground, 0.97f) },
         { "ChildBg", Color(0, 0) },
-        { "PopupBg", Color(0x16171D, 0.98f) },
+        { "PopupBg", Color(kPopup, 0.98f) },
         { "Border", Color(kBorder) },
         { "BorderShadow", Color(0, 0) },
         { "FrameBg", Color(kCard) },

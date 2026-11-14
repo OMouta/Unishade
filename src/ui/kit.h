@@ -29,7 +29,6 @@ constexpr ImU32 kText = Color(theme::kText);
 constexpr ImU32 kDim = Color(theme::kDim);
 constexpr ImU32 kAccent = Color(theme::kAccent);
 constexpr ImU32 kAccentHover = Color(theme::kAccentHover);
-constexpr ImU32 kAccentActive = Color(theme::kAccentActive);
 constexpr ImU32 kWarning = Color(theme::kWarning);
 constexpr ImU32 kError = Color(theme::kError);
 constexpr ImU32 kSuccess = Color(theme::kSuccess);

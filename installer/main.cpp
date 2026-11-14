@@ -56,7 +56,6 @@ constexpr ImU32 kText = Color(theme::kText);
 constexpr ImU32 kDim = Color(theme::kDim);
 constexpr ImU32 kAccent = Color(theme::kAccent);
 constexpr ImU32 kAccentHover = Color(theme::kAccentHover);
-constexpr ImU32 kAccentActive = Color(theme::kAccentActive);
 constexpr ImU32 kWarning = Color(theme::kWarning);
 constexpr ImU32 kError = Color(theme::kError);
 constexpr ImU32 kSuccess = Color(theme::kSuccess);
@@ -526,11 +525,11 @@ void CheckLine(const char* label, bool& value)
 bool Button(const char* label, ImVec2 size, bool primary, bool enabled = true)
 {
     ImGui::PushFont(ui.semibold, 15);
-    ImGui::PushStyleColor(ImGuiCol_Button, primary ? kAccent : kCard);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, primary ? kAccentHover : kCardHover);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, primary ? kAccentActive : kBorder);
-    ImGui::PushStyleColor(ImGuiCol_Border, primary ? kAccent : kBorder);
-    ImGui::PushStyleColor(ImGuiCol_Text, primary ? IM_COL32_WHITE : kText);
+    ImGui::PushStyleColor(ImGuiCol_Button, primary ? Color(theme::kPrimary) : kCard);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, primary ? Color(theme::kPrimaryHover) : kCardHover);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, primary ? Color(theme::kPrimaryActive) : kBorder);
+    ImGui::PushStyleColor(ImGuiCol_Border, primary ? Color(theme::kPrimary) : kBorder);
+    ImGui::PushStyleColor(ImGuiCol_Text, primary ? Color(theme::kOnPrimary) : kText);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(8));
     ImGui::BeginDisabled(!enabled);
     const bool clicked = ImGui::Button(label, size);
@@ -1117,7 +1116,7 @@ void ApplyScale(float scale)
     color(ImGuiCol_TextDisabled, kDim);
     color(ImGuiCol_WindowBg, kBackground);
     color(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
-    color(ImGuiCol_PopupBg, IM_COL32(22, 23, 29, 255));
+    color(ImGuiCol_PopupBg, Color(theme::kPopup));
     color(ImGuiCol_ModalWindowDimBg, IM_COL32(0, 0, 0, 150));
     color(ImGuiCol_Border, kBorder);
     color(ImGuiCol_FrameBg, kCard);
@@ -1131,7 +1130,7 @@ void ApplyScale(float scale)
     color(ImGuiCol_ScrollbarGrab, kBorder);
     color(ImGuiCol_ScrollbarGrabHovered, kBorderStrong);
     color(ImGuiCol_ScrollbarGrabActive, kBorderStrong);
-    color(ImGuiCol_TextSelectedBg, IM_COL32(112, 122, 255, 90));
+    color(ImGuiCol_TextSelectedBg, Color(theme::kAccent, 90));
     color(ImGuiCol_NavCursor, kAccent);
     color(ImGuiCol_TextLink, kAccentHover);
     style.ScaleAllSizes(scale);
@@ -1271,7 +1270,7 @@ int RunWindow(const Arguments& arguments)
     windowClass.hInstance = GetModuleHandleW(nullptr);
     windowClass.hIcon = LoadIconW(windowClass.hInstance, MAKEINTRESOURCEW(1));
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    windowClass.hbrBackground = CreateSolidBrush(RGB(17, 18, 23));
+    windowClass.hbrBackground = CreateSolidBrush(RGB((theme::kBackground >> 16) & 0xFF, (theme::kBackground >> 8) & 0xFF, theme::kBackground & 0xFF));
     windowClass.lpszClassName = L"UnishadeSetup";
     RegisterClassExW(&windowClass);
     constexpr DWORD kStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
@@ -1281,7 +1280,7 @@ int RunWindow(const Arguments& arguments)
         return kExitFailed;
     const BOOL dark = TRUE;
     DwmSetWindowAttribute(ui.window, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
-    const COLORREF caption = RGB(12, 13, 17);
+    const COLORREF caption = RGB((theme::kSidebar >> 16) & 0xFF, (theme::kSidebar >> 8) & 0xFF, theme::kSidebar & 0xFF);
     DwmSetWindowAttribute(ui.window, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
 
     // Sizes the window for its monitor's scaling and centers it.

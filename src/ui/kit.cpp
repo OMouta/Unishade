@@ -178,7 +178,7 @@ void ApplyStyle(ImGuiStyle& style)
     color(ImGuiCol_Text, kText);
     color(ImGuiCol_TextDisabled, kDim);
     color(ImGuiCol_WindowBg, kBackground);
-    color(ImGuiCol_PopupBg, Color(0x16171D, 252));
+    color(ImGuiCol_PopupBg, Color(theme::kPopup, 252));
     color(ImGuiCol_Border, kBorder);
     color(ImGuiCol_FrameBg, kCard);
     color(ImGuiCol_FrameBgHovered, kCardHover);
@@ -242,10 +242,10 @@ void Tooltip(const std::string& text)
 
 bool Button(const char* label, ImVec2 size, bool primary, bool enabled)
 {
-    ImGui::PushStyleColor(ImGuiCol_Button, primary ? kAccent : kCard);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, primary ? kAccentHover : kCardHover);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, primary ? kAccentActive : kBorder);
-    ImGui::PushStyleColor(ImGuiCol_Text, primary ? IM_COL32_WHITE : kText);
+    ImGui::PushStyleColor(ImGuiCol_Button, primary ? Color(theme::kPrimary) : kCard);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, primary ? Color(theme::kPrimaryHover) : kCardHover);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, primary ? Color(theme::kPrimaryActive) : kBorder);
+    ImGui::PushStyleColor(ImGuiCol_Text, primary ? Color(theme::kOnPrimary) : kText);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, primary ? 0.0f : 1.0f);
     ImGui::BeginDisabled(!enabled);
     const bool clicked = ImGui::Button(label, size);
@@ -521,8 +521,8 @@ bool PlacedButton(const char* label, ImVec2 min, ImVec2 size, bool primary, bool
     if (enabled)
         HandOnHover();
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    if (primary)
-        draw->AddRectFilled(min, min + size, hovered ? kAccentHover : kAccent, S(8));
+    if (primary && enabled)
+        draw->AddRectFilled(min, min + size, Color(hovered ? theme::kPrimaryHover : theme::kPrimary), S(8));
     else
     {
         draw->AddRectFilled(min, min + size, hovered ? kBorder : kCardHover, S(8));
@@ -531,7 +531,7 @@ bool PlacedButton(const char* label, ImVec2 min, ImVec2 size, bool primary, bool
     // The label stops at ##, which keeps buttons with the same label apart.
     std::string text = label;
     text = text.substr(0, text.find("##"));
-    Line(draw, min.x, min.x + size.x, min.y + size.y / 2, text, !enabled ? kBorderStrong : primary ? IM_COL32_WHITE : kText, kBody, primary, true);
+    Line(draw, min.x, min.x + size.x, min.y + size.y / 2, text, !enabled ? kBorderStrong : primary ? Color(theme::kOnPrimary) : kText, kBody, primary, true);
     return clicked;
 }
 

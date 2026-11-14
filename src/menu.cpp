@@ -63,7 +63,6 @@ constexpr ImU32 kText = Color(theme::kText);
 constexpr ImU32 kDim = Color(theme::kDim);
 constexpr ImU32 kAccent = Color(theme::kAccent);
 constexpr ImU32 kAccentHover = Color(theme::kAccentHover);
-constexpr ImU32 kAccentActive = Color(theme::kAccentActive);
 constexpr ImU32 kWarning = Color(theme::kWarning);
 constexpr ImU32 kError = Color(theme::kError);
 constexpr ImU32 kSuccess = Color(theme::kSuccess);
@@ -820,7 +819,7 @@ void ApplyStyle(ImGuiStyle& style)
     color(ImGuiCol_Text, kText);
     color(ImGuiCol_TextDisabled, kDim);
     color(ImGuiCol_WindowBg, kBackground);
-    color(ImGuiCol_PopupBg, Color(0x16171D, 252));
+    color(ImGuiCol_PopupBg, Color(theme::kPopup, 252));
     color(ImGuiCol_Border, kBorder);
     color(ImGuiCol_FrameBg, kCard);
     color(ImGuiCol_FrameBgHovered, kCardHover);
@@ -877,10 +876,10 @@ void HandOnHover()
 
 bool Button(const char* label, ImVec2 size, bool primary = false, bool enabled = true)
 {
-    ImGui::PushStyleColor(ImGuiCol_Button, primary ? kAccent : kCard);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, primary ? kAccentHover : kCardHover);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, primary ? kAccentActive : kBorder);
-    ImGui::PushStyleColor(ImGuiCol_Text, primary ? IM_COL32_WHITE : kText);
+    ImGui::PushStyleColor(ImGuiCol_Button, primary ? Color(theme::kPrimary) : kCard);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, primary ? Color(theme::kPrimaryHover) : kCardHover);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, primary ? Color(theme::kPrimaryActive) : kBorder);
+    ImGui::PushStyleColor(ImGuiCol_Text, primary ? Color(theme::kOnPrimary) : kText);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, primary ? 0.0f : 1.0f);
     ImGui::BeginDisabled(!enabled);
     const bool clicked = ImGui::Button(label, size);
