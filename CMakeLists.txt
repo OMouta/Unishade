@@ -6,9 +6,9 @@ if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET AND NOT DEFINED ENV{MACO
     set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "The oldest macOS the app runs on" FORCE)
 endif()
 if(WIN32)
-    project(Unishade VERSION 0.6.2 LANGUAGES C CXX RC)
+    project(Unishade VERSION 0.6.3 LANGUAGES C CXX RC)
 else()
-    project(Unishade VERSION 0.6.2 LANGUAGES C CXX)
+    project(Unishade VERSION 0.6.3 LANGUAGES C CXX)
 endif()
 
 # Without a build type, single-config generators build without optimisation and with the asserts of the effect
