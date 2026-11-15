@@ -3,6 +3,7 @@
 #include "addons.h"
 #include "config.h"
 #include "effects.h"
+#include "frame_limit.h"
 #include "games.h"
 #include "gpu.h"
 #include "platform.h"
@@ -56,6 +57,13 @@ public:
     void Run();
     void Shutdown();
 
+    // Shows the launcher again after it was closed into the notification area or minimized, in front.
+    void ShowLauncher();
+    // Reads the frame rate limit of the game being played again, such as after Performance changed it.
+    void UpdateFrameRateLimit();
+    // Quits once the launcher asked about unsaved changes, if there are any. Signals quit without asking.
+    void Quit();
+
     // For the launcher and the menu.
     void OpenMenu();
     // Gives input back to the game, unless the user went to another window.
@@ -85,9 +93,9 @@ public:
     void SuspendHotkeys(bool suspended);
     bool EffectsInstalled();
 #ifdef _WIN32
-    // For the game being played, or the default without a saved game. Effects run on a picture this much of the game's
-    // size, upscaled to it.
-    void SetEffectResolution(int percent);
+    // Reads the effect resolution of the game being played again, such as after Performance changed it. Effects run on
+    // a picture this much of the game's size, upscaled to it.
+    void UpdateEffectResolution();
     int effectResolution = 100;
 #endif
     // A short message at the bottom of the game, with an optional key before it.
@@ -109,6 +117,8 @@ public:
     std::string game;
     // Folders opened or closed by hand, by path.
     std::map<std::string, bool> folderOpen;
+    // The launcher asks whether to save unsaved changes before quitting.
+    bool quitAsked = false;
     bool captureEnabled = true;
     bool menuOpen = false;
     bool effectsEnabled = true;
@@ -126,6 +136,7 @@ public:
     UiWindow overlay;
 
 private:
+    void EndSession();
     void OnHotkey(int id, bool pressed);
     void UpdateTarget();
     std::optional<platform::Window> GameInFront();
@@ -185,6 +196,11 @@ private:
     std::map<int, double> windowlessSince; // saved games' processes without a window, since when
     std::set<int> windowlessNoticed;
     double lastOverlayFrame = 0;
+    // The most frames a second the overlay shows, or 0, and the schedule renders keep to it. A new frame waits for its
+    // turn in framePending.
+    int frameRateLimit = 0;
+    FrameLimit frameLimit;
+    bool framePending = false;
     // Renders no new frame asked for, such as the menu's, are held to the refresh rate of the overlay's monitor. This
     // is the time between two of them, looked up again now and then since the overlay moves with the game.
     double overlayInterval = 1.0 / 60;

@@ -89,6 +89,30 @@ std::vector<Process> ListProcesses();
 // Saves the icon of the window's program as a PNG. Returns false when it has none.
 bool SaveWindowIcon(const Window& window, const std::string& path);
 
+// Call before the launcher window first shows. On Windows its title bar is dark, in the sidebar's color. Does nothing
+// elsewhere.
+void SetupLauncherWindow(GLFWwindow* window);
+
+// What the notification area icon does. Each runs on the main thread while GLFW handles events.
+struct Tray
+{
+    std::function<void()> open; // a click on the icon, or Open Unishade in its menu
+    std::function<bool()> effectsShown;
+    std::function<void()> toggleEffects;
+    std::function<void()> quit;
+};
+// Shows Unishade in the notification area on Windows, so closing the launcher can leave it running there. Elsewhere
+// there is none.
+void AddTrayIcon(Tray tray);
+void RemoveTrayIcon();
+// Whether the icon shows now. Windows may not have a notification area yet, such as right after signing in, or lose
+// the icon when Explorer restarts. It is added again then.
+bool TrayIconShown();
+
+// Windows ends Unishade at shutdown or sign-out without returning to the main loop, a few seconds after calling this
+// on the main thread. Whatever must be saved is saved in it. Never called elsewhere, where signals quit as usual.
+void SetSessionEndCallback(std::function<void()> callback);
+
 // Call right before creating the overlay window, after GLFW's hints for it. On macOS the window GLFW creates next is
 // then a panel that can take the keyboard without making Unishade the active program, so the game stays in front and
 // on its Space while the menu is open. Does nothing on X11.
@@ -100,8 +124,12 @@ void SetupOverlayWindow(GLFWwindow* window);
 void ShowOverlay(GLFWwindow* window, bool visible);
 // Fits the overlay to the game's window beyond its bounds: on macOS its level, just above the game's, and its rounded
 // corners. Call before the overlay first shows and on every pass while it shows, since the game's layer can change.
-// Does nothing on X11.
-void MatchOverlay(GLFWwindow* window, WindowId game);
+// behind keeps it right above the game, below the windows in front of the game, and is only given where
+// OverlayCanStayBehind. Does nothing on X11.
+void MatchOverlay(GLFWwindow* window, WindowId game, bool behind);
+// Whether the overlay can stay over the game while another window is in front of it, so effects stay visible. Only on
+// Windows.
+bool OverlayCanStayBehind();
 // Gives the overlay keyboard focus while the menu is open.
 void FocusOverlay(GLFWwindow* window);
 // Gives keyboard focus back to the game, such as when the menu closes. On macOS the game stays the active program
@@ -189,6 +217,8 @@ bool WaylandDesktop();
 
 // Opens a folder or a web page with the system's default program.
 void Open(const std::string& target);
+// Moves a file to the Recycle Bin on Windows, or to the Trash. Returns false when it stays where it is.
+bool MoveToTrash(const std::string& path);
 
 // The DRM device the display server draws with, as the major and minor numbers of its primary or render node, so
 // the Vulkan device can be the same GPU. False when unknown, as on macOS.

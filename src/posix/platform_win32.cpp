@@ -6,6 +6,7 @@
 #include "gpu.h"
 #include "log.h"
 #include "text.h"
+#include "theme.h"
 
 #include <d3d11_4.h>
 #include <d3dcompiler.h>
@@ -110,7 +111,9 @@ void InSingleThreadedApartment(Work work)
     }).join();
 }
 
-// Shortcuts arrive as WM_HOTKEY at a window of the main thread, which GLFW's message loop hands to it.
+// Shortcuts, the notification area icon and the end of the session arrive at a hidden window of the main thread, which
+// GLFW's message loop hands them to. Not a message-only window, since Windows sends TaskbarCreated and the end of the
+// session only to top-level windows.
 HWND messageWindow = nullptr;
 HotkeyCallback hotkeyCallback;
 // Windows only says that a shortcut was pressed, so one held down ends when its key is up again.
@@ -122,11 +125,112 @@ struct Registration
 std::map<int, Registration> registrations;
 std::vector<int> pressedHotkeys;
 
+constexpr UINT kTrayMessage = WM_APP + 16;
+constexpr UINT kTrayIcon = 1;
+constexpr UINT_PTR kTrayTimer = 1;
+enum TrayCommand : UINT
+{
+    kOpenCommand = 1,
+    kEffectsCommand,
+    kQuitCommand,
+};
+Tray tray;
+bool trayWanted = false;
+bool trayShown = false;
+HICON trayIcon = nullptr;
+UINT taskbarCreated = 0;
+std::function<void()> sessionEnd;
+
+NOTIFYICONDATAW TrayData()
+{
+    NOTIFYICONDATAW data{ sizeof(data) };
+    data.hWnd = messageWindow;
+    data.uID = kTrayIcon;
+    return data;
+}
+
+// Tried again every few seconds while the notification area is not ready.
+void ShowTrayIcon()
+{
+    if (!trayIcon)
+        trayIcon = static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                                                 GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
+    NOTIFYICONDATAW data = TrayData();
+    data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
+    data.uCallbackMessage = kTrayMessage;
+    data.hIcon = trayIcon;
+    wcscpy_s(data.szTip, std::size(data.szTip), L"Unishade");
+    // TaskbarCreated also comes when the taskbar's scaling changes, while the icon is still there.
+    Shell_NotifyIconW(NIM_DELETE, &data);
+    trayShown = Shell_NotifyIconW(NIM_ADD, &data) != FALSE;
+    if (trayShown)
+    {
+        data.uVersion = NOTIFYICON_VERSION_4;
+        Shell_NotifyIconW(NIM_SETVERSION, &data);
+    }
+    else
+        SetTimer(messageWindow, kTrayTimer, 5000, nullptr);
+}
+
+void TrayMenu(int x, int y)
+{
+    const HMENU menu = CreatePopupMenu();
+    if (!menu)
+        return;
+    AppendMenuW(menu, MF_STRING, kOpenCommand, L"Open Unishade");
+    AppendMenuW(menu, MF_STRING | (tray.effectsShown() ? MF_CHECKED : MF_UNCHECKED), kEffectsCommand, L"Show effects");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kQuitCommand, L"Quit");
+    SetMenuDefaultItem(menu, kOpenCommand, FALSE);
+    // Otherwise the menu stays open when clicking elsewhere.
+    SetForegroundWindow(messageWindow);
+    const UINT align = GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN : TPM_LEFTALIGN;
+    const UINT command = static_cast<UINT>(TrackPopupMenuEx(menu, align | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, x, y, messageWindow, nullptr));
+    PostMessageW(messageWindow, WM_NULL, 0, 0);
+    DestroyMenu(menu);
+    switch (command)
+    {
+    case kOpenCommand: tray.open(); break;
+    case kEffectsCommand: tray.toggleEffects(); break;
+    case kQuitCommand: tray.quit(); break;
+    }
+}
+
 LRESULT CALLBACK MessageProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
-    if (message == WM_HOTKEY)
+    if (message == taskbarCreated && taskbarCreated)
     {
+        if (trayWanted)
+            ShowTrayIcon();
+        return 0;
+    }
+    switch (message)
+    {
+    case WM_HOTKEY:
         pressedHotkeys.push_back(static_cast<int>(wParam));
+        return 0;
+    case WM_TIMER:
+        if (wParam == kTrayTimer)
+        {
+            KillTimer(window, kTrayTimer);
+            if (trayWanted)
+                ShowTrayIcon();
+        }
+        return 0;
+    case kTrayMessage:
+        switch (LOWORD(lParam))
+        {
+        case NIN_SELECT:
+        case NIN_KEYSELECT: tray.open(); break;
+        case WM_CONTEXTMENU: TrayMenu(static_cast<short>(LOWORD(wParam)), static_cast<short>(HIWORD(wParam))); break;
+        }
+        return 0;
+    case WM_QUERYENDSESSION:
+        return TRUE;
+    // Windows ends the process once this returns.
+    case WM_ENDSESSION:
+        if (wParam && sessionEnd)
+            sessionEnd();
         return 0;
     }
     return DefWindowProcW(window, message, wParam, lParam);
@@ -923,12 +1027,17 @@ bool Init(std::string& error)
     windowClass.hInstance = GetModuleHandleW(nullptr);
     windowClass.lpszClassName = L"UnishadeMessages";
     RegisterClassW(&windowClass);
-    messageWindow = CreateWindowExW(0, windowClass.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, windowClass.hInstance, nullptr);
+    messageWindow =
+        CreateWindowExW(WS_EX_TOOLWINDOW, windowClass.lpszClassName, L"", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, windowClass.hInstance, nullptr);
     if (!messageWindow)
     {
         error = "Could not create a window for shortcuts.";
         return false;
     }
+    taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+    // Explorer runs without administrator rights, so Unishade running with them must accept its messages.
+    ChangeWindowMessageFilterEx(messageWindow, taskbarCreated, MSGFLT_ALLOW, nullptr);
+    ChangeWindowMessageFilterEx(messageWindow, kTrayMessage, MSGFLT_ALLOW, nullptr);
     if (!wgc::GraphicsCaptureSession::IsSupported())
     {
         error = "Windows Graphics Capture is not available, and Unishade needs it to copy the game's picture. Update Windows and the graphics driver.";
@@ -940,6 +1049,7 @@ bool Init(std::string& error)
 
 void Shutdown()
 {
+    RemoveTrayIcon();
     StopCapture();
     for (const auto& [id, registration] : std::map<int, Registration>(registrations))
         UnregisterHotkey(id);
@@ -1094,6 +1204,48 @@ bool SaveWindowIcon(const Window& window, const std::string& path)
     return saved;
 }
 
+void SetupLauncherWindow(GLFWwindow* window)
+{
+    const HWND launcher = glfwGetWin32Window(window);
+    const BOOL dark = TRUE;
+    DwmSetWindowAttribute(launcher, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+    const COLORREF caption = RGB((theme::kSidebar >> 16) & 0xFF, (theme::kSidebar >> 8) & 0xFF, theme::kSidebar & 0xFF);
+    DwmSetWindowAttribute(launcher, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
+}
+
+void AddTrayIcon(Tray actions)
+{
+    tray = std::move(actions);
+    trayWanted = true;
+    ShowTrayIcon();
+}
+
+void RemoveTrayIcon()
+{
+    trayWanted = false;
+    if (messageWindow)
+        KillTimer(messageWindow, kTrayTimer);
+    if (trayShown)
+    {
+        NOTIFYICONDATAW data = TrayData();
+        Shell_NotifyIconW(NIM_DELETE, &data);
+        trayShown = false;
+    }
+    if (trayIcon)
+        DestroyIcon(trayIcon);
+    trayIcon = nullptr;
+}
+
+bool TrayIconShown()
+{
+    return trayShown;
+}
+
+void SetSessionEndCallback(std::function<void()> callback)
+{
+    sessionEnd = std::move(callback);
+}
+
 void PrepareOverlayWindow()
 {
 }
@@ -1108,26 +1260,59 @@ void SetupOverlayWindow(GLFWwindow* window)
     SetWindowPos(overlay, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 }
 
+// In the place MatchOverlay gave it.
 void ShowOverlay(GLFWwindow* window, bool visible)
 {
     const HWND overlay = glfwGetWin32Window(window);
     if (visible)
-        SetWindowPos(overlay, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        SetWindowPos(overlay, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     else
         ShowWindow(overlay, SW_HIDE);
 }
 
-// A game can be topmost too, as borderless ones often are, and Windows raises the window it activates to the top of
-// its group, above the overlay.
-void MatchOverlay(GLFWwindow* window, WindowId game)
+bool IsTopmost(HWND window)
 {
+    return (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+}
+
+// Above every window, or right above the game so that whatever covers the game also covers its effects. A game can
+// be topmost too, as borderless ones often are, and Windows raises the window it activates to the top of its group,
+// above the overlay.
+void MatchOverlay(GLFWwindow* window, WindowId gameId, bool behind)
+{
+    constexpr UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
     const HWND overlay = glfwGetWin32Window(window);
+    const HWND game = Handle(gameId);
+    if (behind)
+    {
+        if (GetWindow(game, GW_HWNDPREV) == overlay)
+            return;
+        // Topmost windows stay above all others, so the overlay first joins the game's group. HWND_NOTOPMOST leaves
+        // the topmost group and does nothing out of it.
+        const bool topmost = IsTopmost(game);
+        SetWindowPos(overlay, topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+        // Without a window of its own group above it, the game is the first of its group.
+        const HWND above = GetWindow(game, GW_HWNDPREV);
+        if (above != overlay)
+            SetWindowPos(overlay, above && IsTopmost(above) == topmost ? above : HWND_TOP, 0, 0, 0, 0, flags);
+        return;
+    }
+    if (!IsTopmost(overlay))
+    {
+        SetWindowPos(overlay, HWND_TOPMOST, 0, 0, 0, 0, flags);
+        return;
+    }
     for (HWND above = GetWindow(overlay, GW_HWNDPREV); above; above = GetWindow(above, GW_HWNDPREV))
-        if (above == Handle(game))
+        if (above == game)
         {
-            SetWindowPos(overlay, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            SetWindowPos(overlay, HWND_TOPMOST, 0, 0, 0, 0, flags);
             return;
         }
+}
+
+bool OverlayCanStayBehind()
+{
+    return true;
 }
 
 void FocusOverlay(GLFWwindow* window)
@@ -1378,6 +1563,23 @@ void Open(const std::string& target)
 {
     const std::wstring wide = Wide(target);
     InSingleThreadedApartment([&] { ShellExecuteW(nullptr, L"open", wide.c_str(), nullptr, nullptr, SW_SHOWNORMAL); });
+}
+
+bool MoveToTrash(const std::string& path)
+{
+    // The list of files ends with an empty one.
+    const std::wstring files = Wide(path) + L'\0';
+    int result = 1;
+    InSingleThreadedApartment([&] {
+        SHFILEOPSTRUCTW operation{};
+        operation.wFunc = FO_DELETE;
+        operation.pFrom = files.c_str();
+        operation.fFlags = FOF_ALLOWUNDO | FOF_NO_UI;
+        result = SHFileOperationW(&operation);
+        if (operation.fAnyOperationsAborted)
+            result = 1;
+    });
+    return result == 0;
 }
 
 bool DisplayDrmDevice(int64_t&, int64_t&)

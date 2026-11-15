@@ -1,7 +1,7 @@
 #pragma once
 
-// Unishade's look in Dear ImGui: its colors, text sizes and controls. Used by the launcher on every platform and by the
-// menu on macOS and Linux. Sizes are given at 100% scaling and drawn at scale.
+// Unishade's look in Dear ImGui: its colors, text sizes and controls, for the launcher in its window and over the game.
+// Sizes are given at 100% scaling and drawn at scale.
 
 #include "launcher_ui.h"
 #include "theme.h"
@@ -70,7 +70,6 @@ void ApplyStyle(ImGuiStyle& style);
 
 // Wraps at the edge of the window, at wrap in window coordinates when given, or not at all when wrap is negative.
 void Text(const std::string& text, ImU32 color = kText, float size = 14.5f, float wrap = 0.0f, bool bold = false);
-void Heading(const char* text);
 void HandOnHover();
 void Tooltip(const std::string& text);
 bool Button(const char* label, ImVec2 size, bool primary = false, bool enabled = true);
@@ -82,7 +81,6 @@ bool Switch(const char* id, bool on, ImVec2 size = ImVec2(0, 0));
 // of the choice clicked, or -1. As wide as width, or the rest of the line without one.
 int Segmented(const char* id, std::initializer_list<const char*> choices, int selected, ImU32 fill, float width = 0);
 void KeyCap(const std::string& key, float size = 13);
-void Spinner(float radius);
 void ProgressBar(float fraction);
 // Points down when open and right when closed.
 void Chevron(ImDrawList* draw, ImVec2 center, bool open, ImU32 color);

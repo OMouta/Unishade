@@ -44,6 +44,7 @@ const Shortcut* FindShortcut(int id)
 bool App::Init(std::string& error)
 {
     settings = LoadSettings();
+    UpdateFrameRateLimit();
     Log(LogLevel::Info, "Settings: auto_save=%d, preset=%s, definitions=%s.", settings.autoSavePresets, settings.preset.string().c_str(),
         FormatDefinitions(settings.definitions).c_str());
 #ifdef __APPLE__
@@ -82,6 +83,7 @@ bool App::Init(std::string& error)
     glfwDefaultWindowHints();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     // The same sizes as on Windows, at 100% scaling.
     launcher.window = glfwCreateWindow(1120, 740, "Unishade", nullptr, nullptr);
     if (!launcher.window || !launcher.surface.Create(launcher.window, false, error) || !InitUi(launcher, error))
@@ -91,12 +93,14 @@ bool App::Init(std::string& error)
         return false;
     }
     SetWindowIcon(launcher.window);
+    platform::SetupLauncherWindow(launcher.window);
     // Limits are in the screen's units, which macOS keeps the same at every scaling.
     float scaleX = 1, scaleY = 1;
 #ifndef __APPLE__
     glfwGetWindowContentScale(launcher.window, &scaleX, &scaleY);
 #endif
     glfwSetWindowSizeLimits(launcher.window, static_cast<int>(880 * scaleX), static_cast<int>(560 * scaleY), GLFW_DONT_CARE, GLFW_DONT_CARE);
+    glfwShowWindow(launcher.window);
 
     // The overlay covers the game's window exactly. Clicks go through to the game until the menu opens.
     glfwDefaultWindowHints();
@@ -120,6 +124,20 @@ bool App::Init(std::string& error)
     if (!overlay.surface.Create(overlay.window, true, error) || !InitUi(overlay, error))
         return false;
 
+    // Closing the launcher leaves Unishade running in the notification area, where Quit ends it. Without one, it quits.
+    platform::AddTrayIcon({ .open = [this] { ShowLauncher(); },
+                            .effectsShown = [this] { return captureEnabled; },
+                            .toggleEffects = [this] { ToggleOverlay(); },
+                            .quit = [this] { Quit(); } });
+    glfwSetWindowCloseCallback(launcher.window, [](GLFWwindow* window) {
+        glfwSetWindowShouldClose(window, GLFW_FALSE);
+        if (platform::TrayIconShown())
+            glfwHideWindow(window);
+        else
+            app.Quit();
+    });
+    platform::SetSessionEndCallback([this] { EndSession(); });
+
     platform::SetHotkeyCallback([this](int id, bool pressed) { OnHotkey(id, pressed); });
     for (const Shortcut& shortcut : kShortcuts)
         if (shortcut.always && !RegisterShortcut(shortcut, settings.hotkeys.*shortcut.member))
@@ -139,7 +157,7 @@ void App::Run()
         // A render held back happens as soon as it is due, so the last change in the menu always gets drawn.
         double timeout = overlayVisible ? (menuOpen ? overlayInterval : 0.1) : 0.25;
         if (overlayVisible && renderHeld)
-            timeout = std::min(timeout, lastOverlayFrame + overlayInterval - Now());
+            timeout = std::min(timeout, lastOverlayFrame + std::max(overlayInterval, frameRateLimit ? 0.5 / frameRateLimit : 0.0) - Now());
         glfwWaitEventsTimeout(std::max(timeout, 0.001));
         platform::PollHotkeys();
         runtime.Update();
@@ -196,19 +214,27 @@ void App::Run()
                 runtime.Loading(), gpu.lost, runtime.PresetPath().string().c_str());
             nextStateLog = Now() + 30;
         }
-        // A new frame is drawn at once. Other renders, for the menu, a message or to keep effects that move going,
-        // are held to the display's rate: mouse events wake the loop far more often, and each render runs the whole
-        // effect chain.
+        // A new frame is drawn at once, unless the frame rate limit holds it back. Other renders, for the menu, a
+        // message or to keep effects that move going, are held to the display's rate as well: mouse events wake the
+        // loop far more often, and each render runs the whole effect chain.
         const bool toastShowing = !toast.empty() && Now() < toastUntil;
         renderHeld = false;
+        framePending = (framePending || newFrame) && overlayVisible;
         if (overlayVisible && HasFrame())
         {
             UpdateOverlayInterval();
             const bool wanted = menuOpen || toastShowing || Now() - lastOverlayFrame > 0.1;
-            if (newFrame || (wanted && Now() - lastOverlayFrame >= overlayInterval))
+            const int64_t time = static_cast<int64_t>(Now() * 1e6);
+            const int64_t interval = frameRateLimit ? 1000000 / frameRateLimit : 0;
+            if ((!frameRateLimit || frameLimit.Ready(time, interval)) && (framePending || (wanted && Now() - lastOverlayFrame >= overlayInterval)))
+            {
                 RenderOverlay();
+                framePending = false;
+                if (frameRateLimit)
+                    frameLimit.Allow(time, interval);
+            }
             else
-                renderHeld = wanted;
+                renderHeld = wanted || framePending;
         }
 
         // Once the preset's own effects are in. The rest of the library can take minutes at low priority, and a
@@ -220,9 +246,44 @@ void App::Run()
         }
 
         const bool launcherActive = glfwGetWindowAttrib(launcher.window, GLFW_FOCUSED) || glfwGetWindowAttrib(launcher.window, GLFW_HOVERED);
-        if (!glfwGetWindowAttrib(launcher.window, GLFW_ICONIFIED) && Now() - lastLauncherFrame >= (launcherActive ? 1.0 / 60 : 0.25))
+        const bool launcherShown = glfwGetWindowAttrib(launcher.window, GLFW_VISIBLE) && !glfwGetWindowAttrib(launcher.window, GLFW_ICONIFIED);
+        if (launcherShown && Now() - lastLauncherFrame >= (launcherActive ? 1.0 / 60 : 0.25))
             RenderLauncher();
     }
+}
+
+void App::Quit()
+{
+    // With auto-save off, the launcher asks first, since unsaved changes are lost otherwise.
+    if (runtime.Dirty() && !settings.autoSavePresets)
+    {
+        quitAsked = true;
+        ShowLauncher();
+    }
+    else
+        glfwSetWindowShouldClose(launcher.window, GLFW_TRUE);
+}
+
+void App::ShowLauncher()
+{
+    glfwShowWindow(launcher.window);
+    if (glfwGetWindowAttrib(launcher.window, GLFW_ICONIFIED))
+        glfwRestoreWindow(launcher.window);
+    glfwFocusWindow(launcher.window);
+}
+
+// Windows ends Unishade once this returns. With auto-save off, unsaved changes stay unsaved: nobody can be asked now,
+// and writing them could overwrite a preset the user chose not to save.
+void App::EndSession()
+{
+    Log(LogLevel::Info, "Windows is shutting down or signing out. Saving presets.");
+    for (std::future<std::string>& screenshot : screenshots)
+        screenshot.wait();
+    if (runtime.Dirty() && settings.autoSavePresets)
+        runtime.SavePreset();
+    else if (runtime.Dirty())
+        Log(LogLevel::Warning, "The unsaved changes to %s were not saved.", runtime.PresetPath().stem().string().c_str());
+    FlushLog();
 }
 
 void App::Shutdown()
@@ -461,21 +522,23 @@ void App::UpdateOverlay()
 {
     platform::Rect bounds;
     const bool sized = frame.width != failedWidth || frame.height != failedHeight;
-    const bool visible = captureEnabled && active && HasFrame() && sized && (menuOpen || inFront) && platform::WindowBounds(active->id, bounds) &&
+    // A game behind another window keeps its effects when the user asked for that.
+    const bool behind = !menuOpen && !inFront && settings.keepEffectsVisible && platform::OverlayCanStayBehind();
+    const bool visible = captureEnabled && active && HasFrame() && sized && (menuOpen || inFront || behind) && platform::WindowBounds(active->id, bounds) &&
                          !GameCovered();
     platform::SetCaptureIdle(!visible);
     if (!visible)
     {
         if (overlayVisible)
         {
-            Log(LogLevel::Info, "Overlay hidden: capture=%d, frame=%d, sized=%d, in_front=%d, menu=%d, covered=%d.",
-                captureEnabled, HasFrame(), sized, inFront, menuOpen, gameCovered);
+            Log(LogLevel::Info, "Overlay hidden: capture=%d, frame=%d, sized=%d, in_front=%d, menu=%d, keep_visible=%d, covered=%d.",
+                captureEnabled, HasFrame(), sized, inFront, menuOpen, settings.keepEffectsVisible, gameCovered);
             platform::ShowOverlay(overlay.window, false);
         }
         overlayVisible = false;
         return;
     }
-    platform::MatchOverlay(overlay.window, active->id);
+    platform::MatchOverlay(overlay.window, active->id, behind);
     if (!overlayVisible || !(bounds == overlayBounds))
     {
         Log(LogLevel::Info, "Overlay placed: bounds=%d,%d %dx%d, frame=%ux%u.", bounds.x, bounds.y, bounds.width, bounds.height, frame.width, frame.height);
@@ -742,9 +805,10 @@ std::string App::HotkeyText(int id) const
     return shortcut ? FormatHotkey(settings.hotkeys.*shortcut->member) : std::string();
 }
 
+// A shortcut left unassigned has nothing to register.
 bool App::RegisterShortcut(const Shortcut& shortcut, const Hotkey& hotkey)
 {
-    return platform::RegisterHotkey(shortcut.id, hotkey);
+    return hotkey.key == ImGuiKey_None || platform::RegisterHotkey(shortcut.id, hotkey);
 }
 
 void App::OnHotkey(int id, bool pressed)
@@ -815,7 +879,7 @@ bool App::ChangeHotkeys(const InputHotkeys& hotkeys, std::string& error)
 {
     for (const Shortcut& a : kShortcuts)
         for (const Shortcut& b : kShortcuts)
-            if (&a < &b && hotkeys.*a.member == hotkeys.*b.member)
+            if (&a < &b && (hotkeys.*a.member).key != ImGuiKey_None && hotkeys.*a.member == hotkeys.*b.member)
             {
                 error = std::string(a.label) + " and " + Lowercase(b.label) + " cannot share " + FormatHotkey(hotkeys.*a.member) + ".";
                 return false;
@@ -948,6 +1012,14 @@ bool App::MovePreset(const fs::path& preset, const fs::path& folder, std::string
 }
 
 // Switching to a saved game switches to the preset last used in it.
+void App::UpdateFrameRateLimit()
+{
+    const int limit = FrameRateLimit(game);
+    if (limit != frameRateLimit)
+        Log(LogLevel::Info, "Frame rate limit: %d for %s.", limit, game.empty() ? "every game" : game.c_str());
+    frameRateLimit = limit;
+}
+
 void App::FollowGame()
 {
     game.clear();
@@ -957,6 +1029,7 @@ void App::FollowGame()
             game = FolderName(saved.name);
             break;
         }
+    UpdateFrameRateLimit();
     if (game.empty())
         return;
 
@@ -1214,12 +1287,13 @@ void App::TakeScreenshots()
 }
 
 #ifdef _WIN32
-void App::SetEffectResolution(int percent)
+void App::UpdateEffectResolution()
 {
-    ::SetEffectResolution(game, percent);
-    effectResolution = EffectResolution(game);
+    const int percent = EffectResolution(game);
+    if (percent != effectResolution)
+        Log(LogLevel::Info, "Effect resolution: %d%% for %s.", percent, game.empty() ? "every game" : game.c_str());
+    effectResolution = percent;
     platform::SetFrameScale(effectResolution);
-    Log(LogLevel::Info, "Settings: effect_resolution=%d%% for %s.", effectResolution, game.empty() ? "every game" : game.c_str());
 }
 #endif
 

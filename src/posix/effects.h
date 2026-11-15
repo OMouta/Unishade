@@ -73,6 +73,10 @@ struct Uniform
     std::string category;
     std::string items; // separated by '\0' and ending in two, as ImGui::Combo takes them
     std::string text;  // ui_text, shown above the control
+    std::string units; // ui_units, after the value
+    int spacing = 0;   // ui_spacing, lines of space above the control
+    bool categoryClosed = false; // ui_category_closed: its category starts closed
+    bool noReset = false;        // noreset: resetting the effect's settings leaves it alone
     std::string source; // set by the host each frame, such as the timer, and not shown
     UniformSource sourceKind = UniformSource::None;
     SourceSettings sourceSettings;

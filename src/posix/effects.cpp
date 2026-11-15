@@ -394,6 +394,10 @@ void BuildUniforms(Effect& effect)
         uniform.uiType = AnnotationString(annotations, "ui_type");
         uniform.category = AnnotationString(annotations, "ui_category");
         uniform.text = AnnotationString(annotations, "ui_text");
+        uniform.units = AnnotationString(annotations, "ui_units");
+        uniform.spacing = AnnotationInt(annotations, "ui_spacing", 0);
+        uniform.categoryClosed = AnnotationInt(annotations, "ui_category_closed", 0) != 0;
+        uniform.noReset = AnnotationInt(annotations, "noreset", 0) != 0;
         uniform.source = AnnotationString(annotations, "source");
         uniform.sourceKind = SourceKind(uniform.source);
         uniform.sourceSettings = ReadSourceSettings(uniform.sourceKind, annotations);

@@ -48,6 +48,9 @@ private:
     std::string error;
 };
 
+constexpr float kSmallestMenuScale = 0.75f;
+constexpr float kLargestMenuScale = 2;
+
 struct Settings
 {
     InputHotkeys hotkeys;
@@ -56,6 +59,10 @@ struct Settings
     bool skipTitleBar = true;
     // Windows only: Discord shows the game Unishade runs on. discord.h says what it shows.
     bool discordPresence = true;
+    // Effects stay over the game while another window is in front of it, where platform::OverlayCanStayBehind.
+    bool keepEffectsVisible = true;
+    // The menu's size on top of the one that follows the game's window, in quarter steps.
+    float menuScale = 1;
     fs::path preset;
     // Searched recursively, like ReShade's paths ending in \**.
     std::vector<fs::path> effectPaths;
@@ -69,16 +76,21 @@ Settings LoadSettings();
 // Returns false when the file cannot be written.
 bool SaveSettings(const Settings& settings);
 
-// The preset last used in a saved game, from Unishade.ini. Empty when the game has none yet.
-fs::path GamePreset(const std::string& game);
-void SetGamePreset(const std::string& game, const fs::path& preset);
-
+// The most frames a second the overlay shows, for a saved game by its presets folder's name, or with an empty name for
+// every game without its own, from [PERFORMANCE] in Unishade.ini. 0 shows every frame the game draws. A limit is kept
+// between 30 and 500.
+int FrameRateLimit(const std::string& game);
+void SetFrameRateLimit(const std::string& game, int fps);
 // The percentage of the game's picture effects run at, kept as on the ReShade host: in [PERFORMANCE.<game>] of
 // Unishade.ini for a saved game with its own, otherwise in [PERFORMANCE], which an empty game reads and sets.
 int EffectResolution(const std::string& game);
 void SetEffectResolution(const std::string& game, int percent);
-// Moves a game's own settings to its new name.
+// Moves a game's own performance settings to its new name, leaving the old one without.
 void RenamePerformance(const std::string& from, const std::string& to);
+
+// The preset last used in a saved game, from Unishade.ini. Empty when the game has none yet.
+fs::path GamePreset(const std::string& game);
+void SetGamePreset(const std::string& game, const fs::path& preset);
 
 // "A=1,B" as ReShade writes preprocessor definitions, and back.
 std::vector<std::pair<std::string, std::string>> ParseDefinitions(const std::string& text);

@@ -17,7 +17,10 @@
 #include <unistd.h>
 #endif
 
+#include <algorithm>
 #include <cerrno>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -317,6 +320,9 @@ Settings LoadSettings()
         ParseHotkey(shortcut.fallback, hotkey);
         if (!ini.Get("INPUT", shortcut.name, value))
             ini.Set("INPUT", shortcut.name, shortcut.fallback);
+        // Every shortcut but the menu's can be left unassigned.
+        else if (value.empty() && shortcut.member != &InputHotkeys::input)
+            hotkey = {};
         else if (!ParseHotkey(value, hotkey))
         {
             Report(LogLevel::Warning, "%s=%s in Unishade.ini is not a valid shortcut, so %s is used.", shortcut.name, value.c_str(), shortcut.fallback);
@@ -347,6 +353,9 @@ Settings LoadSettings()
     settings.autoSavePresets = !ini.Get("HOST", "AutoSavePresets", value) || value != "0";
     settings.skipTitleBar = !ini.Get("HOST", "SkipTitleBar", value) || value != "0";
     settings.discordPresence = !ini.Get("HOST", "DiscordPresence", value) || value != "0";
+    settings.keepEffectsVisible = !ini.Get("HOST", "KeepEffectsVisible", value) || value != "0";
+    if (ini.Get("HOST", "MenuScale", value))
+        settings.menuScale = std::clamp(std::round(std::strtof(value.c_str(), nullptr) * 4) / 4, kSmallestMenuScale, kLargestMenuScale);
 
     if ((ini.Changed() || !existed) && !WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
@@ -364,16 +373,56 @@ bool SaveSettings(const Settings& settings)
     ini.Set("GENERAL", "PresetPath", Relative(settings.preset));
     ini.Set("GENERAL", "PreprocessorDefinitions", FormatDefinitions(settings.definitions));
     ini.Set("HOST", "AutoSavePresets", settings.autoSavePresets ? "1" : "0");
+    char scale[16];
+    std::snprintf(scale, sizeof(scale), "%.2f", settings.menuScale);
+    ini.Set("HOST", "MenuScale", scale);
 #ifdef __APPLE__
     ini.Set("HOST", "SkipTitleBar", settings.skipTitleBar ? "1" : "0");
 #endif
 #ifdef _WIN32
     ini.Set("HOST", "DiscordPresence", settings.discordPresence ? "1" : "0");
+    ini.Set("HOST", "KeepEffectsVisible", settings.keepEffectsVisible ? "1" : "0");
 #endif
     if (WriteFile(path, ini.Text()))
         return true;
     Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
     return false;
+}
+
+namespace
+{
+int ValidFrameRate(int fps)
+{
+    return fps <= 0 ? 0 : std::clamp(fps, 30, 500);
+}
+
+std::string PerformanceSection(const std::string& game)
+{
+    return game.empty() ? "PERFORMANCE" : "PERFORMANCE." + game;
+}
+
+// What a game's section of performance settings holds.
+constexpr const char* kPerformanceKeys[] = { "FrameRateLimit", "EffectResolution" };
+} // namespace
+
+int FrameRateLimit(const std::string& game)
+{
+    const IniText ini(ReadFile(DataDirectory() / "Unishade.ini"));
+    std::string value;
+    int fps = ini.Get("PERFORMANCE", "FrameRateLimit", value) ? std::atoi(value.c_str()) : 0;
+    // An empty value is a game without its own.
+    if (!game.empty() && ini.Get(PerformanceSection(game), "FrameRateLimit", value) && !value.empty())
+        fps = std::atoi(value.c_str());
+    return ValidFrameRate(fps);
+}
+
+void SetFrameRateLimit(const std::string& game, int fps)
+{
+    const fs::path path = DataDirectory() / "Unishade.ini";
+    IniText ini(ReadFile(path));
+    ini.Set(PerformanceSection(game), "FrameRateLimit", std::to_string(ValidFrameRate(fps)));
+    if (!WriteFile(path, ini.Text()))
+        Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
 }
 
 fs::path GamePreset(const std::string& game)
@@ -390,14 +439,6 @@ void SetGamePreset(const std::string& game, const fs::path& preset)
     if (!WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
 }
-
-namespace
-{
-std::string PerformanceSection(const std::string& game)
-{
-    return game.empty() ? "PERFORMANCE" : "PERFORMANCE." + game;
-}
-} // namespace
 
 int EffectResolution(const std::string& game)
 {
@@ -422,14 +463,18 @@ void SetEffectResolution(const std::string& game, int percent)
 
 void RenamePerformance(const std::string& from, const std::string& to)
 {
+    // Sections are found without case, so a name that only changes case already has its settings.
+    if (Lowercase(from) == Lowercase(to))
+        return;
     const fs::path path = DataDirectory() / "Unishade.ini";
     IniText ini(ReadFile(path));
     std::string value;
-    // Sections are found without case, so a name that only changes case already has its settings.
-    if (Lowercase(from) == Lowercase(to) || !ini.Get(PerformanceSection(from), "EffectResolution", value))
-        return;
-    ini.Set(PerformanceSection(to), "EffectResolution", value);
-    ini.Set(PerformanceSection(from), "EffectResolution", "");
-    if (!WriteFile(path, ini.Text()))
+    for (const char* key : kPerformanceKeys)
+        if (ini.Get(PerformanceSection(from), key, value))
+        {
+            ini.Set(PerformanceSection(to), key, value);
+            ini.Set(PerformanceSection(from), key, "");
+        }
+    if (ini.Changed() && !WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
 }

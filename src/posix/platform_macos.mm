@@ -971,6 +971,27 @@ bool SaveWindowIcon(const Window& window, const std::string& path)
     }
 }
 
+void SetupLauncherWindow(GLFWwindow*)
+{
+}
+
+void AddTrayIcon(Tray)
+{
+}
+
+void RemoveTrayIcon()
+{
+}
+
+bool TrayIconShown()
+{
+    return false;
+}
+
+void SetSessionEndCallback(std::function<void()>)
+{
+}
+
 void PrepareOverlayWindow()
 {
     glfwCocoaPanelHint(GLFW_TRUE);
@@ -1014,7 +1035,7 @@ void ShowOverlay(GLFWwindow* window, bool visible)
         [overlay orderOut:nil];
 }
 
-void MatchOverlay(GLFWwindow* window, WindowId game)
+void MatchOverlay(GLFWwindow* window, WindowId game, bool)
 {
     @autoreleasepool
     {
@@ -1059,6 +1080,11 @@ void MatchOverlay(GLFWwindow* window, WindowId game)
             content.masksToBounds = radius > 0;
         }
     }
+}
+
+bool OverlayCanStayBehind()
+{
+    return false;
 }
 
 void FocusOverlay(GLFWwindow* window)
@@ -1506,6 +1532,15 @@ void PollHotkeys()
 void Open(const std::string& target)
 {
     Spawn("open", { target });
+}
+
+bool MoveToTrash(const std::string& path)
+{
+    @autoreleasepool
+    {
+        NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
+        return [[NSFileManager defaultManager] trashItemAtURL:url resultingItemURL:nil error:nil];
+    }
 }
 
 std::string UiFont(bool bold)

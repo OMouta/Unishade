@@ -215,12 +215,6 @@ void Text(const std::string& text, ImU32 color, float size, float wrap, bool bol
     ImGui::PopFont();
 }
 
-void Heading(const char* text)
-{
-    ImGui::Dummy(ImVec2(0, S(2)));
-    Text(text, kDim, 12);
-}
-
 void HandOnHover()
 {
     if (ImGui::IsItemHovered())
@@ -234,7 +228,7 @@ void Tooltip(const std::string& text)
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(10), S(7)));
     if (ImGui::BeginTooltip())
     {
-        Text(text, kText, 13, S(300));
+        Text(text, kText, kNote, S(300));
         ImGui::EndTooltip();
     }
     ImGui::PopStyleVar();
@@ -295,7 +289,7 @@ int Segmented(const char* id, std::initializer_list<const char*> choices, int se
     int clicked = -1;
     int index = 0;
     ImGui::PushID(id);
-    PushSize(13.5f);
+    PushSize(kNote);
     for (const char* choice : choices)
     {
         const ImVec2 min = start + ImVec2(size.x * index, 0);
@@ -326,16 +320,6 @@ void KeyCap(const std::string& key, float size)
     draw->AddText(position + (box - text) * 0.5f, kText, key.c_str());
     ImGui::Dummy(box);
     ImGui::PopFont();
-}
-
-void Spinner(float radius)
-{
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    const ImVec2 center = ImGui::GetCursorScreenPos() + ImVec2(radius, radius);
-    const float start = static_cast<float>(ImGui::GetTime()) * 5.0f;
-    draw->PathArcTo(center, radius - S(2), start, start + 4.2f, 32);
-    draw->PathStroke(kAccent, 0, S(2.5f));
-    ImGui::Dummy(ImVec2(radius * 2, radius * 2));
 }
 
 void ProgressBar(float fraction)
@@ -444,9 +428,10 @@ void EndDialog()
 
 void DialogText(const std::string& title, const std::string& detail)
 {
-    Text(title, kText, 16.5f);
+    Text(title, kText, kSemibold, 0.0f, true);
     if (!detail.empty())
-        Text(detail, kDim, 13.5f);
+        Text(detail, kDim, kBody);
+    ImGui::Dummy(ImVec2(0, S(2)));
 }
 
 int DialogButtons(std::initializer_list<const char*> labels)
@@ -473,7 +458,8 @@ void Line(ImDrawList* draw, float left, float right, float middle, const std::st
     PushSize(size, bold);
     const ImVec2 measured = ImGui::CalcTextSize(text.c_str());
     const float x = centered ? left + (right - left - measured.x) / 2 : left;
-    if (measured.x <= right - left)
+    // Callers often give right as left plus the measured width, which rounding can leave a hair short.
+    if (measured.x <= right - left + 0.5f)
         draw->AddText(ImVec2(x, middle - measured.y / 2), color, text.c_str());
     else
     {

@@ -1,5 +1,5 @@
-// The launcher and the menu. The launcher is the one every platform shares, in src/ui. The menu is drawn the way the
-// Windows host draws it in src/menu.cpp, with the same layout, sizes and colors.
+// The launcher, in its window and over the game as the menu. It is the one every platform shares, in src/ui. This fills
+// in what it shows and carries out what the user does, and draws the short messages at the bottom of the game.
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "ui.h"
@@ -38,6 +38,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <tuple>
 #include <utility>
 
 // assets/Unishade.png, which the build puts into the program.
@@ -47,14 +48,6 @@ extern const unsigned kLogoPngSize;
 namespace
 {
 using namespace kit;
-
-// The menu's layout in pixels at 1080p.
-using menu_layout::kWidth;
-using menu_layout::kMargin;
-using menu_layout::kHeader;
-using menu_layout::kTabs;
-using menu_layout::kFooter;
-constexpr float kPadding = 18;
 
 // How long a removed game can be put back.
 constexpr double kUndoSeconds = 8;
@@ -256,101 +249,6 @@ void ForgetPictures(const std::function<bool(const std::string& folder)>& keep)
     }
 }
 
-// A floppy disk: an outline with one corner cut, the shutter at the top and the label below.
-void SaveIcon(ImDrawList* draw, ImVec2 center, float size, ImU32 color)
-{
-    const ImVec2 min = center - ImVec2(size, size) * 0.5f;
-    const ImVec2 max = center + ImVec2(size, size) * 0.5f;
-    const float corner = size * 0.25f;
-    const ImVec2 outline[] = { min, ImVec2(max.x - corner, min.y), ImVec2(max.x, min.y + corner), max, ImVec2(min.x, max.y) };
-    draw->AddPolyline(outline, 5, color, ImDrawFlags_Closed, S(1.5f));
-    draw->AddRectFilled(ImVec2(min.x + size * 0.25f, min.y), ImVec2(max.x - size * 0.35f, min.y + size * 0.3f), color);
-    draw->AddRect(ImVec2(min.x + size * 0.2f, center.y + size * 0.1f), ImVec2(max.x - size * 0.2f, max.y), color, 0, 0, S(1.5f));
-}
-
-// A camera: the body, the bump on top and the lens.
-void CameraIcon(ImDrawList* draw, ImVec2 center, float size, ImU32 color)
-{
-    const ImVec2 min = center + ImVec2(-size * 0.5f, -size * 0.3f);
-    const ImVec2 max = center + ImVec2(size * 0.5f, size * 0.4f);
-    draw->AddRect(min, max, color, S(2), 0, S(1.5f));
-    draw->AddRectFilled(ImVec2(center.x - size * 0.2f, min.y - size * 0.15f), ImVec2(center.x + size * 0.2f, min.y), color, S(1));
-    draw->AddCircle(ImVec2(center.x, center.y + size * 0.05f), size * 0.2f, color, 0, S(1.5f));
-}
-
-// Menu
-
-enum class Tab
-{
-    Presets,
-    Effects,
-    Settings,
-    Status,
-};
-
-// The parts of the Settings tab, in the order their buttons show.
-enum class SettingsPage
-{
-    General,
-    Shortcuts,
-    Addons,
-};
-
-enum class NameAction
-{
-    New,
-    Duplicate,
-    SaveAsNew,
-    NewFolder,
-};
-
-struct MenuState
-{
-    Tab tab = Tab::Presets;
-    SettingsPage settingsPage = SettingsPage::General;
-    char search[128] = {};
-    char presetSearch[128] = {};
-    // The effect whose settings show, as presets name it.
-    std::string expanded;
-    bool showAll = false;
-    // The effects listed under Active since the menu opened or the preset changed, as presets name them.
-    std::set<std::string> active;
-    fs::path activePreset;
-    // The Effects tab's lists, made again only when the techniques, the search or what is listed under Active
-    // changes. Each technique as it was when they were made, checked on every frame without allocating, so a reload
-    // or a new order can never leave them with indices that no longer fit.
-    struct ListedTechnique
-    {
-        std::string name;
-        std::string label;
-        std::string file;
-        std::string key; // as presets name it
-        size_t effect = 0;
-        bool enabled = false;
-        bool hidden = false;
-    };
-    std::vector<ListedTechnique> listed;
-    std::string listedSearch;
-    std::vector<int> activeRows; // in the order they run
-    std::vector<int> otherRows;  // by name
-    bool listStale = true;
-    std::vector<PresetFolder> folders;
-    double presetsListed = -10;
-    fs::path pendingPreset; // waiting for an answer about unsaved changes
-    bool openUnsavedPopup = false;
-    bool openNamePopup = false;
-    NameAction nameAction = NameAction::New;
-    fs::path nameTarget;
-    char name[128] = {};
-    std::string nameError;
-    bool openConfirmPopup = false;
-    std::string confirmEffect; // the file whose settings Reset all asks about
-    int recording = -1;        // the shortcut being recorded
-    std::string shortcutError;
-    std::vector<Notice> notices; // read once a frame
-    std::string shownErrors;     // the effect file whose compiler errors show
-};
-MenuState menu;
 
 // Settings lists the shortcuts in the order of kShortcuts.
 constexpr const char* kShortcutDescriptions[] = {
@@ -359,1296 +257,10 @@ constexpr const char* kShortcutDescriptions[] = {
     "Shows the game without effects for as long as you hold it.",
     "Saves what you see, without the menu.",
     "Saves the same moment with and without effects.",
-    "Switches to the next preset in the Presets tab.",
+    "Switches to the next preset in the game's list.",
     "Switches to the preset before it.",
 };
 static_assert(std::size(kShortcutDescriptions) == std::size(kShortcuts));
-
-void StopRecording(App& app)
-{
-    if (menu.recording >= 0)
-        app.SuspendHotkeys(false);
-    menu.recording = -1;
-}
-
-// Presets
-
-void OpenNamePopup(NameAction action, const fs::path& target)
-{
-    menu.nameAction = action;
-    menu.nameTarget = target;
-    menu.nameError.clear();
-    const std::string name = action == NameAction::New         ? "New preset"
-                             : action == NameAction::NewFolder ? "New folder"
-                                                               : target.stem().string() + " copy";
-    snprintf(menu.name, sizeof(menu.name), "%s", name.c_str());
-    menu.openNamePopup = true;
-}
-
-// Switches presets, or asks first when there are unsaved changes.
-void SwitchTo(App& app, const fs::path& preset)
-{
-    if (app.SwitchPreset(preset, app.settings.autoSavePresets, false))
-        return;
-    menu.pendingPreset = preset;
-    menu.openUnsavedPopup = true;
-}
-
-bool ApplyName(App& app)
-{
-    std::string name = menu.name;
-    name.erase(0, name.find_first_not_of(' '));
-    name.erase(name.find_last_not_of(' ') + 1);
-    menu.nameError.clear();
-    const bool current = menu.nameTarget == app.runtime.PresetPath();
-    if (menu.nameAction == NameAction::New)
-        return app.NewPreset(name, false, menu.nameError);
-    // The active preset is copied as it is on screen, unsaved changes included.
-    if (menu.nameAction == NameAction::SaveAsNew || (menu.nameAction == NameAction::Duplicate && current))
-        return app.NewPreset(name, true, menu.nameError);
-    menu.nameError = PresetNameProblem(name);
-    if (!menu.nameError.empty())
-        return false;
-    if (menu.nameAction == NameAction::NewFolder)
-        return app.MovePreset(menu.nameTarget, PresetsDirectory() / name, menu.nameError);
-
-    // A copy stays in the folder of the preset it comes from.
-    const fs::path path = menu.nameTarget.parent_path() / (name + ".ini");
-    std::error_code error;
-    if (fs::exists(path, error))
-    {
-        menu.nameError = "A preset with that name already exists.";
-        return false;
-    }
-    if (!fs::copy_file(menu.nameTarget, path, error))
-    {
-        menu.nameError = "Could not write the preset.";
-        return false;
-    }
-    SwitchTo(app, path);
-    return true;
-}
-
-void NameDialog(App& app)
-{
-    if (!BeginDialog("##name", menu.openNamePopup, 380))
-        return;
-    const char* titles[] = { "New preset", "Duplicate preset", "Save as new preset", "Move to a new folder" };
-    const char* actions[] = { "Create", "Duplicate", "Save", "Move" };
-    const int action = static_cast<int>(menu.nameAction);
-    DialogText(titles[action], menu.nameAction == NameAction::New ? "Starts with every effect off." : "");
-    if (ImGui::IsWindowAppearing())
-        ImGui::SetKeyboardFocusHere();
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    const bool enter = ImGui::InputText("##value", menu.name, sizeof(menu.name), ImGuiInputTextFlags_EnterReturnsTrue);
-    if (!menu.nameError.empty())
-        Text(menu.nameError, kError, 13.5f);
-    const int clicked = DialogButtons({ "Cancel", actions[action] });
-    if ((clicked == 1 || enter) && ApplyName(app))
-    {
-        menu.presetsListed = -10;
-        RefreshLauncher();
-        ImGui::CloseCurrentPopup();
-    }
-    if (clicked == 0 || ImGui::IsKeyPressed(ImGuiKey_Escape))
-        ImGui::CloseCurrentPopup();
-    EndDialog();
-}
-
-// Asks what to do with unsaved changes when switching presets. The switch waits for the answer.
-void UnsavedDialog(App& app)
-{
-    if (!BeginDialog("##unsaved", menu.openUnsavedPopup, 420))
-        return;
-    DialogText("Save your changes to " + app.runtime.PresetPath().stem().string() + "?", "Discarding goes back to how the preset was last saved.");
-    const int clicked = DialogButtons({ "Discard", "Cancel", "Save" });
-    if (clicked == 0)
-        app.SwitchPreset(menu.pendingPreset, false, true);
-    else if (clicked == 2)
-        app.SwitchPreset(menu.pendingPreset, true, false);
-    if (clicked >= 0 || ImGui::IsKeyPressed(ImGuiKey_Escape))
-    {
-        menu.pendingPreset.clear();
-        ImGui::CloseCurrentPopup();
-    }
-    EndDialog();
-}
-
-// The folders a preset can move to: the ones listed, then saved games that have no presets yet.
-void MoveMenu(App& app, const fs::path& preset)
-{
-    std::vector<std::pair<std::string, fs::path>> targets;
-    for (const PresetFolder& folder : menu.folders)
-        targets.emplace_back(folder.name, folder.path);
-    for (const AutoGame& game : app.autoGames)
-    {
-        const std::string name = FolderName(game.name);
-        if (!name.empty() && std::none_of(targets.begin(), targets.end(), [&](const auto& target) {
-                return !strcasecmp(target.second.filename().string().c_str(), name.c_str());
-            }))
-            targets.emplace_back(name, PresetsDirectory() / name);
-    }
-    for (const auto& [name, folder] : targets)
-        if (folder != preset.parent_path() && ImGui::MenuItem(name.c_str()))
-        {
-            if (std::string error; !app.MovePreset(preset, folder, error))
-                app.ShowToast(error);
-            menu.presetsListed = -10;
-            RefreshLauncher();
-        }
-    ImGui::Separator();
-    if (ImGui::MenuItem("New folder..."))
-        OpenNamePopup(NameAction::NewFolder, preset);
-}
-
-// The preset's menu, opened from the three dots on its row.
-void PresetActions(App& app, const fs::path& path, bool active)
-{
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(6), S(6)));
-    if (ImGui::BeginPopup("actions"))
-    {
-        if (ImGui::MenuItem("Duplicate"))
-            OpenNamePopup(NameAction::Duplicate, path);
-        if (ImGui::BeginMenu("Move to", !active))
-        {
-            MoveMenu(app, path);
-            ImGui::EndMenu();
-        }
-        if (active)
-        {
-            ImGui::Separator();
-            PushSize(12.5f);
-            ImGui::TextDisabled("Switch to another preset to\nmove this one.");
-            ImGui::PopFont();
-        }
-        ImGui::EndPopup();
-    }
-    ImGui::PopStyleVar();
-}
-
-void PresetRow(App& app, const fs::path& path, bool active)
-{
-    const std::string name = path.stem().string();
-    // By path: two presets of a folder can share a name, as Name.ini and Name.INI can on Linux, and a preset from
-    // elsewhere can join a folder that has one of its name.
-    ImGui::PushID(path.string().c_str());
-    const ImVec2 start = ImGui::GetCursorScreenPos();
-    const ImVec2 size(ImGui::GetContentRegionAvail().x, S(44));
-    ImGui::SetNextItemAllowOverlap();
-    const bool clicked = ImGui::InvisibleButton("preset", size, ImGuiButtonFlags_EnableNav) && !active;
-    const bool hovered = ImGui::IsItemHovered();
-    if (hovered && !active)
-        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    draw->AddRectFilled(start, start + size, hovered ? kCardHover : kCard, S(8));
-    draw->AddRect(start, start + size, active ? kAccent : kBorder, S(8), 0, active ? S(1.5f) : 1.0f);
-
-    // The menu button, drawn as three dots.
-    const ImVec2 dots = start + ImVec2(size.x - S(38), (size.y - S(28)) / 2);
-    ImGui::SetCursorScreenPos(dots);
-    if (ImGui::InvisibleButton("actions", ImVec2(S(28), S(28)), ImGuiButtonFlags_EnableNav))
-        ImGui::OpenPopup("actions");
-    const bool dotsHovered = ImGui::IsItemHovered();
-    HandOnHover();
-    if (dotsHovered)
-        draw->AddRectFilled(dots, dots + ImVec2(S(28), S(28)), kBorder, S(6));
-    for (int i = -1; i <= 1; ++i)
-        draw->AddCircleFilled(dots + ImVec2(S(14) + i * S(5), S(14)), S(1.6f), hovered || dotsHovered ? kText : kDim);
-
-    PushSize(14.5f);
-    const float textY = start.y + (size.y - ImGui::GetFontSize()) / 2;
-    draw->PushClipRect(start, ImVec2(dots.x - S(70), start.y + size.y), true);
-    draw->AddText(ImVec2(start.x + S(14), textY), kText, name.c_str());
-    draw->PopClipRect();
-    ImGui::PopFont();
-    if (active)
-    {
-        PushSize(11.5f);
-        const char* tag = "ACTIVE";
-        const ImVec2 tagText = ImGui::CalcTextSize(tag);
-        const ImVec2 tagSize = tagText + ImVec2(S(14), S(6));
-        const ImVec2 tagStart(dots.x - S(8) - tagSize.x, start.y + (size.y - tagSize.y) / 2);
-        draw->AddRectFilled(tagStart, tagStart + tagSize, Color(theme::kAccent, 50), tagSize.y / 2);
-        draw->AddText(tagStart + (tagSize - tagText) * 0.5f, kAccentHover, tag);
-        ImGui::PopFont();
-    }
-
-    PresetActions(app, path, active);
-    ImGui::SetCursorScreenPos(start);
-    ImGui::Dummy(size);
-    ImGui::PopID();
-    if (clicked)
-        SwitchTo(app, path);
-}
-
-// The folder's logo.png, such as a game's icon, or a stand-in: a globe for all games, a game's first letter, or a
-// folder.
-void FolderIcon(ImDrawList* draw, const PresetFolder& folder, ImVec2 min, float size)
-{
-    const ImVec2 max = min + ImVec2(size, size);
-    if (const ImTextureID logo = PictureTexture(folder.path.string(), size))
-    {
-        draw->AddImageRounded(ImTextureRef(logo), min, max, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, S(4));
-        return;
-    }
-    const ImVec2 center = (min + max) * 0.5f;
-    const float t = S(1.5f);
-    if (folder.all)
-    {
-        const float r = size * 0.4f;
-        draw->AddCircle(center, r, kDim, 0, t);
-        draw->AddEllipse(center, ImVec2(r * 0.45f, r), kDim, 0, 0, t);
-        draw->AddLine(center - ImVec2(r, 0), center + ImVec2(r, 0), kDim, t);
-    }
-    else if (folder.game)
-    {
-        draw->AddRectFilled(min, max, kBorder, S(5));
-        const std::string letter = Initial(folder.name);
-        PushSize(13);
-        draw->AddText(center - ImGui::CalcTextSize(letter.c_str()) * 0.5f, kText, letter.c_str());
-        ImGui::PopFont();
-    }
-    else
-    {
-        const ImVec2 body(min.x + size * 0.1f, min.y + size * 0.32f);
-        draw->AddRectFilled(ImVec2(body.x, min.y + size * 0.2f), ImVec2(body.x + size * 0.35f, body.y + t), kDim, S(1.5f));
-        draw->AddRect(body, ImVec2(max.x - size * 0.1f, max.y - size * 0.18f), kDim, S(2), 0, t);
-    }
-}
-
-// A folder's logo, name and preset count. Clicking it opens or closes the folder.
-bool FolderHeader(const PresetFolder& folder, bool open, size_t presets)
-{
-    const ImVec2 start = ImGui::GetCursorScreenPos();
-    const ImVec2 size(ImGui::GetContentRegionAvail().x, S(34));
-    const bool clicked = ImGui::InvisibleButton("folder", size, ImGuiButtonFlags_EnableNav);
-    const bool hovered = ImGui::IsItemHovered();
-    HandOnHover();
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    if (hovered)
-        draw->AddRectFilled(start, start + size, kCard, S(8));
-
-    const float icon = std::round(S(22));
-    const ImVec2 iconStart(std::round(start.x + S(6)), std::round(start.y + (size.y - icon) / 2));
-    FolderIcon(draw, folder, iconStart, icon);
-
-    const float chevron = start.x + size.x - S(20);
-    PushSize(13);
-    const std::string count = std::to_string(presets);
-    const ImVec2 countSize = ImGui::CalcTextSize(count.c_str());
-    const float countX = chevron - S(16) - countSize.x;
-    draw->AddText(ImVec2(countX, start.y + (size.y - countSize.y) / 2), kDim, count.c_str());
-    ImGui::PopFont();
-    PushSize(14.5f);
-    draw->PushClipRect(start, ImVec2(countX - S(10), start.y + size.y), true);
-    draw->AddText(ImVec2(iconStart.x + icon + S(10), start.y + (size.y - ImGui::GetFontSize()) / 2), kText, folder.name.c_str());
-    draw->PopClipRect();
-    ImGui::PopFont();
-    Chevron(draw, ImVec2(chevron, start.y + size.y / 2), open, open || hovered ? kText : kDim);
-    return clicked;
-}
-
-// Returns false when searching found nothing in the folder, which is then left out.
-bool FolderSection(App& app, const PresetFolder& folder, const fs::path& current, const std::string& filter)
-{
-    // While searching, folders are open and show the presets that match, or all of them when the folder's name does.
-    const bool searching = !filter.empty();
-    const bool folderMatches = searching && Lowercase(folder.name).find(filter) != std::string::npos;
-    std::vector<const fs::path*> shown;
-    for (const fs::path& preset : folder.presets)
-        if (!searching || folderMatches || Lowercase(preset.stem().string()).find(filter) != std::string::npos)
-            shown.push_back(&preset);
-    if (searching && shown.empty())
-        return false;
-
-    ImGui::PushID(folder.path.string().c_str());
-    const bool open = searching || app.FolderOpen(folder);
-    if (FolderHeader(folder, open, shown.size()) && !searching)
-        app.folderOpen[folder.path.string()] = !open;
-    if (open)
-    {
-        for (const fs::path* preset : shown)
-            PresetRow(app, *preset, *preset == current);
-        if (folder.presets.empty() && (folder.playing || (folder.all && app.game.empty())))
-            Text("New presets go here.", kDim, 13.5f);
-    }
-    ImGui::PopID();
-    return true;
-}
-
-void PresetsTab(App& app)
-{
-    const fs::path current = app.runtime.PresetPath();
-    if (glfwGetTime() - menu.presetsListed > 1)
-    {
-        menu.folders = app.PresetFolders();
-        menu.presetsListed = glfwGetTime();
-        ForgetPictures([](const std::string& path) {
-            return std::any_of(menu.folders.begin(), menu.folders.end(), [&](const PresetFolder& folder) { return folder.path.string() == path; });
-        });
-    }
-
-    if (Button("New preset", ImVec2(S(130), S(32)), true))
-        OpenNamePopup(NameAction::New, {});
-    if (!app.settings.autoSavePresets)
-    {
-        ImGui::SameLine(0, S(8));
-        if (Button("Save as new", ImVec2(S(120), S(32))))
-            OpenNamePopup(NameAction::SaveAsNew, current);
-    }
-    ImGui::Dummy(ImVec2(0, S(2)));
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputTextWithHint("##presetsearch", "Search presets", menu.presetSearch, sizeof(menu.presetSearch));
-
-    const std::string filter = Lowercase(menu.presetSearch);
-    bool any = false;
-    for (const PresetFolder& folder : menu.folders)
-        if (FolderSection(app, folder, current, filter))
-            any = true;
-    if (!any && !filter.empty())
-        Text("No presets match.", kDim, 13.5f);
-
-    ImGui::Dummy(ImVec2(0, S(4)));
-    Text(app.settings.autoSavePresets ? "Changes save to the active preset as you make them."
-                                      : "Changes apply right away. Save them with the icon at the top.",
-         kDim, 13);
-    PushSize(13.5f);
-    if (Link("Open presets folder"))
-        platform::Open(PresetsDirectory().string());
-    if (!app.settings.autoSavePresets && app.runtime.Dirty())
-    {
-        ImGui::SameLine(0, S(16));
-        if (Link("Discard changes", kDim))
-            app.SwitchPreset(current, false, true);
-    }
-    ImGui::PopFont();
-}
-
-// Effects
-
-// Draws the control for one variable of an effect. Returns true when its value changed.
-bool DrawParameter(App& app, fx::Effect& effect, const fx::Uniform& uniform)
-{
-    const reshadefx::type& type = uniform.type;
-    const int components = static_cast<int>(type.components());
-    if (!uniform.text.empty())
-        Text(uniform.text, kDim, 13.5f);
-    if (type.is_array() || type.is_matrix() || components > 4)
-        return false;
-
-    bool changed = false;
-    ImGui::PushID(uniform.name.c_str());
-    const float x = ImGui::GetCursorPosX();
-    const float labelWidth = std::floor(ImGui::GetContentRegionAvail().x * 0.42f);
-    // One group for the label and the control, so effects can tell which of their variables is in use or under the
-    // cursor.
-    ImGui::BeginGroup();
-    ImGui::BeginGroup();
-    ImGui::AlignTextToFramePadding();
-    ImGui::PushTextWrapPos(x + labelWidth - S(10));
-    ImGui::PushStyleColor(ImGuiCol_Text, uniform.tooltip.empty() ? kText : Color(0xD8D9E6));
-    ImGui::TextUnformatted(uniform.label.c_str());
-    ImGui::PopStyleColor();
-    ImGui::PopTextWrapPos();
-    ImGui::EndGroup();
-    Tooltip(uniform.tooltip);
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(x + labelWidth);
-    ImGui::SetNextItemWidth(-FLT_MIN);
-
-    const bool bounded = uniform.min > std::numeric_limits<float>::lowest() && uniform.max < std::numeric_limits<float>::max();
-    if (type.is_boolean())
-    {
-        int value = 0;
-        app.runtime.GetValue(effect, uniform, &value, 1);
-        bool on = value != 0;
-        if ((changed = ImGui::Checkbox("##value", &on)))
-        {
-            value = on;
-            app.runtime.SetValue(effect, uniform, &value, 1);
-        }
-    }
-    else if (!uniform.items.empty() && !type.is_floating_point() && components == 1)
-    {
-        int value = 0;
-        app.runtime.GetValue(effect, uniform, &value, 1);
-        if ((changed = ImGui::Combo("##value", &value, uniform.items.c_str())))
-            app.runtime.SetValue(effect, uniform, &value, 1);
-    }
-    else if (uniform.uiType == "color" && type.is_floating_point() && components >= 3)
-    {
-        float value[4] = {};
-        app.runtime.GetValue(effect, uniform, value, components);
-        changed = components == 3 ? ImGui::ColorEdit3("##value", value) : ImGui::ColorEdit4("##value", value, ImGuiColorEditFlags_AlphaBar);
-        if (changed)
-            app.runtime.SetValue(effect, uniform, value, components);
-    }
-    else if (type.is_floating_point())
-    {
-        float value[4] = {};
-        app.runtime.GetValue(effect, uniform, value, components);
-        if (uniform.uiType == "slider" && bounded)
-            changed = ImGui::SliderScalarN("##value", ImGuiDataType_Float, value, components, &uniform.min, &uniform.max, "%.3f");
-        else if (uniform.uiType == "input")
-            changed = ImGui::InputScalarN("##value", ImGuiDataType_Float, value, components);
-        else
-            changed = ImGui::DragScalarN("##value", ImGuiDataType_Float, value, components, std::max(uniform.step, 0.0001f),
-                                         bounded ? &uniform.min : nullptr, bounded ? &uniform.max : nullptr, "%.3f");
-        if (changed)
-            app.runtime.SetValue(effect, uniform, value, components);
-    }
-    else
-    {
-        int value[4] = {};
-        app.runtime.GetValue(effect, uniform, value, components);
-        const int low = bounded ? static_cast<int>(uniform.min) : INT_MIN, high = bounded ? static_cast<int>(uniform.max) : INT_MAX;
-        if (uniform.uiType == "slider" && bounded)
-            changed = ImGui::SliderScalarN("##value", ImGuiDataType_S32, value, components, &low, &high);
-        else if (uniform.uiType == "input")
-            changed = ImGui::InputScalarN("##value", ImGuiDataType_S32, value, components);
-        else
-            changed = ImGui::DragScalarN("##value", ImGuiDataType_S32, value, components, std::max(uniform.step, 0.2f), bounded ? &low : nullptr,
-                                         bounded ? &high : nullptr);
-        if (changed)
-            app.runtime.SetValue(effect, uniform, value, components);
-    }
-    if (ImGui::BeginPopupContextItem("reset"))
-    {
-        if (ImGui::MenuItem("Reset to default"))
-        {
-            app.runtime.ResetValue(effect, uniform);
-            changed = true;
-        }
-        ImGui::EndPopup();
-    }
-    ImGui::EndGroup();
-    if (ImGui::IsItemActive())
-        app.menuActiveUniform = &uniform;
-    if (ImGui::IsItemHovered())
-        app.menuHoveredUniform = &uniform;
-    ImGui::PopID();
-    return changed;
-}
-
-// The preprocessor definitions the effect checks, such as quality levels. A change compiles the effects again, so it
-// applies on Enter, as in ReShade's menu.
-void DrawDefinitions(App& app, const fx::Effect& effect)
-{
-    if (effect.definitions.empty() || !ImGui::CollapsingHeader("Preprocessor definitions"))
-        return;
-    for (const auto& [name, compiled] : effect.definitions)
-    {
-        ImGui::PushID(name.c_str());
-        const float x = ImGui::GetCursorPosX();
-        const float labelWidth = std::floor(ImGui::GetContentRegionAvail().x * 0.42f);
-        ImGui::AlignTextToFramePadding();
-        ImGui::PushTextWrapPos(x + labelWidth - S(10));
-        ImGui::TextUnformatted(name.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(x + labelWidth);
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        // Empty while the effect uses its own value, which shows as the hint.
-        const std::string current = app.runtime.DefinitionValue(effect.file, name);
-        char value[256]{};
-        current.copy(value, sizeof(value) - 1);
-        if (ImGui::InputTextWithHint("##value", compiled.c_str(), value, sizeof(value), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll) &&
-            current != value)
-            app.runtime.SetDefinition(effect.file, name, value);
-        if (ImGui::BeginPopupContextItem("reset"))
-        {
-            if (ImGui::MenuItem("Reset to default"))
-                app.runtime.SetDefinition(effect.file, name, "");
-            ImGui::EndPopup();
-        }
-        ImGui::PopID();
-    }
-}
-
-void DrawParameters(App& app, const fx::Technique& technique, fx::Effect& effect)
-{
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, kInset);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(14), S(12)));
-    ImGui::BeginChild("settings", ImVec2(0, 0),
-                      ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
-                      ImGuiWindowFlags_NoScrollWithMouse);
-    ImGui::PopStyleVar();
-    PushSize(13.5f);
-    if (!technique.tooltip.empty())
-        Text(technique.tooltip, kDim, 13.5f);
-
-    // Grouped by category in the order they first appear, as in ReShade.
-    std::vector<std::string> categories;
-    for (const fx::Uniform& uniform : effect.uniforms)
-        if (!uniform.hidden && std::find(categories.begin(), categories.end(), uniform.category) == categories.end())
-            categories.push_back(uniform.category);
-    if (categories.empty() && effect.definitions.empty())
-        Text("This effect has no settings.", kDim, 13.5f);
-    bool changed = false;
-    for (const std::string& category : categories)
-    {
-        if (!category.empty() && !ImGui::CollapsingHeader(category.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
-            continue;
-        for (const fx::Uniform& uniform : effect.uniforms)
-            if (!uniform.hidden && uniform.category == category)
-                changed |= DrawParameter(app, effect, uniform);
-    }
-    if (changed)
-        app.runtime.SetDirty();
-    if (!categories.empty())
-    {
-        ImGui::Dummy(ImVec2(0, S(2)));
-        if (Link("Reset all", kDim))
-        {
-            menu.confirmEffect = effect.file;
-            menu.openConfirmPopup = true;
-        }
-        Tooltip("Right-click a setting to reset only that one.");
-    }
-    DrawDefinitions(app, effect);
-    ImGui::PopFont();
-    ImGui::EndChild();
-    ImGui::PopStyleColor();
-}
-
-// Asks before resetting an effect's settings, which cannot be got back with auto-save on.
-void ConfirmDialog(App& app)
-{
-    if (!BeginDialog("##confirm", menu.openConfirmPopup, 380))
-        return;
-    DialogText("Reset every setting of " + menu.confirmEffect + "?",
-               app.settings.autoSavePresets ? "They go back to their defaults and the preset is saved." : "They go back to their defaults.");
-    const int clicked = DialogButtons({ "Cancel", "Reset" });
-    if (clicked == 1)
-        for (fx::Effect& effect : app.runtime.Effects())
-            if (effect.file == menu.confirmEffect)
-            {
-                for (const fx::Uniform& uniform : effect.uniforms)
-                    if (uniform.source.empty())
-                        app.runtime.ResetValue(effect, uniform);
-                app.runtime.SetDirty();
-            }
-    if (clicked >= 0 || ImGui::IsKeyPressed(ImGuiKey_Escape))
-        ImGui::CloseCurrentPopup();
-    EndDialog();
-}
-
-// Effects that are on can be dragged onto each other to change the order they run in, which from and to take.
-void TechniqueRow(App& app, int index, const std::string& key, int& moveFrom, int& moveTo)
-{
-    fx::Technique& technique = app.runtime.Techniques()[index];
-    fx::Effect& effect = app.runtime.Effects()[technique.effect];
-    const std::string& label = technique.label.empty() ? technique.name : technique.label;
-    const bool expanded = menu.expanded == key;
-    ImGui::PushID(key.c_str());
-    const ImVec2 start = ImGui::GetCursorScreenPos();
-    const ImVec2 size(ImGui::GetContentRegionAvail().x, S(38));
-    if (!expanded && !ImGui::IsRectVisible(size))
-    {
-        ImGui::Dummy(size);
-        ImGui::PopID();
-        return;
-    }
-
-    ImGui::SetNextItemAllowOverlap();
-    if (ImGui::InvisibleButton("row", size, ImGuiButtonFlags_EnableNav))
-        menu.expanded = expanded ? std::string() : key;
-    const bool hovered = ImGui::IsItemHovered();
-    HandOnHover();
-    if (technique.enabled)
-    {
-        if (ImGui::BeginDragDropSource())
-        {
-            ImGui::SetDragDropPayload("technique", &index, sizeof(index));
-            ImGui::TextUnformatted(label.c_str());
-            ImGui::EndDragDropSource();
-        }
-        if (ImGui::BeginDragDropTarget())
-        {
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("technique"))
-            {
-                moveFrom = *static_cast<const int*>(payload->Data);
-                moveTo = index;
-            }
-            ImGui::EndDragDropTarget();
-        }
-    }
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    if (hovered || expanded)
-        draw->AddRectFilled(start, start + size, hovered ? kCardHover : kCard, S(8));
-
-    ImGui::SetCursorScreenPos(start + ImVec2(S(10), (size.y - S(18)) / 2));
-    if (Switch("on", technique.enabled))
-        app.runtime.SetEnabled(index, !technique.enabled);
-
-    const float chevron = start.x + size.x - S(20);
-    PushSize(14.5f);
-    const ImVec2 labelSize = ImGui::CalcTextSize(label.c_str());
-    const float textY = start.y + (size.y - ImGui::GetFontSize()) / 2;
-    draw->PushClipRect(start, ImVec2(chevron - S(10), start.y + size.y), true);
-    draw->AddText(ImVec2(start.x + S(52), textY), effect.gpuFailed ? kDim : kText, label.c_str());
-    ImGui::PopFont();
-    PushSize(12.5f);
-    draw->AddText(ImVec2(start.x + S(52) + labelSize.x + S(8), textY + S(1.5f)), effect.gpuFailed ? kWarning : kDim,
-                  effect.gpuFailed ? "failed" : effect.file.c_str());
-    ImGui::PopFont();
-    draw->PopClipRect();
-
-    Chevron(draw, ImVec2(chevron, start.y + size.y / 2), expanded, expanded || hovered ? kText : kDim);
-
-    ImGui::SetCursorScreenPos(start);
-    ImGui::Dummy(size);
-    if (expanded)
-        DrawParameters(app, technique, effect);
-    ImGui::PopID();
-}
-
-void EffectsTab(App& app)
-{
-    std::vector<fx::Technique>& techniques = app.runtime.Techniques();
-    const std::vector<fx::Effect>& effects = app.runtime.Effects();
-
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputTextWithHint("##search", "Search effects", menu.search, sizeof(menu.search));
-
-    if (app.runtime.Loading())
-    {
-        const auto [loaded, total] = app.runtime.LoadingProgress();
-        ImGui::Dummy(ImVec2(0, S(2)));
-        Spinner(S(10));
-        ImGui::SameLine(0, S(10));
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + S(1));
-        Text(techniques.empty() ? "Loading effects. The first time can take a minute."
-                                : "Compiling effects " + std::to_string(loaded) + " of " + std::to_string(total),
-             kDim, 14);
-    }
-    else if (techniques.empty())
-    {
-        ImGui::Dummy(ImVec2(0, S(6)));
-        Text("No effects are installed. Install them from the launcher.", kDim, 14);
-    }
-    if (techniques.empty())
-        return;
-
-    // An effect turned off stays in Active until the menu closes, so it can be turned back on where it was.
-    if (menu.activePreset != app.runtime.PresetPath())
-    {
-        menu.active.clear();
-        menu.activePreset = app.runtime.PresetPath();
-        menu.listStale = true;
-    }
-    const auto label = [](const fx::Technique& technique) -> const std::string& { return technique.label.empty() ? technique.name : technique.label; };
-    bool same = !menu.listStale && menu.listed.size() == techniques.size() && menu.listedSearch == menu.search;
-    for (size_t i = 0; same && i < techniques.size(); ++i)
-    {
-        const fx::Technique& technique = techniques[i];
-        const MenuState::ListedTechnique& listed = menu.listed[i];
-        same = technique.effect < effects.size() && listed.effect == technique.effect && listed.enabled == technique.enabled &&
-               listed.hidden == technique.hidden && listed.name == technique.name && listed.label == technique.label &&
-               listed.file == effects[technique.effect].file;
-    }
-    if (!same)
-    {
-        menu.listStale = false;
-        menu.listedSearch = menu.search;
-        menu.listed.clear();
-        for (const fx::Technique& technique : techniques)
-        {
-            const fx::Effect& effect = effects[technique.effect];
-            menu.listed.push_back({ technique.name, technique.label, effect.file, fx::TechniqueKey(technique, effect), technique.effect, technique.enabled,
-                                    technique.hidden });
-            if (technique.enabled)
-                menu.active.insert(menu.listed.back().key);
-        }
-        const std::string filter = Lowercase(menu.search);
-        const auto shown = [&](const fx::Technique& technique) {
-            return !technique.hidden &&
-                   (filter.empty() || Lowercase(label(technique)).find(filter) != std::string::npos ||
-                    Lowercase(effects[technique.effect].file).find(filter) != std::string::npos);
-        };
-        menu.activeRows.clear();
-        menu.otherRows.clear();
-        for (int i = 0; i < static_cast<int>(techniques.size()); ++i)
-            if (shown(techniques[i]))
-                (menu.active.count(menu.listed[i].key) ? menu.activeRows : menu.otherRows).push_back(i);
-        // The rest by name.
-        std::sort(menu.otherRows.begin(), menu.otherRows.end(),
-                  [&](int a, int b) { return strcasecmp(label(techniques[a]).c_str(), label(techniques[b]).c_str()) < 0; });
-    }
-
-    const bool searching = menu.search[0] != 0;
-    int moveFrom = -1, moveTo = -1;
-    Heading("ACTIVE");
-    for (int index : menu.activeRows)
-        TechniqueRow(app, index, menu.listed[index].key, moveFrom, moveTo);
-    if (menu.activeRows.empty())
-        Text(searching ? "No active effects match." : "No effects are on. Pick a preset or turn effects on below.", kDim, 13.5f);
-
-    ImGui::Dummy(ImVec2(0, S(4)));
-    const std::string title = "ALL EFFECTS (" + std::to_string(menu.otherRows.size()) + ")";
-    PushSize(12);
-    ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-    ImGui::SetNextItemOpen(searching || menu.showAll);
-    const bool open = ImGui::TreeNodeEx((title + "###all").c_str(), ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
-    if (ImGui::IsItemToggledOpen() && !searching)
-        menu.showAll = !menu.showAll;
-    HandOnHover();
-    ImGui::PopStyleColor();
-    ImGui::PopFont();
-    if (open)
-        for (int index : menu.otherRows)
-            TechniqueRow(app, index, menu.listed[index].key, moveFrom, moveTo);
-
-    if (moveFrom >= 0)
-        app.runtime.MoveTechnique(moveFrom, moveTo);
-}
-
-// Settings
-
-// While the menu waits for a shortcut, the next key pressed with any modifiers becomes it.
-void RecordShortcut(App& app)
-{
-    if (menu.recording < 0)
-        return;
-    // Space would otherwise also press the control the keyboard is on.
-    ImGui::SetNavCursorVisible(false);
-    // Modifiers straight from GLFW: Dear ImGui swaps Cmd and Ctrl on macOS.
-    GLFWwindow* window = app.overlay.window;
-    const auto down = [window](int a, int b) { return glfwGetKey(window, a) == GLFW_PRESS || glfwGetKey(window, b) == GLFW_PRESS; };
-    for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; ++key)
-    {
-        if (!IsShortcutKey(static_cast<ImGuiKey>(key)) || !ImGui::IsKeyPressed(static_cast<ImGuiKey>(key), false))
-            continue;
-        Hotkey hotkey;
-        hotkey.key = static_cast<ImGuiKey>(key);
-        hotkey.modifiers = (down(GLFW_KEY_LEFT_CONTROL, GLFW_KEY_RIGHT_CONTROL) ? kCtrl : 0u) | (down(GLFW_KEY_LEFT_ALT, GLFW_KEY_RIGHT_ALT) ? kAlt : 0u) |
-                           (down(GLFW_KEY_LEFT_SHIFT, GLFW_KEY_RIGHT_SHIFT) ? kShift : 0u) |
-                           (down(GLFW_KEY_LEFT_SUPER, GLFW_KEY_RIGHT_SUPER) ? kSuper : 0u);
-        InputHotkeys changed = app.settings.hotkeys;
-        changed.*kShortcuts[menu.recording].member = hotkey;
-        StopRecording(app);
-        // Escape alone stops waiting.
-        if (hotkey.key != ImGuiKey_Escape || hotkey.modifiers)
-            app.ChangeHotkeys(changed, menu.shortcutError);
-        break;
-    }
-}
-
-void ShortcutRow(App& app, int index)
-{
-    const Shortcut& shortcut = kShortcuts[index];
-    ImGui::PushID(index);
-    const float x = ImGui::GetCursorPosX();
-    const float top = ImGui::GetCursorPosY();
-    const float width = ImGui::GetContentRegionAvail().x;
-    const float buttonWidth = S(130);
-
-    ImGui::BeginGroup();
-    Text(shortcut.label, kText, 14.5f, x + width - buttonWidth - S(14));
-    Text(kShortcutDescriptions[index], kDim, 13, x + width - buttonWidth - S(14));
-    ImGui::EndGroup();
-    const float bottom = ImGui::GetCursorPosY();
-
-    ImGui::SetCursorPos(ImVec2(x + width - buttonWidth, top + S(2)));
-    const bool recording = menu.recording == index;
-    const std::string label = recording ? "Press keys..." : FormatHotkey(app.settings.hotkeys.*shortcut.member);
-    ImGui::PushStyleColor(ImGuiCol_Border, recording ? kAccent : kBorderStrong);
-    if (Button((label + "##key").c_str(), ImVec2(buttonWidth, S(32))))
-    {
-        if (recording)
-            StopRecording(app);
-        else
-        {
-            StopRecording(app);
-            menu.recording = index;
-            menu.shortcutError.clear();
-            app.SuspendHotkeys(true);
-        }
-    }
-    ImGui::PopStyleColor();
-    ImGui::SetCursorPos(ImVec2(x, std::max(bottom, top + S(40)) + S(6)));
-    ImGui::Dummy(ImVec2(0, 0));
-    ImGui::PopID();
-}
-
-// A switch with its title and description beside it. Returns true when clicked.
-bool SwitchRow(const char* id, bool on, const char* title, const char* description)
-{
-    const bool clicked = Switch(id, on);
-    ImGui::SameLine(0, S(12));
-    ImGui::BeginGroup();
-    Text(title, kText, 14.5f);
-    Text(description, kDim, 13);
-    ImGui::EndGroup();
-    return clicked;
-}
-
-void GeneralSettings(App& app)
-{
-    Heading("PRESETS");
-    if (SwitchRow("autosave", app.settings.autoSavePresets, "Save changes automatically",
-                  "Turn off to try changes first and save them with the icon at the top."))
-    {
-        app.settings.autoSavePresets = !app.settings.autoSavePresets;
-        // From here on every change saves as it happens, so changes that were waiting are saved too.
-        if (app.settings.autoSavePresets && app.runtime.Dirty())
-            app.runtime.SavePreset();
-        SaveSettings(app.settings);
-    }
-
-#ifdef __APPLE__
-    ImGui::Dummy(ImVec2(0, S(14)));
-    Heading("GAME WINDOW");
-    if (SwitchRow("titlebar", app.settings.skipTitleBar, "Skip the title bar",
-                  "Effects leave a windowed game's title bar alone. Turn off for borderless games in a window."))
-    {
-        app.settings.skipTitleBar = !app.settings.skipTitleBar;
-        platform::SetSkipTitleBar(app.settings.skipTitleBar);
-        SaveSettings(app.settings);
-        Log(LogLevel::Info, "Settings: skip_title_bar=%d.", app.settings.skipTitleBar);
-    }
-#endif
-
-#ifdef _WIN32
-    ImGui::Dummy(ImVec2(0, S(14)));
-    Heading("PERFORMANCE");
-    Text("Effect resolution", kText, 14.5f);
-    Text("Effects run on a smaller picture that FSR upscales to the game's size. Lower is faster and softer, and screenshots get "
-         "smaller. For " + (app.game.empty() ? std::string("every game without its own setting.") : app.game + " only."),
-         kDim, 13);
-    ImGui::Dummy(ImVec2(0, S(2)));
-    const auto& choices = launcher::kEffectResolutions;
-    const auto chosen = std::find(std::begin(choices), std::end(choices), app.effectResolution);
-    if (const int clicked = Segmented("resolution", { "100%", "75%", "50%" }, static_cast<int>(chosen - std::begin(choices)), kAccent); clicked >= 0)
-        app.SetEffectResolution(choices[clicked]);
-#endif
-
-    ImGui::Dummy(ImVec2(0, S(14)));
-    Heading("EFFECTS");
-    for (const fs::path& path : app.settings.effectPaths)
-        Text(path.string(), kDim, 13);
-    ImGui::Dummy(ImVec2(0, S(2)));
-    if (Button("Reload effects", ImVec2(S(130), S(32))))
-        app.runtime.Reload();
-    ImGui::SameLine(0, S(8));
-    if (Button("Open data folder", ImVec2(S(150), S(32))))
-        platform::Open(DataDirectory().string());
-}
-
-void ShortcutSettings(App& app)
-{
-    Text("Click a shortcut, then press the keys you want. They work right away.", kDim, 13);
-    ImGui::Dummy(ImVec2(0, S(4)));
-    for (int i = 0; i < static_cast<int>(std::size(kShortcuts)); ++i)
-        ShortcutRow(app, i);
-    if (!menu.shortcutError.empty())
-        Text(menu.shortcutError, kError, 13.5f);
-}
-
-// A plain page for now: the approval of files that are not official, on and off, and each add-on's settings.
-void AddonSettings(App& app)
-{
-    for (const Addons::Addon& addon : app.addons.List())
-    {
-        ImGui::PushID(addon.file.c_str());
-        if (addon.state == Addons::State::Pending)
-        {
-            Text(addon.file, kText, 14.5f);
-            Text("Not an official add-on. Load it?", kWarning, 13);
-            if (Button("Load", ImVec2(S(90), S(30)), true))
-                app.addons.Approve(addon.file, true);
-            ImGui::SameLine(0, S(8));
-            if (Button("Don't load", ImVec2(S(110), S(30))))
-                app.addons.Approve(addon.file, false);
-        }
-        else
-        {
-            const bool on = addon.state == Addons::State::Enabled;
-            const std::string title = addon.name + (addon.official ? "" : " (not official)");
-            if (SwitchRow("on", on, title.c_str(), addon.description.empty() ? addon.file.c_str() : addon.description.c_str()))
-                app.addons.SetEnabled(addon.file, !on);
-            if (addon.state == Addons::State::Failed)
-                Text(addon.error, kError, 13);
-        }
-        if (addon.state == Addons::State::Enabled || addon.state == Addons::State::Failed)
-            for (size_t i = 0; i < addon.settings.size(); ++i)
-            {
-                const Addons::Setting& setting = addon.settings[i];
-                ImGui::PushID(static_cast<int>(i));
-                ImGui::SetNextItemWidth(S(220));
-                float value = setting.value;
-                bool changed = false;
-                if (setting.type == UNISHADE_SETTING_TOGGLE)
-                {
-                    bool checked = value != 0;
-                    changed = ImGui::Checkbox(setting.label.c_str(), &checked);
-                    value = checked;
-                }
-                else if (setting.type == UNISHADE_SETTING_CHOICE)
-                {
-                    int choice = static_cast<int>(value);
-                    const char* current = choice < static_cast<int>(setting.choices.size()) ? setting.choices[choice].c_str() : "";
-                    if (ImGui::BeginCombo(setting.label.c_str(), current))
-                    {
-                        for (int c = 0; c < static_cast<int>(setting.choices.size()); ++c)
-                            if (ImGui::Selectable(setting.choices[c].c_str(), c == choice))
-                            {
-                                changed = true;
-                                choice = c;
-                            }
-                        ImGui::EndCombo();
-                    }
-                    value = static_cast<float>(choice);
-                }
-                else if (setting.type == UNISHADE_SETTING_INTEGER)
-                {
-                    int number = static_cast<int>(value);
-                    changed = ImGui::SliderInt(setting.label.c_str(), &number, static_cast<int>(setting.min), static_cast<int>(setting.max));
-                    value = static_cast<float>(number);
-                }
-                else
-                    changed = ImGui::SliderFloat(setting.label.c_str(), &value, setting.min, setting.max, "%.2f");
-                Tooltip(setting.tooltip);
-                if (changed)
-                    app.addons.SetSetting(addon.file, i, value);
-                ImGui::PopID();
-            }
-        ImGui::PopID();
-        ImGui::Dummy(ImVec2(0, S(10)));
-    }
-    if (app.addons.List().empty())
-        Text("No add-ons in the Addons folder.", kDim, 13);
-    if (Button("Look again", ImVec2(S(120), S(32))))
-        app.addons.Scan();
-    ImGui::SameLine(0, S(8));
-    if (Button("Open Addons folder", ImVec2(S(170), S(32))))
-        platform::Open((DataDirectory() / "Addons").string());
-}
-
-void SettingsTab(App& app)
-{
-    const int clicked = Segmented("page", { "General", "Shortcuts", "Add-ons" }, static_cast<int>(menu.settingsPage), kBorder);
-    if (clicked >= 0)
-    {
-        // A shortcut left waiting for keys on its page would take the next key pressed on another.
-        StopRecording(app);
-        menu.settingsPage = static_cast<SettingsPage>(clicked);
-    }
-    ImGui::Dummy(ImVec2(0, S(6)));
-    if (menu.settingsPage == SettingsPage::General)
-        GeneralSettings(app);
-    else if (menu.settingsPage == SettingsPage::Shortcuts)
-        ShortcutSettings(app);
-    else
-        AddonSettings(app);
-}
-
-// Status
-
-void StatusTab(App& app)
-{
-    const float x = ImGui::GetCursorPosX();
-    const float width = ImGui::GetContentRegionAvail().x;
-    Heading("STATUS");
-    if (!menu.notices.empty())
-    {
-        // The log keeps them.
-        PushSize(12);
-        const char* dismiss = "Dismiss all";
-        ImGui::SameLine(x + width - ImGui::CalcTextSize(dismiss).x);
-        if (Link(dismiss, kDim))
-            ClearNotices();
-        ImGui::PopFont();
-    }
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    PushSize(13.5f);
-    for (auto notice = menu.notices.rbegin(); notice != menu.notices.rend(); ++notice)
-    {
-        const ImVec2 start = ImGui::GetCursorScreenPos();
-        NoticeIcon(draw, start + ImVec2(S(8), ImGui::GetFontSize() / 2 + S(1)), LevelOf(notice->level));
-        ImGui::SetCursorScreenPos(start + ImVec2(S(26), 0));
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextUnformatted(notice->text.c_str());
-        ImGui::PopTextWrapPos();
-    }
-    if (menu.notices.empty())
-        ImGui::TextDisabled("No messages.");
-    ImGui::PopFont();
-
-    std::vector<fx::Effect>& effects = app.runtime.Effects();
-    const size_t failed = static_cast<size_t>(std::count_if(effects.begin(), effects.end(), [](const fx::Effect& effect) { return !effect.compiled; }));
-    if (failed)
-    {
-        ImGui::Dummy(ImVec2(0, S(8)));
-        Heading(("DID NOT COMPILE (" + std::to_string(failed) + ")").c_str());
-        for (const fx::Effect& effect : effects)
-        {
-            if (effect.compiled)
-                continue;
-            ImGui::PushID(effect.file.c_str());
-            const bool open = menu.shownErrors == effect.file;
-            const ImVec2 start = ImGui::GetCursorScreenPos();
-            const ImVec2 size(ImGui::GetContentRegionAvail().x, S(34));
-            if (ImGui::InvisibleButton("errors", size, ImGuiButtonFlags_EnableNav))
-                menu.shownErrors = open ? std::string() : effect.file;
-            const bool hovered = ImGui::IsItemHovered();
-            HandOnHover();
-            if (hovered || open)
-                draw->AddRectFilled(start, start + size, hovered ? kCardHover : kCard, S(8));
-            PushSize(14.5f);
-            draw->AddText(ImVec2(start.x + S(12), start.y + (size.y - ImGui::GetFontSize()) / 2), kText, effect.file.c_str());
-            ImGui::PopFont();
-            Chevron(draw, ImVec2(start.x + size.x - S(20), start.y + size.y / 2), open, open || hovered ? kText : kDim);
-            if (open)
-            {
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, kInset);
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(14), S(12)));
-                ImGui::BeginChild("text", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
-                                  ImGuiWindowFlags_NoScrollWithMouse);
-                ImGui::PopStyleVar();
-                Text(effect.errors, kDim, 12.5f);
-                ImGui::EndChild();
-                ImGui::PopStyleColor();
-            }
-            ImGui::PopID();
-        }
-    }
-
-    ImGui::Dummy(ImVec2(0, S(4)));
-    PushSize(13.5f);
-    if (Link("Open log"))
-        platform::Open(LogPath().string());
-    ImGui::SameLine(0, S(16));
-    if (Link("Get help on Discord"))
-        platform::Open(kHelpUrl);
-    ImGui::PopFont();
-    ImGui::Dummy(ImVec2(0, S(6)));
-    Text("Unishade " UNISHADE_VERSION ". Effects compile with ReShade's compiler by crosire.", kDim, 12.5f);
-}
-
-// Frame
-
-void Header(App& app, ImVec2 origin, float width)
-{
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    const float logo = std::round(S(38));
-    const ImVec2 logoPosition = origin + ImVec2(std::round(S(kPadding)), std::round(S(18)));
-    if (const ImTextureID texture = PictureTexture(kLogoPicture, logo))
-        draw->AddImage(ImTextureRef(texture), logoPosition, logoPosition + ImVec2(logo, logo));
-    const float textX = S(kPadding) + logo + S(12);
-    PushSize(16.5f);
-    draw->AddText(origin + ImVec2(textX, S(17)), kText, "Unishade");
-    ImGui::PopFont();
-    // The right side holds the effects switch, its label and, with auto-save off, the save icon.
-    const bool autoSave = app.settings.autoSavePresets;
-    const bool unsaved = !autoSave && app.runtime.Dirty();
-    PushSize(13);
-    const ImVec2 labelSize = ImGui::CalcTextSize("Effects");
-    const float switchX = width - S(kPadding) - S(32);
-    const float labelX = switchX - S(8) - labelSize.x;
-    const ImVec2 saveSize(S(30), S(30));
-    const float saveX = labelX - S(14) - saveSize.x;
-
-    const std::string preset = app.runtime.PresetPath().stem().string();
-    const ImVec2 nameSize = ImGui::CalcTextSize(preset.c_str());
-    draw->PushClipRect(origin, origin + ImVec2((autoSave ? labelX : saveX) - S(12), S(kHeader)), true);
-    draw->AddText(origin + ImVec2(textX, S(39)), kDim, preset.c_str());
-    if (unsaved)
-        draw->AddCircleFilled(origin + ImVec2(textX + nameSize.x + S(7), S(39) + ImGui::GetFontSize() / 2 + S(1)), S(3), kWarning);
-    draw->PopClipRect();
-    ImGui::PopFont();
-
-    if (!autoSave)
-    {
-        const ImVec2 start = origin + ImVec2(saveX, S(22));
-        ImGui::SetCursorScreenPos(start);
-        if (ImGui::InvisibleButton("save", saveSize, ImGuiButtonFlags_EnableNav) && unsaved)
-            app.runtime.SavePreset();
-        if (ImGui::IsItemHovered() && unsaved)
-        {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            draw->AddRectFilled(start, start + saveSize, kBorder, S(6));
-        }
-        Tooltip((unsaved ? "Save changes to " : "No unsaved changes in ") + preset);
-        SaveIcon(draw, start + saveSize * 0.5f, S(14), unsaved ? kAccentHover : kBorderStrong);
-    }
-
-    // Effects on and off for everything.
-    ImGui::SetCursorScreenPos(origin + ImVec2(switchX, S(28)));
-    if (Switch("effects", app.effectsEnabled))
-        app.effectsEnabled = !app.effectsEnabled;
-    Tooltip(app.effectsEnabled ? "Turn all effects off" : "Turn effects back on");
-    PushSize(13);
-    draw->AddText(origin + ImVec2(labelX, S(28) + (S(18) - labelSize.y) / 2), kDim, "Effects");
-    ImGui::PopFont();
-
-    Rainbow(draw, origin + ImVec2(0, S(kHeader) - S(2)), origin + ImVec2(width, S(kHeader)));
-}
-
-void Tabs(ImVec2 origin, float width)
-{
-    constexpr std::pair<const char*, Tab> entries[] = {
-        { "Presets", Tab::Presets }, { "Effects", Tab::Effects }, { "Settings", Tab::Settings }, { "Status", Tab::Status }
-    };
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    const float tabWidth = (width - S(kPadding) * 2) / static_cast<float>(std::size(entries));
-    const bool problems = std::any_of(menu.notices.begin(), menu.notices.end(), [](const Notice& notice) { return notice.level >= LogLevel::Warning; });
-    PushSize(14);
-    int index = 0;
-    for (const auto& [name, tab] : entries)
-    {
-        const ImVec2 start = origin + ImVec2(S(kPadding) + static_cast<float>(index++) * tabWidth, S(kHeader));
-        ImGui::SetCursorScreenPos(start);
-        if (ImGui::InvisibleButton(name, ImVec2(tabWidth, S(kTabs)), ImGuiButtonFlags_EnableNav))
-            menu.tab = tab;
-        const bool hovered = ImGui::IsItemHovered();
-        HandOnHover();
-        const bool active = tab == menu.tab;
-        const ImVec2 text = ImGui::CalcTextSize(name);
-        const ImVec2 textStart = start + ImVec2((tabWidth - text.x) / 2, (S(kTabs) - text.y) / 2);
-        draw->AddText(textStart, active || hovered ? kText : kDim, name);
-        if (active)
-            draw->AddRectFilled(ImVec2(textStart.x - S(6), start.y + S(kTabs) - S(2)), ImVec2(textStart.x + text.x + S(6), start.y + S(kTabs)), kAccent,
-                                S(1));
-        if (tab == Tab::Status && problems)
-            draw->AddCircleFilled(textStart + ImVec2(text.x + S(6), S(3)), S(3), kWarning);
-    }
-    ImGui::PopFont();
-    draw->AddLine(origin + ImVec2(0, S(kHeader + kTabs)), origin + ImVec2(width, S(kHeader + kTabs)), kBorder);
-}
-
-void Footer(App& app, ImVec2 origin, ImVec2 size)
-{
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    const float top = size.y - S(kFooter);
-    draw->AddLine(origin + ImVec2(0, top), origin + ImVec2(size.x, top), kBorder);
-    const float buttonY = top + (S(kFooter) - S(34)) / 2;
-
-    // Effects stay off while the compare button is held.
-    ImGui::SetCursorScreenPos(origin + ImVec2(S(kPadding), buttonY));
-    PushSize(14);
-    Button("Compare", ImVec2(S(100), S(34)));
-    app.compareButton = ImGui::IsItemActive();
-    if (!app.compareButton)
-        Tooltip("Hold to see the game without effects");
-    ImGui::PopFont();
-
-    // Screenshots leave out the menu.
-    ImGui::SameLine(0, S(8));
-    const ImVec2 cameraStart = ImGui::GetCursorScreenPos();
-    const ImVec2 cameraSize(S(34), S(34));
-    if (ImGui::InvisibleButton("camera", cameraSize, ImGuiButtonFlags_EnableNav))
-        ImGui::OpenPopup("screenshots");
-    const bool cameraHovered = ImGui::IsItemHovered();
-    HandOnHover();
-    Tooltip("Screenshots");
-    draw->AddRectFilled(cameraStart, cameraStart + cameraSize, cameraHovered ? kCardHover : kCard, S(6));
-    draw->AddRect(cameraStart, cameraStart + cameraSize, kBorder, S(6));
-    CameraIcon(draw, cameraStart + cameraSize * 0.5f, S(15), cameraHovered ? kText : kDim);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(6), S(6)));
-    if (ImGui::BeginPopup("screenshots"))
-    {
-        if (ImGui::MenuItem("Screenshot"))
-            app.RequestScreenshot(false);
-        if (ImGui::MenuItem("Before and after"))
-            app.RequestScreenshot(true);
-        ImGui::Separator();
-        if (ImGui::MenuItem("Open screenshots folder"))
-        {
-            const fs::path folder = ScreenshotDirectory();
-            std::error_code ignored;
-            fs::create_directories(folder, ignored);
-            platform::Open(folder.string());
-        }
-        ImGui::EndPopup();
-    }
-    ImGui::PopStyleVar();
-
-    // The menu shortcut, which also leaves.
-    const char* label = "Back to the game";
-    const std::string key = app.HotkeyText(kEditModeHotkey);
-    PushSize(13.5f);
-    const ImVec2 labelSize = ImGui::CalcTextSize(label);
-    ImGui::PopFont();
-    PushSize(13);
-    const float keyWidth = std::max(ImGui::CalcTextSize(key.c_str()).x + S(14), S(28));
-    const float keyHeight = ImGui::GetFontSize() + S(6);
-    ImGui::PopFont();
-    const ImVec2 backSize(keyWidth + S(8) + labelSize.x, S(34));
-    const ImVec2 backStart = origin + ImVec2(size.x - S(kPadding) - backSize.x, buttonY);
-    ImGui::SetCursorScreenPos(backStart);
-    const bool back = ImGui::InvisibleButton("back", backSize, ImGuiButtonFlags_EnableNav);
-    const bool hovered = ImGui::IsItemHovered();
-    HandOnHover();
-    ImGui::SetCursorScreenPos(backStart + ImVec2(0, (backSize.y - keyHeight) / 2));
-    KeyCap(key);
-    PushSize(13.5f);
-    draw->AddText(backStart + ImVec2(keyWidth + S(8), (backSize.y - labelSize.y) / 2), hovered ? kText : kDim, label);
-    ImGui::PopFont();
-    if (back)
-        app.CloseMenu();
-}
-
-void DrawMenu(App& app)
-{
-    menu.notices = Notices();
-    const ImGuiIO& io = ImGui::GetIO();
-    const float width = std::min(S(kWidth), io.DisplaySize.x - S(kMargin) * 2);
-    const float available = std::max(io.DisplaySize.y - S(kMargin) * 2, 1.0f);
-    // A window too short for the menu scrolls all of it, so the text keeps a readable size.
-    const ImVec2 size(width, std::max(available, S(menu_layout::MinHeight())));
-    const bool scrolls = size.y > available;
-    ImGui::SetNextWindowPos(ImVec2(S(kMargin), S(kMargin)));
-    ImGui::SetNextWindowSize(ImVec2(width, available));
-    ImGui::Begin("Unishade##menu", nullptr,
-                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                     (scrolls ? ImGuiWindowFlags_None : ImGuiWindowFlags_NoScrollWithMouse));
-    const ImVec2 origin = ImGui::GetWindowPos() - ImVec2(0, ImGui::GetScrollY());
-    Header(app, origin, width);
-    Tabs(origin, width);
-
-    const float top = S(kHeader + kTabs) + 1;
-    ImGui::SetCursorScreenPos(origin + ImVec2(0, top));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(kPadding), S(16)));
-    ImGui::BeginChild("content", ImVec2(width, size.y - top - S(kFooter)), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened);
-    ImGui::PopStyleVar();
-    switch (menu.tab)
-    {
-    case Tab::Presets: PresetsTab(app); break;
-    case Tab::Effects: EffectsTab(app); break;
-    case Tab::Settings: SettingsTab(app); break;
-    case Tab::Status: StatusTab(app); break;
-    }
-    ImGui::EndChild();
-    Footer(app, origin, size);
-    // Dialogs show over any tab.
-    NameDialog(app);
-    UnsavedDialog(app);
-    ConfirmDialog(app);
-    if (scrolls)
-    {
-        // Lets the window scroll down to the footer.
-        ImGui::SetCursorScreenPos(origin + ImVec2(0, size.y));
-        ImGui::Dummy(ImVec2(0, 0));
-    }
-    ImGui::End();
-}
-
-void DrawMenuFrame(App& app)
-{
-    // Escape leaves the menu, unless it closes a popup, ends typing or stops waiting for a shortcut.
-    const bool leave = menu.recording < 0 && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsAnyItemActive() &&
-                       !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
-    RecordShortcut(app);
-
-    DrawMenu(app);
-
-    if (menu.recording >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered())
-        StopRecording(app);
-    if (leave)
-        app.CloseMenu();
-}
 
 // A short message at the bottom of the game, with a key before it when it has one.
 void DrawToast(App& app)
@@ -1689,6 +301,23 @@ struct LauncherState
     size_t removedIndex = 0;
     double removedAt = 0;
     std::string renameProblem;
+    std::string presetProblem;
+    // The model is being drawn over the game rather than in the launcher's window.
+    bool overGame = false;
+    // The effects the preset uses that are not installed, and what they were looked for with.
+    std::vector<std::string> missing;
+    std::tuple<fs::path, size_t, bool, bool> missingChecked;
+    // The effects as last listed, each with its technique's index, made again when the techniques change, and the
+    // effect files that did not compile. DescribeLauncher lends them to the model.
+    std::vector<launcher::Effect> effects;
+    std::vector<size_t> effectTechniques;
+    unsigned effectsRevision = 0;
+    std::vector<launcher::BrokenEffect> broken;
+    size_t brokenFrom = SIZE_MAX; // the number of effect files they were found among
+    // The settings described last, for the effect at settingsEffect, with the variable behind each.
+    launcher::EffectSettings settings;
+    size_t settingsEffect = SIZE_MAX;
+    std::vector<const fx::Uniform*> settingUniforms;
     int recording = -1; // the shortcut waiting for its keys
     std::string shortcutError;
     // Screen recording was asked for, so a restart can make it count.
@@ -1706,6 +335,7 @@ struct LauncherState
     // The games as last shown, made again when what they were made from changes: the saved games, the game being
     // played and its preset, or what was read from disk. DrawLauncher lends them to the model.
     std::vector<launcher::Game> games;
+    launcher::Performance defaults; // read with the games
     std::string gamesPlaying;
     fs::path gamesInUse;
     bool gamesStale = true;
@@ -1757,15 +387,14 @@ void StopShortcut(App& app)
     launcherState.recording = -1;
 }
 
-// While a shortcut waits for its keys, the next key pressed with any modifiers becomes it.
-void TakeShortcut(App& app)
+// While a shortcut waits for its keys, the next key pressed in the window with any modifiers becomes it.
+void TakeShortcut(App& app, GLFWwindow* window)
 {
     if (launcherState.recording < 0)
         return;
     // Space would otherwise also press the control the keyboard is on.
     ImGui::SetNavCursorVisible(false);
     // Modifiers straight from GLFW: Dear ImGui swaps Cmd and Ctrl on macOS.
-    GLFWwindow* window = app.launcher.window;
     const auto down = [window](int a, int b) { return glfwGetKey(window, a) == GLFW_PRESS || glfwGetKey(window, b) == GLFW_PRESS; };
     for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; ++key)
     {
@@ -1836,7 +465,7 @@ std::string RenameGame(App& app, size_t index, std::string name)
         SetGamePreset(name, moveFolder && preset.parent_path() == from ? to / preset.filename() : preset);
         SetGamePreset(key, fs::path());
     }
-    RenamePerformance(key, name);
+    RenamePerformance(key, FolderName(name));
     if (playing)
         app.game = FolderName(name);
     // The preset still loaded after the game closed moves too, or a save would make the old folder again.
@@ -1856,6 +485,75 @@ std::string RenameGame(App& app, size_t index, std::string name)
     RefreshLauncher();
     Log(LogLevel::Info, "Renamed %s to %s.", key.c_str(), name.c_str());
     return {};
+}
+
+// The launcher lists a window picked for now after the saved games, when it is not one of them.
+bool Picked(App& app, size_t game)
+{
+    return game == app.autoGames.size() && app.active && app.game.empty();
+}
+
+bool Listed(App& app, size_t game)
+{
+    return game < app.autoGames.size() || Picked(app, game);
+}
+
+// Whether the game at an index of the launcher's list is the one being played.
+bool Playing(App& app, size_t game)
+{
+    return Picked(app, game) ||
+           (game < app.autoGames.size() && !app.game.empty() && !strcasecmp(FolderName(app.autoGames[game].name).c_str(), app.game.c_str()));
+}
+
+// The folder of a game's own presets, or the presets folder itself for a window picked for now.
+fs::path FolderOf(App& app, size_t game)
+{
+    return game < app.autoGames.size() ? GameFolder(FolderName(app.autoGames[game].name)) : PresetsDirectory();
+}
+
+// The game is played with the preset from now on: at once for the game being played, and otherwise when it starts.
+void UseGamePreset(App& app, size_t game, const fs::path& path)
+{
+    RefreshLauncher();
+    if (!Playing(app, game))
+        SetGamePreset(FolderName(app.autoGames[game].name), path);
+    else if (!app.SwitchPreset(path, app.settings.autoSavePresets, false))
+        Report(LogLevel::Warning, "Save or discard the changes to %s to switch to %s.", app.runtime.PresetPath().stem().string().c_str(),
+               path.stem().string().c_str());
+}
+
+// Points the games that use a preset at where it went, or at nothing once it is gone.
+void FollowPreset(App& app, const fs::path& from, const fs::path& to)
+{
+    for (const AutoGame& saved : app.autoGames)
+        if (const std::string folder = FolderName(saved.name); !folder.empty() && GamePreset(folder) == from)
+            SetGamePreset(folder, to);
+    RefreshLauncher();
+}
+
+// Where a preset of that name goes in the game's own folder, which is made, or empty when there is one already.
+fs::path NewGamePreset(App& app, size_t game, const std::string& name)
+{
+    const fs::path folder = FolderOf(app, game);
+    const fs::path path = folder / (name + ".ini");
+    std::error_code error;
+    if (fs::exists(path, error))
+    {
+        launcherState.presetProblem = "A preset with that name already exists.";
+        return {};
+    }
+    fs::create_directories(folder, error);
+    return path;
+}
+
+// A preset name as typed, without spaces around it, or why it cannot be used.
+bool PresetName(std::string_view typed, std::string& name, std::string& problem)
+{
+    name = std::string(typed);
+    name.erase(0, name.find_first_not_of(' '));
+    name.erase(name.find_last_not_of(' ') + 1);
+    problem = PresetNameProblem(name);
+    return problem.empty();
 }
 
 // Downloads effects and presets, over what is installed. Effects load again once it finishes, which goes back to how
@@ -1887,6 +585,116 @@ void UseWindow(App& app, bool add, const platform::Window& window)
     platform::Activate(window);
 }
 
+// The effects of the game being played. The list is made again only when the techniques change, which is checked on
+// every frame without allocating.
+launcher::Effects DescribeEffects(App& app)
+{
+    const std::vector<fx::Technique>& techniques = app.runtime.Techniques();
+    const std::vector<fx::Effect>& effects = app.runtime.Effects();
+    std::vector<launcher::Effect>& list = launcherState.effects;
+    std::vector<size_t>& indices = launcherState.effectTechniques;
+    const auto name = [](const fx::Technique& technique) -> const std::string& { return technique.label.empty() ? technique.name : technique.label; };
+    size_t listed = 0;
+    bool same = true;
+    for (size_t i = 0; i < techniques.size() && same; ++i)
+    {
+        const fx::Technique& technique = techniques[i];
+        if (technique.hidden)
+            continue;
+        const fx::Effect& effect = effects[technique.effect];
+        same = listed < list.size() && indices[listed] == i && list[listed].name == name(technique) && list[listed].file == effect.file &&
+               list[listed].failed == effect.gpuFailed;
+        ++listed;
+    }
+    if (!same || listed != list.size())
+    {
+        list.clear();
+        indices.clear();
+        for (size_t i = 0; i < techniques.size(); ++i)
+        {
+            const fx::Technique& technique = techniques[i];
+            if (technique.hidden)
+                continue;
+            const fx::Effect& effect = effects[technique.effect];
+            list.push_back({ fx::TechniqueKey(technique, effect), name(technique), effect.file, false, effect.gpuFailed });
+            indices.push_back(i);
+        }
+        ++launcherState.effectsRevision;
+        launcherState.settingsEffect = SIZE_MAX;
+    }
+    for (size_t i = 0; i < list.size(); ++i)
+        list[i].on = techniques[indices[i]].enabled;
+    if (launcherState.brokenFrom != effects.size())
+    {
+        launcherState.brokenFrom = effects.size();
+        launcherState.broken.clear();
+        for (const fx::Effect& effect : effects)
+            if (!effect.compiled)
+                launcherState.broken.push_back({ effect.file, effect.errors });
+    }
+
+    // Lent to the model, and given back once it is drawn.
+    launcher::Effects described{ .list = std::move(list), .revision = launcherState.effectsRevision, .on = app.effectsEnabled, .loading = app.runtime.Loading() };
+    std::tie(described.loaded, described.total) = app.runtime.LoadingProgress();
+    described.broken = std::move(launcherState.broken);
+    return described;
+}
+
+// One effect's settings with their values, as the launcher shows them. Each setting keeps the variable behind it.
+const launcher::EffectSettings* SettingsOf(App& app, size_t index)
+{
+    if (index >= launcherState.effectTechniques.size())
+        return nullptr;
+    const fx::Technique& technique = app.runtime.Techniques()[launcherState.effectTechniques[index]];
+    const fx::Effect& effect = app.runtime.Effects()[technique.effect];
+    launcher::EffectSettings& settings = launcherState.settings;
+    launcherState.settingsEffect = index;
+    launcherState.settingUniforms.clear();
+    settings = { .tooltip = technique.tooltip };
+    using Control = launcher::EffectSetting::Control;
+    for (const fx::Uniform& uniform : effect.uniforms)
+    {
+        const int components = static_cast<int>(uniform.type.components());
+        if (uniform.hidden || uniform.type.is_array() || uniform.type.is_matrix() || components > 4)
+            continue;
+        const bool floating = uniform.type.is_floating_point();
+        launcher::EffectSetting setting{ .floating = floating,
+                                         .count = components,
+                                         .label = uniform.label,
+                                         .tooltip = uniform.tooltip,
+                                         .category = uniform.category,
+                                         .text = uniform.text,
+                                         .items = uniform.items,
+                                         .units = uniform.units,
+                                         .spacing = uniform.spacing,
+                                         .categoryClosed = uniform.categoryClosed,
+                                         .resettable = !uniform.noReset,
+                                         .range = uniform.min > std::numeric_limits<float>::lowest() && uniform.max < std::numeric_limits<float>::max(),
+                                         .min = uniform.min,
+                                         .max = uniform.max,
+                                         .step = std::max(uniform.step, floating ? 0.0001f : 0.2f) };
+        if (uniform.type.is_boolean())
+            setting.control = Control::Check;
+        else if (!uniform.items.empty() && !floating && components == 1)
+            setting.control = Control::List;
+        else if (uniform.uiType == "color" && floating && components >= 3)
+            setting.control = Control::Color;
+        else if (uniform.uiType == "slider" && setting.range)
+            setting.control = Control::Slider;
+        else if (uniform.uiType == "input")
+            setting.control = Control::Input;
+        if (floating)
+            app.runtime.GetValue(effect, uniform, setting.floats, components);
+        else
+            app.runtime.GetValue(effect, uniform, setting.ints, components);
+        settings.settings.push_back(std::move(setting));
+        launcherState.settingUniforms.push_back(&uniform);
+    }
+    for (const auto& [name, compiled] : effect.definitions)
+        settings.definitions.push_back({ name, app.runtime.DefinitionValue(effect.file, name), compiled });
+    return &settings;
+}
+
 class Host final : public launcher::Host
 {
 public:
@@ -1903,6 +711,21 @@ public:
             if (on && app.runtime.Dirty())
                 app.runtime.SavePreset();
             SaveSettings(app.settings);
+        }
+        else if (which == launcher::Switch::KeepEffectsVisible)
+        {
+            app.settings.keepEffectsVisible = on;
+            SaveSettings(app.settings);
+            Log(LogLevel::Info, "Settings: keep_effects_visible=%d.", on);
+        }
+        else if (which == launcher::Switch::Effects)
+            app.effectsEnabled = on;
+        else if (which == launcher::Switch::SkipTitleBar)
+        {
+            app.settings.skipTitleBar = on;
+            platform::SetSkipTitleBar(on);
+            SaveSettings(app.settings);
+            Log(LogLevel::Info, "Settings: skip_title_bar=%d.", on);
         }
         else if (which == launcher::Switch::DiscordPresence)
         {
@@ -2002,32 +825,242 @@ public:
 
     void UsePreset(size_t game, std::string_view preset) override
     {
-        if (game >= app.autoGames.size())
-            return;
-        const std::string folder = FolderName(app.autoGames[game].name);
-        const fs::path path{ std::string(preset) };
+        if (Listed(app, game))
+            UseGamePreset(app, game, fs::path(std::string(preset)));
+    }
+
+    bool NewPreset(size_t game, std::string_view typed) override
+    {
+        std::string name;
+        if (!Listed(app, game) || !PresetName(typed, name, launcherState.presetProblem))
+            return false;
         RefreshLauncher();
-        if (app.game.empty() || strcasecmp(app.game.c_str(), folder.c_str()))
-            SetGamePreset(folder, path);
-        // The launcher is not over the game, so what goes wrong is also reported here.
-        else if (!app.SwitchPreset(path, false, false))
-            Report(LogLevel::Warning, "Save or discard the changes to %s in the menu to switch to %s.", app.runtime.PresetPath().stem().string().c_str(),
-                   path.stem().string().c_str());
+        if (Playing(app, game))
+            return app.NewPreset(name, false, launcherState.presetProblem);
+        const fs::path path = NewGamePreset(app, game, name);
+        if (path.empty())
+            return false;
+        if (!WriteFile(path, "Techniques=\n"))
+        {
+            launcherState.presetProblem = "Could not write the preset.";
+            return false;
+        }
+        UseGamePreset(app, game, path);
+        return true;
+    }
+
+    // Copies go to the game's own folder, and the game uses them.
+    bool CopyPreset(size_t game, std::string_view preset, std::string_view typed) override
+    {
+        std::string name;
+        if (!Listed(app, game) || !PresetName(typed, name, launcherState.presetProblem))
+            return false;
+        RefreshLauncher();
+        const fs::path source{ std::string(preset) };
+        // The preset on screen is copied as it is, unsaved changes included.
+        if (Playing(app, game) && source == app.runtime.PresetPath())
+            return app.NewPreset(name, true, launcherState.presetProblem);
+        const fs::path path = NewGamePreset(app, game, name);
+        if (path.empty())
+            return false;
+        std::error_code error;
+        if (!fs::copy_file(source, path, error))
+        {
+            launcherState.presetProblem = "Could not write the preset.";
+            return false;
+        }
+        UseGamePreset(app, game, path);
+        return true;
+    }
+
+    bool RenamePreset(std::string_view preset, std::string_view typed) override
+    {
+        std::string name;
+        if (!PresetName(typed, name, launcherState.presetProblem))
+            return false;
+        const fs::path source{ std::string(preset) };
+        const fs::path path = source.parent_path() / (name + ".ini");
+        std::error_code error;
+        if (path == source)
+            return true;
+        // A name that only changes case is the same file on Windows and macOS.
+        if (fs::exists(path, error) && strcasecmp(path.filename().string().c_str(), source.filename().string().c_str()))
+        {
+            launcherState.presetProblem = "A preset with that name already exists.";
+            return false;
+        }
+        fs::rename(source, path, error);
+        if (error)
+        {
+            launcherState.presetProblem = "Could not rename the preset.";
+            return false;
+        }
+        FollowPreset(app, source, path);
+        return true;
+    }
+
+    void MovePreset(std::string_view preset, std::string_view folder) override
+    {
+        const fs::path source{ std::string(preset) };
+        std::string error;
+        if (!app.MovePreset(source, fs::path(std::string(folder)), error))
+            Report(LogLevel::Warning, "%s", error.c_str());
+        else
+            FollowPreset(app, source, fs::path(std::string(folder)) / source.filename());
+    }
+
+    void DeletePreset(std::string_view preset) override
+    {
+        const fs::path path{ std::string(preset) };
+        if (!platform::MoveToTrash(path.string()))
+            Report(LogLevel::Warning, "Could not delete %s.", path.stem().string().c_str());
+        else
+            FollowPreset(app, path, fs::path());
+    }
+
+    void SetEffect(size_t effect, bool on) override
+    {
+        if (effect < launcherState.effectTechniques.size())
+            app.runtime.SetEnabled(launcherState.effectTechniques[effect], on);
+    }
+
+    void MoveEffect(size_t from, size_t to) override
+    {
+        if (from < launcherState.effectTechniques.size() && to < launcherState.effectTechniques.size())
+            app.runtime.MoveTechnique(launcherState.effectTechniques[from], launcherState.effectTechniques[to]);
+    }
+
+    const launcher::EffectSettings* DescribeSettings(size_t effect) override
+    {
+        return SettingsOf(app, effect);
+    }
+
+    void SetSetting(size_t effect, size_t setting, const launcher::EffectSetting& value) override
+    {
+        if (const auto [target, uniform] = Setting(effect, setting); uniform)
+        {
+            if (value.floating)
+                app.runtime.SetValue(*target, *uniform, value.floats, static_cast<size_t>(value.count));
+            else
+                app.runtime.SetValue(*target, *uniform, value.ints, static_cast<size_t>(value.count));
+            app.runtime.SetDirty();
+        }
+    }
+
+    void ResetSettings(size_t effect, std::optional<size_t> setting) override
+    {
+        if (setting)
+        {
+            if (const auto [target, uniform] = Setting(effect, *setting); uniform)
+                app.runtime.ResetValue(*target, *uniform);
+        }
+        else if (fx::Effect* target = EffectOf(effect))
+            for (const fx::Uniform& uniform : target->uniforms)
+                if (uniform.source.empty() && !uniform.noReset)
+                    app.runtime.ResetValue(*target, uniform);
+        app.runtime.SetDirty();
+    }
+
+    void SetDefinition(size_t effect, size_t definition, std::string_view value) override
+    {
+        if (const fx::Effect* target = EffectOf(effect); target && effect == launcherState.settingsEffect &&
+                                                         definition < launcherState.settings.definitions.size())
+            app.runtime.SetDefinition(target->file, launcherState.settings.definitions[definition].name, std::string(value));
+    }
+
+    void PointAtSettings(size_t effect, std::optional<size_t> active, std::optional<size_t> hovered) override
+    {
+        // Effects only read them while the menu is open.
+        if (!launcherState.overGame)
+            return;
+        app.menuActiveUniform = active ? Setting(effect, *active).second : nullptr;
+        app.menuHoveredUniform = hovered ? Setting(effect, *hovered).second : nullptr;
+    }
+
+    void Compare(bool holding) override
+    {
+        app.compareButton = holding;
+    }
+
+    void TakeScreenshot(bool beforeAfter) override
+    {
+        app.RequestScreenshot(beforeAfter);
+    }
+
+    void OpenScreenshots() override
+    {
+        const fs::path folder = ScreenshotDirectory();
+        std::error_code error;
+        fs::create_directories(folder, error);
+        platform::Open(folder.string());
+    }
+
+    void CloseMenu() override
+    {
+        app.CloseMenu();
+    }
+
+    void Quit(bool save) override
+    {
+        if (save)
+            app.runtime.SavePreset();
+        app.quitAsked = false;
+        glfwSetWindowShouldClose(app.launcher.window, GLFW_TRUE);
+    }
+
+    void KeepRunning() override
+    {
+        app.quitAsked = false;
+    }
+
+    void SaveChanges() override
+    {
+        app.runtime.SavePreset();
+    }
+
+    void DiscardChanges() override
+    {
+        app.SwitchPreset(app.runtime.PresetPath(), false, true);
     }
 
     void OpenPresetsFolder(size_t game) override
     {
-        if (game >= app.autoGames.size())
+        if (!Listed(app, game))
             return;
-        const fs::path folder = GameFolder(FolderName(app.autoGames[game].name));
+        const fs::path folder = FolderOf(app, game);
         std::error_code error;
         fs::create_directories(folder, error);
         platform::Open(folder.string());
         RefreshLauncher();
     }
 
-    void SetPerformance(std::optional<size_t>, launcher::PerformanceSetting, int) override {}
-    void StepMenuSize(int) override {}
+    // A window picked for now uses and changes the settings for every game, as does Settings.
+    void SetPerformance(std::optional<size_t> game, launcher::PerformanceSetting setting, int value) override
+    {
+        if (game && !Listed(app, *game))
+            return;
+        const std::string folder = game && *game < app.autoGames.size() ? FolderName(app.autoGames[*game].name) : std::string();
+        if (setting == launcher::PerformanceSetting::FrameRate)
+        {
+            SetFrameRateLimit(folder, value);
+            app.UpdateFrameRateLimit();
+        }
+#ifdef _WIN32
+        else if (setting == launcher::PerformanceSetting::EffectResolution)
+        {
+            SetEffectResolution(folder, value);
+            app.UpdateEffectResolution();
+        }
+#endif
+        else
+            return;
+        RefreshLauncher();
+    }
+    void StepMenuSize(int step) override
+    {
+        app.settings.menuScale = std::clamp(app.settings.menuScale + 0.25f * static_cast<float>(step), kSmallestMenuScale, kLargestMenuScale);
+        SaveSettings(app.settings);
+    }
 
     void RecordShortcut(int shortcut) override
     {
@@ -2040,8 +1073,16 @@ public:
         }
     }
 
-    // Shortcuts here always have keys, since two without would count as sharing them.
-    void ClearShortcut(size_t) override {}
+    void ClearShortcut(size_t shortcut) override
+    {
+        StopShortcut(app);
+        if (shortcut >= std::size(kShortcuts) || kShortcuts[shortcut].member == &InputHotkeys::input)
+            return;
+        InputHotkeys hotkeys = app.settings.hotkeys;
+        hotkeys.*kShortcuts[shortcut].member = {};
+        launcherState.shortcutError.clear();
+        app.ChangeHotkeys(hotkeys, launcherState.shortcutError);
+    }
 
     void ResetShortcuts() override
     {
@@ -2057,7 +1098,27 @@ public:
         ::DownloadEffects(app);
     }
 
+    void ReloadEffects() override
+    {
+        app.runtime.Reload();
+    }
+
 private:
+    fx::Effect* EffectOf(size_t effect)
+    {
+        if (effect >= launcherState.effectTechniques.size())
+            return nullptr;
+        return &app.runtime.Effects()[app.runtime.Techniques()[launcherState.effectTechniques[effect]].effect];
+    }
+
+    // A setting the last description listed, with its effect.
+    std::pair<fx::Effect*, const fx::Uniform*> Setting(size_t effect, size_t setting)
+    {
+        if (effect != launcherState.settingsEffect || setting >= launcherState.settingUniforms.size())
+            return {};
+        return { EffectOf(effect), launcherState.settingUniforms[setting] };
+    }
+
     App& app;
 };
 
@@ -2074,7 +1135,8 @@ launcher::Status DescribeStatus(App& app)
     {
         status.tone = launcher::Tone::Off;
         status.title = "Effects off";
-        status.detail = "Turn them back on below, or press " + app.HotkeyText(kOverlayToggleHotkey) + ".";
+        const std::string key = app.HotkeyText(kOverlayToggleHotkey);
+        status.detail = key.empty() ? "Turn them back on below." : "Turn them back on below, or press " + key + ".";
     }
     else if (app.active)
     {
@@ -2175,6 +1237,38 @@ void DescribeCards(App& app, launcher::Model& model)
              { [&app] { DownloadEffects(app); } });
 }
 
+// A saved game's performance settings by its folder's name, or the defaults for every game with an empty one.
+launcher::Performance PerformanceOf(const std::string& folder)
+{
+    launcher::Performance performance{ .frameRate = FrameRateLimit(folder) };
+#ifdef _WIN32
+    performance.effectResolution = EffectResolution(folder);
+#endif
+    return performance;
+}
+
+// The effect files the preset uses that are not installed, once every effect has loaded. Looked for again when the
+// preset, its changes or the effects change, since that compares every effect's name.
+std::vector<std::string> MissingEffects(App& app)
+{
+    std::vector<std::string>& files = launcherState.missing;
+    const std::tuple<fs::path, size_t, bool, bool> now{ app.runtime.PresetPath(), app.runtime.Effects().size(), app.runtime.Loading(), app.runtime.Dirty() };
+    if (now == launcherState.missingChecked)
+        return files;
+    launcherState.missingChecked = now;
+    files.clear();
+    if (app.runtime.Loading())
+        return files;
+    for (const std::string& key : app.runtime.MissingTechniques())
+    {
+        const size_t at = key.find('@');
+        std::string file = at == std::string::npos ? key : key.substr(at + 1);
+        if (std::find(files.begin(), files.end(), file) == files.end())
+            files.push_back(std::move(file));
+    }
+    return files;
+}
+
 launcher::Model DescribeLauncher(App& app)
 {
     launcher::Model model;
@@ -2204,6 +1298,7 @@ launcher::Model DescribeLauncher(App& app)
         launcherState.gamesStale = false;
         launcherState.gamesPlaying = app.game;
         launcherState.gamesInUse = app.runtime.PresetPath();
+        launcherState.defaults = PerformanceOf({});
         const fs::path root = PresetsDirectory();
         for (const AutoGame& saved : app.autoGames)
         {
@@ -2214,11 +1309,12 @@ launcher::Model DescribeLauncher(App& app)
                                  .executable = saved.executable,
                                  .picture = path.string(),
                                  .enabled = saved.enabled,
-                                 .running = running(saved) };
+                                 .running = running(saved),
+                                 .performance = PerformanceOf(folder) };
             const bool playing = !folder.empty() && !strcasecmp(app.game.c_str(), folder.c_str());
             const fs::path inUse = playing ? app.runtime.PresetPath() : folder.empty() ? fs::path() : GamePreset(folder);
             const auto add = [&](const fs::path& preset, const std::string& from) {
-                game.presets.push_back({ preset.string(), preset.stem().string(), from });
+                game.presets.push_back({ preset.string(), preset.stem().string(), from, preset == app.runtime.PresetPath() });
                 if (preset == inUse)
                     game.preset = preset.string();
             };
@@ -2234,6 +1330,37 @@ launcher::Model DescribeLauncher(App& app)
     }
     // Lent to the model, and given back once it is drawn.
     model.games = std::move(games);
+    if (Picked(app, app.autoGames.size()))
+    {
+        // Its own presets are the ones for all games.
+        launcher::Game picked{ .id = "picked",
+                               .name = app.active->title,
+                               .executable = fs::path(app.activeExecutable).filename().string(),
+                               .running = true,
+                               .picked = true,
+                               .performance = launcherState.defaults };
+        const fs::path& inUse = app.runtime.PresetPath();
+        for (const fs::path& preset : PresetsOf(PresetsDirectory()))
+            picked.presets.push_back({ preset.string(), preset.stem().string(), "All games", preset == inUse });
+        if (inUse.parent_path() != PresetsDirectory())
+            picked.presets.push_back({ inUse.string(), inUse.stem().string(), inUse.parent_path().filename().string(), true });
+        picked.preset = inUse.string();
+        model.games.push_back(std::move(picked));
+    }
+    for (size_t i = 0; i < model.games.size(); ++i)
+    {
+        const bool playing = Playing(app, i);
+        model.games[i].changed = playing && app.runtime.Dirty() && !app.settings.autoSavePresets;
+        model.games[i].missing = playing ? MissingEffects(app) : std::vector<std::string>();
+    }
+    model.editPresets = true;
+    model.folders.push_back({ PresetsDirectory().string(), "All games" });
+    for (const AutoGame& saved : app.autoGames)
+        if (const std::string folder = FolderName(saved.name); !folder.empty())
+            model.folders.push_back({ CachedGameFolder(folder).string(), saved.name });
+    model.presetProblem = launcherState.presetProblem;
+    if (app.active)
+        model.effects = DescribeEffects(app);
     if (launcherState.removed && glfwGetTime() - launcherState.removedAt > kUndoSeconds)
         launcherState.removed.reset();
     if (launcherState.removed)
@@ -2281,8 +1408,19 @@ launcher::Model DescribeLauncher(App& app)
 #endif
 
     model.settings.autoSavePresets = app.settings.autoSavePresets;
+    if (platform::OverlayCanStayBehind())
+        model.settings.keepEffectsVisible = app.settings.keepEffectsVisible;
+    model.settings.menuSize = static_cast<int>(std::lround(app.settings.menuScale * 100));
+    model.settings.canShrinkMenu = app.settings.menuScale > kSmallestMenuScale + 0.01f;
+    model.settings.canGrowMenu = app.settings.menuScale < kLargestMenuScale - 0.01f;
+    model.settings.reloadEffects = true;
+    model.settings.performance = launcherState.defaults;
+#ifdef __APPLE__
+    model.settings.skipTitleBar = app.settings.skipTitleBar;
+#endif
     for (size_t i = 0; i < std::size(kShortcuts); ++i)
-        model.settings.shortcuts.push_back({ kShortcuts[i].label, kShortcutDescriptions[i], FormatHotkey(app.settings.hotkeys.*kShortcuts[i].member), true });
+        model.settings.shortcuts.push_back({ kShortcuts[i].label, kShortcutDescriptions[i], FormatHotkey(app.settings.hotkeys.*kShortcuts[i].member),
+                                             kShortcuts[i].member == &InputHotkeys::input });
     model.settings.recording = launcherState.recording;
     model.settings.shortcutError = launcherState.shortcutError;
 
@@ -2299,6 +1437,8 @@ launcher::Model DescribeLauncher(App& app)
         model.picker = std::move(picker);
     }
     model.renameProblem = launcherState.renameProblem;
+    if (app.quitAsked && app.runtime.Dirty())
+        model.quitting = app.runtime.PresetPath().stem().string();
     return model;
 }
 // The interface's scale for the window's monitor. On X11 it is the same on every monitor.
@@ -2459,6 +1599,19 @@ void EndUi(UiWindow& ui)
     pictureSets[ui.context].commands = VK_NULL_HANDLE;
 }
 
+// What the model was lent, once it is drawn.
+void GiveBack(launcher::Model& model)
+{
+    if (!model.games.empty() && model.games.back().picked)
+        model.games.pop_back();
+    launcherState.games = std::move(model.games);
+    if (model.effects)
+    {
+        launcherState.effects = std::move(model.effects->list);
+        launcherState.broken = std::move(model.effects->broken);
+    }
+}
+
 void DrawLauncher(App& app)
 {
     // Logos saved since, such as the icon of a game that just started, show now.
@@ -2467,23 +1620,18 @@ void DrawLauncher(App& app)
         launcherState.picturesChecked = glfwGetTime();
         ForgetPictures([](const std::string&) { return true; });
     }
-    scale = app.launcher.scale;
-    TakeShortcut(app);
+    TakeShortcut(app, app.launcher.window);
     Host host(app);
     launcher::Model model = DescribeLauncher(app);
     launcher::Draw(model, host, app.launcher.scale);
-    launcherState.games = std::move(model.games);
+    GiveBack(model);
 }
 
 void ResetMenu(App& app)
 {
-    StopRecording(app);
+    StopShortcut(app);
     app.compareButton = false;
-    menu.active.clear();
-    menu.listStale = true;
-    // A switch still waiting for an answer about unsaved changes is dropped.
-    menu.pendingPreset.clear();
-    menu.openUnsavedPopup = false;
+    launcher::Reset(launcher::Place::Game);
 }
 
 void DrawOverlay(App& app)
@@ -2495,13 +1643,26 @@ void DrawOverlay(App& app)
         app.toastUntil = 0;
     // The menu follows the size of the game's window, as on Windows, counted in the monitor's own units.
     const ImVec2 display = ImGui::GetIO().DisplaySize;
-    scale = menu_layout::Scale(display.x / app.overlay.scale, display.y / app.overlay.scale) * app.overlay.scale;
-    if (scale <= 0)
+    const float menuScale = menu_layout::Scale(display.x / app.overlay.scale, display.y / app.overlay.scale, app.settings.menuScale) * app.overlay.scale;
+    if (menuScale <= 0)
         return;
+    if (app.menuOpen)
+    {
+        TakeShortcut(app, app.overlay.window);
+        Host host(app);
+        launcher::Model model = DescribeLauncher(app);
+        model.menuKey = app.HotkeyText(kEditModeHotkey);
+        // How to open the menu says nothing in it.
+        if (app.active)
+            model.status.detail.clear();
+        launcherState.overGame = true;
+        launcher::Draw(model, host, menuScale, launcher::Place::Game);
+        launcherState.overGame = false;
+        GiveBack(model);
+    }
+    scale = menuScale;
     ApplyStyle(ImGui::GetStyle());
     PushSize(14.5f);
-    if (app.menuOpen)
-        DrawMenuFrame(app);
     DrawToast(app);
     ImGui::PopFont();
 }
