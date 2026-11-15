@@ -30,10 +30,13 @@ typedef struct Dlss5Look
     float localStructure; // DLSSNR.LocalStructureStrength
     float skinStructure;  // DLSSNR.SkinStructureStrength
     bool autoMask;        // DLSSNR.UseAutoMask
-    int passCount;        // How many times to run it, each run on the last one's output. 1 to 10.
+    // How many times to run it, each run on the last one's output. 1 to 10. Every pass keeps its own copy of the
+    // network in GPU memory: about 290 MB at 1582x863.
+    int passCount;
 } Dlss5Look;
 
-// Receives Unishade's own steps and the DLL's log lines. Called from any thread, one line at a time.
+// Receives this module's steps and the NGX core's log lines, from any thread, one line at a time. nvngx_dlssnr.dll
+// does not log here: with the __NGX_LOG_LEVEL environment variable set to 1 or 2 it writes to a file in the data folder.
 typedef void (*Dlss5LogCallback)(const char* line);
 
 // Makes a D3D12 device on the first NVIDIA adapter, loads nvngx_dlssnr.dll from runtimePath and starts NGX on the
