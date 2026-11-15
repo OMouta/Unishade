@@ -255,8 +255,8 @@ set(OFFICIAL_ADDONS_SOURCE "${CMAKE_BINARY_DIR}/official_addons.cpp")
 set(OFFICIAL_ADDONS_BINARIES "")
 set(OFFICIAL_ADDONS_TARGETS "")
 if(WIN32)
-    set(OFFICIAL_ADDONS_BINARIES "Depth.dll=$<TARGET_FILE:depth_addon>")
-    set(OFFICIAL_ADDONS_TARGETS depth_addon)
+    set(OFFICIAL_ADDONS_BINARIES "Depth.dll=$<TARGET_FILE:depth_addon>|Unishade_nvngx.dll=$<TARGET_FILE:Unishade_nvngx>")
+    set(OFFICIAL_ADDONS_TARGETS depth_addon Unishade_nvngx)
 endif()
 add_custom_command(OUTPUT "${OFFICIAL_ADDONS_SOURCE}"
     COMMAND "${CMAKE_COMMAND}" "-DLIST=${CMAKE_SOURCE_DIR}/src/addons/official.ini" "-DOUTPUT=${OFFICIAL_ADDONS_SOURCE}"
