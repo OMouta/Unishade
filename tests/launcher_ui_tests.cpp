@@ -2,6 +2,7 @@
 
 #include <imgui_internal.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -72,6 +73,8 @@ public:
     void UsePreset(size_t game, std::string_view preset) override { calls.push_back("use " + std::to_string(game) + " " + std::string(preset)); }
     void SaveChanges() override { calls.push_back("save"); }
     void DiscardChanges() override { calls.push_back("discard"); }
+    void SetEffect(size_t effect, bool on) override { calls.push_back("effect " + std::to_string(effect) + (on ? " on" : " off")); }
+    void MoveEffect(size_t from, size_t to) override { calls.push_back("move " + std::to_string(from) + " " + std::to_string(to)); }
 
     void SetSwitch(launcher::Switch, bool) override {}
     void PressCard(size_t, size_t) override {}
@@ -105,6 +108,12 @@ void Frame(Host& host)
     if (host.picking)
         model.picker = launcher::Picker{ host.add, { { "Game window", "game.exe", "" } } };
     Frame(host, model);
+}
+
+// How many controls of the last frame have a label.
+size_t Count(const char* label)
+{
+    return static_cast<size_t>(std::count_if(items.begin(), items.end(), [&](const Item& item) { return item.label == label; }));
 }
 
 // The place of the nth control with a label in the last frame.
@@ -227,6 +236,52 @@ bool UnsavedTests(Host& host)
     ok &= Check(host.calls.empty(), "cancelling keeps the preset");
     return ok;
 }
+// The game being played with three effects, the first and the last on.
+launcher::Model EffectsModel()
+{
+    launcher::Model model = PlayedGame(false);
+    model.effects = launcher::Effects{ .list = { { "A@a.fx", "A", "a.fx", true }, { "B@b.fx", "B", "b.fx", false }, { "C@c.fx", "C", "c.fx", true } } };
+    return model;
+}
+
+bool EffectsTests(Host& host)
+{
+    bool ok = true;
+    launcher::Model model = EffectsModel();
+    Frame(host, model);
+    Click(host, model, "game");
+    ok &= Check(Count("effect") == 2, "the effects that are on are listed, and the others wait under All effects");
+    ok &= Check(Click(host, model, "on"), "each effect has a switch");
+    ok &= Check(host.calls == std::vector<std::string>{ "effect 0 off" }, "the switch turns the effect off");
+    model.effects->list[0].on = false;
+    Frame(host, model);
+    ok &= Check(Count("effect") == 2, "an effect turned off stays under Active, to be turned back on where it was");
+
+    // Dragging the first effect onto the other one that is on runs it after that one.
+    host.calls.clear();
+    model = EffectsModel();
+    Frame(host, model);
+    const std::optional<ImVec2> first = Find("effect", 0), second = Find("effect", 1);
+    ok &= Check(first && second, "both effects that are on are listed");
+    if (first && second)
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(first->x + 100, first->y);
+        Frame(host, model);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        Frame(host, model);
+        for (int step = 1; step <= 8; ++step)
+        {
+            io.AddMousePosEvent(first->x + 100, first->y + (second->y - first->y) * step / 8);
+            Frame(host, model);
+        }
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        Frame(host, model);
+        Frame(host, model);
+    }
+    ok &= Check(host.calls == std::vector<std::string>{ "move 0 2" }, "dropping an effect on another moves it there");
+    return ok;
+}
 } // namespace
 
 int main()
@@ -254,6 +309,10 @@ int main()
     {
         Host host;
         ok &= UnsavedTests(host);
+    }
+    {
+        Host host;
+        ok &= EffectsTests(host);
     }
 
     kit::ForgetContext(context);

@@ -1594,6 +1594,17 @@ struct LauncherState
     // The effects the preset uses that are not installed, and what they were looked for with.
     std::vector<std::string> missing;
     std::tuple<fs::path, size_t, bool, bool> missingChecked;
+    // The effects as last listed, each with its technique's index, made again when the techniques change, and the
+    // effect files that did not compile. DescribeLauncher lends them to the model.
+    std::vector<launcher::Effect> effects;
+    std::vector<size_t> effectTechniques;
+    unsigned effectsRevision = 0;
+    std::vector<launcher::BrokenEffect> broken;
+    size_t brokenFrom = SIZE_MAX; // the number of effect files they were found among
+    // The settings described last, for the effect at settingsEffect, with the variable behind each.
+    launcher::EffectSettings settings;
+    size_t settingsEffect = SIZE_MAX;
+    std::vector<const fx::Uniform*> settingUniforms;
     int recording = -1; // the shortcut waiting for its keys
     std::string shortcutError;
     // Screen recording was asked for, so a restart can make it count.
@@ -1843,6 +1854,112 @@ void UseWindow(App& app, bool add, const platform::Window& window)
     platform::Activate(window);
 }
 
+// The effects of the game being played. The list is made again only when the techniques change, which is checked on
+// every frame without allocating.
+launcher::Effects DescribeEffects(App& app)
+{
+    const std::vector<fx::Technique>& techniques = app.runtime.Techniques();
+    const std::vector<fx::Effect>& effects = app.runtime.Effects();
+    std::vector<launcher::Effect>& list = launcherState.effects;
+    std::vector<size_t>& indices = launcherState.effectTechniques;
+    const auto name = [](const fx::Technique& technique) -> const std::string& { return technique.label.empty() ? technique.name : technique.label; };
+    size_t listed = 0;
+    bool same = true;
+    for (size_t i = 0; i < techniques.size() && same; ++i)
+    {
+        const fx::Technique& technique = techniques[i];
+        if (technique.hidden)
+            continue;
+        const fx::Effect& effect = effects[technique.effect];
+        same = listed < list.size() && indices[listed] == i && list[listed].name == name(technique) && list[listed].file == effect.file &&
+               list[listed].failed == effect.gpuFailed;
+        ++listed;
+    }
+    if (!same || listed != list.size())
+    {
+        list.clear();
+        indices.clear();
+        for (size_t i = 0; i < techniques.size(); ++i)
+        {
+            const fx::Technique& technique = techniques[i];
+            if (technique.hidden)
+                continue;
+            const fx::Effect& effect = effects[technique.effect];
+            list.push_back({ fx::TechniqueKey(technique, effect), name(technique), effect.file, false, effect.gpuFailed });
+            indices.push_back(i);
+        }
+        ++launcherState.effectsRevision;
+        launcherState.settingsEffect = SIZE_MAX;
+    }
+    for (size_t i = 0; i < list.size(); ++i)
+        list[i].on = techniques[indices[i]].enabled;
+    if (launcherState.brokenFrom != effects.size())
+    {
+        launcherState.brokenFrom = effects.size();
+        launcherState.broken.clear();
+        for (const fx::Effect& effect : effects)
+            if (!effect.compiled)
+                launcherState.broken.push_back({ effect.file, effect.errors });
+    }
+
+    // Lent to the model, and given back once it is drawn.
+    launcher::Effects described{ .list = std::move(list), .revision = launcherState.effectsRevision, .on = app.effectsEnabled, .loading = app.runtime.Loading() };
+    std::tie(described.loaded, described.total) = app.runtime.LoadingProgress();
+    described.broken = std::move(launcherState.broken);
+    return described;
+}
+
+// One effect's settings with their values, as the launcher shows them. Each setting keeps the variable behind it.
+const launcher::EffectSettings* SettingsOf(App& app, size_t index)
+{
+    if (index >= launcherState.effectTechniques.size())
+        return nullptr;
+    const fx::Technique& technique = app.runtime.Techniques()[launcherState.effectTechniques[index]];
+    const fx::Effect& effect = app.runtime.Effects()[technique.effect];
+    launcher::EffectSettings& settings = launcherState.settings;
+    launcherState.settingsEffect = index;
+    launcherState.settingUniforms.clear();
+    settings = { .tooltip = technique.tooltip };
+    using Control = launcher::EffectSetting::Control;
+    for (const fx::Uniform& uniform : effect.uniforms)
+    {
+        const int components = static_cast<int>(uniform.type.components());
+        if (uniform.hidden || uniform.type.is_array() || uniform.type.is_matrix() || components > 4)
+            continue;
+        const bool floating = uniform.type.is_floating_point();
+        launcher::EffectSetting setting{ .floating = floating,
+                                         .count = components,
+                                         .label = uniform.label,
+                                         .tooltip = uniform.tooltip,
+                                         .category = uniform.category,
+                                         .text = uniform.text,
+                                         .items = uniform.items,
+                                         .range = uniform.min > std::numeric_limits<float>::lowest() && uniform.max < std::numeric_limits<float>::max(),
+                                         .min = uniform.min,
+                                         .max = uniform.max,
+                                         .step = std::max(uniform.step, floating ? 0.0001f : 0.2f) };
+        if (uniform.type.is_boolean())
+            setting.control = Control::Check;
+        else if (!uniform.items.empty() && !floating && components == 1)
+            setting.control = Control::List;
+        else if (uniform.uiType == "color" && floating && components >= 3)
+            setting.control = Control::Color;
+        else if (uniform.uiType == "slider" && setting.range)
+            setting.control = Control::Slider;
+        else if (uniform.uiType == "input")
+            setting.control = Control::Input;
+        if (floating)
+            app.runtime.GetValue(effect, uniform, setting.floats, components);
+        else
+            app.runtime.GetValue(effect, uniform, setting.ints, components);
+        settings.settings.push_back(std::move(setting));
+        launcherState.settingUniforms.push_back(&uniform);
+    }
+    for (const auto& [name, compiled] : effect.definitions)
+        settings.definitions.push_back({ name, app.runtime.DefinitionValue(effect.file, name), compiled });
+    return &settings;
+}
+
 class Host final : public launcher::Host
 {
 public:
@@ -1866,6 +1983,8 @@ public:
             SaveSettings(app.settings);
             Log(LogLevel::Info, "Settings: keep_effects_visible=%d.", on);
         }
+        else if (which == launcher::Switch::Effects)
+            app.effectsEnabled = on;
     }
 
     void PressCard(size_t card, size_t button) override
@@ -2051,6 +2170,56 @@ public:
             FollowPreset(app, path, fs::path());
     }
 
+    void SetEffect(size_t effect, bool on) override
+    {
+        if (effect < launcherState.effectTechniques.size())
+            app.runtime.SetEnabled(launcherState.effectTechniques[effect], on);
+    }
+
+    void MoveEffect(size_t from, size_t to) override
+    {
+        if (from < launcherState.effectTechniques.size() && to < launcherState.effectTechniques.size())
+            app.runtime.MoveTechnique(launcherState.effectTechniques[from], launcherState.effectTechniques[to]);
+    }
+
+    const launcher::EffectSettings* DescribeSettings(size_t effect) override
+    {
+        return SettingsOf(app, effect);
+    }
+
+    void SetSetting(size_t effect, size_t setting, const launcher::EffectSetting& value) override
+    {
+        if (const auto [target, uniform] = Setting(effect, setting); uniform)
+        {
+            if (value.floating)
+                app.runtime.SetValue(*target, *uniform, value.floats, static_cast<size_t>(value.count));
+            else
+                app.runtime.SetValue(*target, *uniform, value.ints, static_cast<size_t>(value.count));
+            app.runtime.SetDirty();
+        }
+    }
+
+    void ResetSettings(size_t effect, std::optional<size_t> setting) override
+    {
+        if (setting)
+        {
+            if (const auto [target, uniform] = Setting(effect, *setting); uniform)
+                app.runtime.ResetValue(*target, *uniform);
+        }
+        else if (fx::Effect* target = EffectOf(effect))
+            for (const fx::Uniform& uniform : target->uniforms)
+                if (uniform.source.empty())
+                    app.runtime.ResetValue(*target, uniform);
+        app.runtime.SetDirty();
+    }
+
+    void SetDefinition(size_t effect, size_t definition, std::string_view value) override
+    {
+        if (const fx::Effect* target = EffectOf(effect); target && effect == launcherState.settingsEffect &&
+                                                         definition < launcherState.settings.definitions.size())
+            app.runtime.SetDefinition(target->file, launcherState.settings.definitions[definition].name, std::string(value));
+    }
+
     void SaveChanges() override
     {
         app.runtime.SavePreset();
@@ -2104,6 +2273,21 @@ public:
     }
 
 private:
+    fx::Effect* EffectOf(size_t effect)
+    {
+        if (effect >= launcherState.effectTechniques.size())
+            return nullptr;
+        return &app.runtime.Effects()[app.runtime.Techniques()[launcherState.effectTechniques[effect]].effect];
+    }
+
+    // A setting the last description listed, with its effect.
+    std::pair<fx::Effect*, const fx::Uniform*> Setting(size_t effect, size_t setting)
+    {
+        if (effect != launcherState.settingsEffect || setting >= launcherState.settingUniforms.size())
+            return {};
+        return { EffectOf(effect), launcherState.settingUniforms[setting] };
+    }
+
     App& app;
 };
 
@@ -2314,6 +2498,8 @@ launcher::Model DescribeLauncher(App& app)
         if (const std::string folder = FolderName(saved.name); !folder.empty())
             model.folders.push_back({ CachedGameFolder(folder).string(), saved.name });
     model.presetProblem = launcherState.presetProblem;
+    if (app.active)
+        model.effects = DescribeEffects(app);
     if (launcherState.removed && glfwGetTime() - launcherState.removedAt > kUndoSeconds)
         launcherState.removed.reset();
     if (launcherState.removed)
@@ -2519,6 +2705,17 @@ void EndUi(UiWindow& ui)
     pictureSets[ui.context].commands = VK_NULL_HANDLE;
 }
 
+// What the model was lent, once it is drawn.
+void GiveBack(launcher::Model& model)
+{
+    launcherState.games = std::move(model.games);
+    if (model.effects)
+    {
+        launcherState.effects = std::move(model.effects->list);
+        launcherState.broken = std::move(model.effects->broken);
+    }
+}
+
 void DrawLauncher(App& app)
 {
     // Logos saved since, such as the icon of a game that just started, show now.
@@ -2532,7 +2729,7 @@ void DrawLauncher(App& app)
     Host host(app);
     launcher::Model model = DescribeLauncher(app);
     launcher::Draw(model, host, app.launcher.scale);
-    launcherState.games = std::move(model.games);
+    GiveBack(model);
 }
 
 void ResetMenu(App& app)

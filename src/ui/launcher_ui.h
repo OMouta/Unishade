@@ -78,6 +78,81 @@ struct Folder
     std::string name;
 };
 
+// An effect the preset can turn on: one technique of an effect file, as ReShade calls them.
+struct Effect
+{
+    std::string key; // as presets name it, which stays the same when the effects load again
+    std::string name;
+    std::string file;
+    bool on = false;
+    bool failed = false; // could not start on the graphics card
+};
+
+// One setting of an effect, with its value as floats or as ints.
+struct EffectSetting
+{
+    enum class Control
+    {
+        Check,
+        List,
+        Color,
+        Slider,
+        Drag,
+        Input,
+    };
+    Control control = Control::Drag;
+    bool floating = true;
+    int count = 1; // values, up to four
+    std::string label;
+    std::string tooltip;
+    std::string category;
+    std::string text;  // shown above it
+    std::string items; // a List's choices, each ending in '\0'
+    bool range = false;
+    float min = 0;
+    float max = 0;
+    float step = 0;
+    float floats[4] = {};
+    int ints[4] = {};
+};
+
+// A preprocessor definition an effect checks, such as a quality level. Empty while the effect uses its own value.
+struct EffectDefinition
+{
+    std::string name;
+    std::string value;
+    std::string fallback;
+};
+
+// The settings of one effect, described while they show.
+struct EffectSettings
+{
+    std::string tooltip; // what the effect does
+    std::vector<EffectSetting> settings;
+    std::vector<EffectDefinition> definitions;
+};
+
+// An effect file that did not compile, with the compiler's errors.
+struct BrokenEffect
+{
+    std::string file;
+    std::string errors;
+};
+
+// The effects of the game being played.
+struct Effects
+{
+    std::vector<Effect> list; // in the order they run
+    // Goes up whenever the list changes, other than an effect turned on or off.
+    unsigned revision = 0;
+    bool on = true; // off shows the game without any of them
+    // While effect files compile: how many are done out of how many.
+    bool loading = false;
+    size_t loaded = 0;
+    size_t total = 0;
+    std::vector<BrokenEffect> broken;
+};
+
 // A game's performance settings, or the defaults. Only on Windows.
 struct Performance
 {
@@ -184,6 +259,8 @@ struct Model
     std::vector<Folder> folders;
     // Why the last name given for a preset was not taken.
     std::string presetProblem;
+    // The effects of the game being played, on its page.
+    std::optional<Effects> effects;
     std::vector<Notice> notices; // oldest first
     std::vector<std::string> links;
     Settings settings;
@@ -204,6 +281,7 @@ enum class Switch
     UpdateChecks,
     DebugInfo,
     DiscordPresence,
+    Effects, // the effects of the game being played, without stopping the overlay
 };
 
 class Host
@@ -238,6 +316,17 @@ public:
     // The changes to the preset of the game being played, with auto-save off.
     virtual void SaveChanges() {}
     virtual void DiscardChanges() {}
+    // The effects of the game being played, by their place in Effects::list.
+    virtual void SetEffect(size_t /*effect*/, bool /*on*/) {}
+    virtual void MoveEffect(size_t /*from*/, size_t /*to*/) {}
+    // An effect's settings while they show. Draw is done with them before it returns, and asks again in the next frame.
+    virtual const EffectSettings* DescribeSettings(size_t /*effect*/) { return nullptr; }
+    virtual void SetSetting(size_t /*effect*/, size_t /*setting*/, const EffectSetting& /*value*/) {}
+    // One setting, or every setting of the effect without one.
+    virtual void ResetSettings(size_t /*effect*/, std::optional<size_t> /*setting*/) {}
+    virtual void SetDefinition(size_t /*effect*/, size_t /*definition*/, std::string_view /*value*/) {}
+    // The setting being changed and the one under the cursor, which effects can read, in every frame its settings show.
+    virtual void PointAtSettings(size_t /*effect*/, std::optional<size_t> /*active*/, std::optional<size_t> /*hovered*/) {}
     // For a game, or the defaults without one.
     virtual void SetPerformance(std::optional<size_t> game, PerformanceSetting setting, int value) = 0;
 

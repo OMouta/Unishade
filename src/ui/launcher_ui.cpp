@@ -6,6 +6,8 @@
 #include "web_address.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cfloat>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -94,6 +96,26 @@ struct State
     bool openUnsaved = false;
     std::string deleting; // the preset the delete dialog asks about
     bool openDelete = false;
+
+    // The effects of the game being played.
+    char search[128] = {};
+    std::string expanded;    // the effect whose settings show, by key
+    std::string shownErrors; // the effect file whose compiler errors show
+    bool showAll = false;
+    // The effects listed under Active since the page showed or the preset changed, by key. An effect turned off stays
+    // there, so it can be turned back on where it was.
+    std::set<std::string> active;
+    std::string activePreset;
+    // The rows, made again when the list, the search, or which effects are on changes.
+    std::vector<size_t> activeRows; // in the order they run
+    std::vector<size_t> otherRows;  // by name
+    unsigned rowsRevision = 0;
+    std::string rowsSearch;
+    std::vector<bool> rowsOn;
+    bool rowsStale = true;
+    // Reset all asks first.
+    std::string resetting; // the effect's key
+    bool openResetEffect = false;
 };
 State state;
 
@@ -1128,11 +1150,472 @@ void PresetsSection(const Model& model, Host& host, size_t index, const Page& pa
     y += S(28);
 }
 
+// Effects
+
+std::string Lower(std::string text)
+{
+    for (char& c : text)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return text;
+}
+
+// A text box on the page, as wide as it, with a hint while empty.
+void SearchBox(const Page& page, float& y, const char* id, const char* hint, char* text, size_t size)
+{
+    ImGui::SetCursorScreenPos(page.At(page.left, y));
+    ImGui::PushItemWidth(page.right - page.left);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, kCard);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, kCardHover);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, kCardHover);
+    ImGui::PushStyleColor(ImGuiCol_Border, kBorder);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(14), S(8)));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(10));
+    PushSize(kBody);
+    ImGui::InputTextWithHint(id, hint, text, size);
+    y += ImGui::GetItemRectSize().y;
+    ImGui::PopFont();
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(4);
+    ImGui::PopItemWidth();
+}
+
+// Lists the effects again when the list, the search or which are on changed. Effects on are listed under Active, in
+// the order they run, and stay there once turned off. The rest go by name.
+void ListEffects(const Effects& effects, const std::string& preset)
+{
+    const std::vector<Effect>& list = effects.list;
+    if (state.activePreset != preset)
+    {
+        state.active.clear();
+        state.activePreset = preset;
+        state.rowsStale = true;
+    }
+    bool same = !state.rowsStale && state.rowsRevision == effects.revision && state.rowsSearch == state.search && state.rowsOn.size() == list.size();
+    for (size_t i = 0; same && i < list.size(); ++i)
+        same = state.rowsOn[i] == list[i].on;
+    if (same)
+        return;
+    state.rowsStale = false;
+    state.rowsRevision = effects.revision;
+    state.rowsSearch = state.search;
+    state.rowsOn.resize(list.size());
+    for (size_t i = 0; i < list.size(); ++i)
+    {
+        state.rowsOn[i] = list[i].on;
+        if (list[i].on)
+            state.active.insert(list[i].key);
+    }
+    const std::string filter = Lower(state.search);
+    state.activeRows.clear();
+    state.otherRows.clear();
+    for (size_t i = 0; i < list.size(); ++i)
+        if (filter.empty() || Lower(list[i].name).find(filter) != std::string::npos || Lower(list[i].file).find(filter) != std::string::npos)
+            (state.active.count(list[i].key) ? state.activeRows : state.otherRows).push_back(i);
+    std::sort(state.otherRows.begin(), state.otherRows.end(), [&](size_t a, size_t b) { return Lower(list[a].name) < Lower(list[b].name); });
+}
+
+// A heading that opens and closes the settings under it, with the launcher's chevron. Remembers whether it is open.
+bool SettingsHeading(const char* label, bool openFirst)
+{
+    ImGuiStorage* storage = ImGui::GetStateStorage();
+    const ImGuiID id = ImGui::GetID(label);
+    bool open = storage->GetBool(id, openFirst);
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const ImVec2 size(ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight());
+    if (ImGui::InvisibleButton(label, size, ImGuiButtonFlags_EnableNav))
+        storage->SetBool(id, open = !open);
+    const bool hovered = ImGui::IsItemHovered();
+    HandOnHover();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(min, min + size, hovered ? kCardHover : kCard, S(6));
+    Line(draw, min.x + S(10), min.x + size.x - S(30), min.y + size.y / 2, label, kText, kNote, true);
+    Chevron(draw, ImVec2(min.x + size.x - S(14), min.y + size.y / 2), open, hovered || open ? kText : kDim);
+    return open;
+}
+
+// A choice from a list, with the launcher's chevron. items end in '\0' each.
+bool ListControl(const char* id, int& value, const std::string& items)
+{
+    std::vector<const char*> choices;
+    for (size_t at = 0; at < items.size() && items[at]; at += std::strlen(items.c_str() + at) + 1)
+        choices.push_back(items.c_str() + at);
+    bool changed = false;
+    const char* preview = value >= 0 && static_cast<size_t>(value) < choices.size() ? choices[static_cast<size_t>(value)] : "";
+    const bool open = ImGui::BeginCombo(id, preview, ImGuiComboFlags_NoArrowButton | ImGuiComboFlags_HeightLarge);
+    const ImVec2 max = ImGui::GetItemRectMax();
+    Chevron(ImGui::GetWindowDrawList(), ImVec2(max.x - S(14), (ImGui::GetItemRectMin().y + max.y) / 2), true, kDim);
+    if (open)
+    {
+        for (size_t i = 0; i < choices.size(); ++i)
+            if (ImGui::Selectable(choices[i], static_cast<int>(i) == value))
+            {
+                value = static_cast<int>(i);
+                changed = true;
+            }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
+// One setting's label and control. Returns true when its value changed, in value.
+bool SettingRow(Host& host, size_t effect, size_t index, const EffectSetting& setting, EffectSetting& value)
+{
+    if (!setting.text.empty())
+        Text(setting.text, kDim, kNote);
+    ImGui::PushID(static_cast<int>(index));
+    const float x = ImGui::GetCursorPosX();
+    const float labelWidth = std::floor(ImGui::GetContentRegionAvail().x * 0.42f);
+    // One group for the label and the control, so effects can tell which of their settings is in use or under the
+    // cursor.
+    ImGui::BeginGroup();
+    ImGui::BeginGroup();
+    ImGui::AlignTextToFramePadding();
+    ImGui::PushTextWrapPos(x + labelWidth - S(10));
+    ImGui::PushStyleColor(ImGuiCol_Text, setting.tooltip.empty() ? kText : Color(0xD8D9E6));
+    ImGui::TextUnformatted(setting.label.c_str());
+    ImGui::PopStyleColor();
+    ImGui::PopTextWrapPos();
+    ImGui::EndGroup();
+    Tooltip(setting.tooltip);
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(x + labelWidth);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+
+    float floats[4];
+    int ints[4];
+    std::copy(std::begin(setting.floats), std::end(setting.floats), floats);
+    std::copy(std::begin(setting.ints), std::end(setting.ints), ints);
+    const ImGuiDataType type = setting.floating ? ImGuiDataType_Float : ImGuiDataType_S32;
+    void* values = setting.floating ? static_cast<void*>(floats) : static_cast<void*>(ints);
+    const int low = static_cast<int>(setting.min), high = static_cast<int>(setting.max);
+    const void* min = !setting.range ? nullptr : setting.floating ? static_cast<const void*>(&setting.min) : &low;
+    const void* max = !setting.range ? nullptr : setting.floating ? static_cast<const void*>(&setting.max) : &high;
+    const char* format = setting.floating ? "%.3f" : "%d";
+    bool changed = false;
+    switch (setting.control)
+    {
+    case EffectSetting::Control::Check:
+    {
+        // As high as the other controls, which are frames.
+        const ImVec2 size(S(36), S(20));
+        ImGui::SetCursorScreenPos(ImGui::GetCursorScreenPos() + ImVec2(0, (ImGui::GetFrameHeight() - size.y) / 2));
+        if ((changed = kit::Switch("##value", ints[0] != 0, size)))
+            ints[0] = !ints[0];
+        break;
+    }
+    case EffectSetting::Control::List:
+        changed = ListControl("##value", ints[0], setting.items);
+        break;
+    case EffectSetting::Control::Color:
+        changed = setting.count == 3 ? ImGui::ColorEdit3("##value", floats) : ImGui::ColorEdit4("##value", floats, ImGuiColorEditFlags_AlphaBar);
+        break;
+    case EffectSetting::Control::Slider:
+        changed = ImGui::SliderScalarN("##value", type, values, setting.count, min, max, format);
+        break;
+    case EffectSetting::Control::Input:
+        changed = ImGui::InputScalarN("##value", type, values, setting.count);
+        break;
+    case EffectSetting::Control::Drag:
+        changed = ImGui::DragScalarN("##value", type, values, setting.count, setting.step, min, max, format);
+        break;
+    }
+    if (ImGui::BeginPopupContextItem("reset"))
+    {
+        if (ImGui::MenuItem("Reset to default"))
+            host.ResetSettings(effect, index);
+        ImGui::EndPopup();
+    }
+    ImGui::EndGroup();
+    ImGui::PopID();
+    if (changed)
+    {
+        value = setting;
+        std::copy(std::begin(floats), std::end(floats), value.floats);
+        std::copy(std::begin(ints), std::end(ints), value.ints);
+    }
+    return changed;
+}
+
+// The preprocessor definitions the effect checks. A change compiles the effects again, so it applies on Enter, as in
+// ReShade's menu.
+void DefinitionRows(Host& host, size_t effect, const EffectSettings& settings)
+{
+    if (settings.definitions.empty() || !SettingsHeading("Preprocessor definitions", false))
+        return;
+    for (size_t i = 0; i < settings.definitions.size(); ++i)
+    {
+        const EffectDefinition& definition = settings.definitions[i];
+        ImGui::PushID(definition.name.c_str());
+        const float x = ImGui::GetCursorPosX();
+        const float labelWidth = std::floor(ImGui::GetContentRegionAvail().x * 0.42f);
+        ImGui::AlignTextToFramePadding();
+        ImGui::PushTextWrapPos(x + labelWidth - S(10));
+        ImGui::TextUnformatted(definition.name.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(x + labelWidth);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        char value[256] = {};
+        definition.value.copy(value, sizeof(value) - 1);
+        if (ImGui::InputTextWithHint("##value", definition.fallback.c_str(), value, sizeof(value),
+                                     ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll) &&
+            definition.value != value)
+            host.SetDefinition(effect, i, value);
+        if (ImGui::BeginPopupContextItem("reset"))
+        {
+            if (ImGui::MenuItem("Reset to default"))
+                host.SetDefinition(effect, i, "");
+            ImGui::EndPopup();
+        }
+        ImGui::PopID();
+    }
+}
+
+// An effect's settings, under its row.
+void SettingsArea(Host& host, const Effect& effect, size_t index, const Page& page, float& y)
+{
+    const EffectSettings* settings = host.DescribeSettings(index);
+    if (!settings)
+        return;
+    const float left = page.left + S(6);
+    ImGui::SetCursorScreenPos(page.At(left, y));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, kInset);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(16), S(14)));
+    ImGui::BeginChild("settings", ImVec2(page.right - S(6) - left, 0),
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
+                      ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+    PushSize(kNote);
+    if (!settings->tooltip.empty())
+        Text(settings->tooltip, kDim, kNote);
+    // Grouped by category in the order they first appear, as in ReShade.
+    std::vector<const std::string*> categories;
+    for (const EffectSetting& setting : settings->settings)
+        if (std::none_of(categories.begin(), categories.end(), [&](const std::string* category) { return *category == setting.category; }))
+            categories.push_back(&setting.category);
+    if (categories.empty() && settings->definitions.empty())
+        Text("This effect has no settings.", kDim, kNote);
+    std::optional<size_t> active, hovered;
+    for (const std::string* category : categories)
+    {
+        if (!category->empty() && !SettingsHeading(category->c_str(), true))
+            continue;
+        for (size_t i = 0; i < settings->settings.size(); ++i)
+        {
+            const EffectSetting& setting = settings->settings[i];
+            if (setting.category != *category)
+                continue;
+            EffectSetting value;
+            if (SettingRow(host, index, i, setting, value))
+                host.SetSetting(index, i, value);
+            if (ImGui::IsItemActive())
+                active = i;
+            if (ImGui::IsItemHovered())
+                hovered = i;
+        }
+    }
+    host.PointAtSettings(index, active, hovered);
+    if (!categories.empty())
+    {
+        ImGui::Dummy(ImVec2(0, S(2)));
+        PushSize(kNote);
+        if (Link("Reset all", kDim))
+        {
+            state.resetting = effect.key;
+            state.openResetEffect = true;
+        }
+        ImGui::PopFont();
+        Tooltip("Right-click a setting to reset only that one.");
+    }
+    DefinitionRows(host, index, *settings);
+    ImGui::PopFont();
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+    y = ImGui::GetItemRectMax().y - page.origin.y + S(8);
+}
+
+// Effects that are on can be dragged onto each other to change the order they run in, which from and to take.
+void EffectRow(const Effects& effects, Host& host, size_t index, const Page& page, float& y, std::optional<size_t>& from, std::optional<size_t>& to)
+{
+    const Effect& effect = effects.list[index];
+    const bool expanded = state.expanded == effect.key;
+    const ImVec2 min = page.At(page.left + S(6), y);
+    const ImVec2 size(page.right - page.left - S(12), S(44));
+    y += size.y;
+    if (!expanded && !ImGui::IsRectVisible(min, min + size))
+        return;
+    ImGui::PushID(effect.key.c_str());
+    ImGui::SetCursorScreenPos(min);
+    ImGui::SetNextItemAllowOverlap();
+    if (ImGui::InvisibleButton("effect", size, ImGuiButtonFlags_EnableNav))
+        state.expanded = expanded ? std::string() : effect.key;
+    const bool hovered = ImGui::IsItemHovered();
+    HandOnHover();
+    if (effect.on)
+    {
+        if (ImGui::BeginDragDropSource())
+        {
+            ImGui::SetDragDropPayload("effect", &index, sizeof(index));
+            Text(effect.name, kText, kBody);
+            ImGui::EndDragDropSource();
+        }
+        if (ImGui::BeginDragDropTarget())
+        {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("effect"))
+            {
+                from = *static_cast<const size_t*>(payload->Data);
+                to = index;
+            }
+            ImGui::EndDragDropTarget();
+        }
+    }
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    if (hovered || expanded)
+        draw->AddRectFilled(min, min + size, kCardHover, S(8));
+    const ImVec2 switchSize(S(40), S(22));
+    ImGui::SetCursorScreenPos(min + ImVec2(S(14), (size.y - switchSize.y) / 2));
+    if (kit::Switch("on", effect.on, switchSize))
+        host.SetEffect(index, !effect.on);
+    const float chevron = min.x + size.x - S(18);
+    const float textLeft = min.x + S(14) + switchSize.x + S(14);
+    const float nameWidth = std::min(Measure(effect.name, kBody).x, chevron - S(16) - textLeft);
+    Line(draw, textLeft, textLeft + nameWidth, min.y + size.y / 2, effect.name, effect.failed ? kDim : kText, kBody);
+    Line(draw, textLeft + nameWidth + S(8), chevron - S(16), min.y + size.y / 2 + S(1), effect.failed ? "failed" : effect.file, effect.failed ? kWarning : kDim,
+         kNote);
+    Chevron(draw, ImVec2(chevron, min.y + size.y / 2), expanded, expanded || hovered ? kText : kDim);
+    if (expanded)
+        SettingsArea(host, effect, index, page, y);
+    ImGui::PopID();
+}
+
+// A heading inside a card that opens and closes what is under it, with a count.
+bool GroupHeading(const Page& page, float& y, const char* id, const std::string& text, size_t count, bool open)
+{
+    const ImVec2 min = page.At(page.left + S(6), y);
+    const ImVec2 size(page.right - page.left - S(12), S(36));
+    ImGui::SetCursorScreenPos(min);
+    const bool clicked = ImGui::InvisibleButton(id, size, ImGuiButtonFlags_EnableNav);
+    const bool hovered = ImGui::IsItemHovered();
+    HandOnHover();
+    if (hovered)
+        page.draw->AddRectFilled(min, min + size, kCardHover, S(8));
+    const std::string label = text + "  " + std::to_string(count);
+    Line(page.draw, min.x + S(14), min.x + size.x - S(40), min.y + size.y / 2, label, hovered ? kText : kDim, kNote, true);
+    Chevron(page.draw, ImVec2(min.x + size.x - S(18), min.y + size.y / 2), open, open || hovered ? kText : kDim);
+    y += size.y;
+    return clicked;
+}
+
+void EffectsSection(const Model& model, Host& host, size_t index, const Page& page, float& y)
+{
+    const Effects& effects = *model.effects;
+    const float headingY = y;
+    SectionHeading(page, y, "EFFECTS");
+    // All of them on and off.
+    ImGui::SetCursorScreenPos(page.At(page.right - S(40), headingY - S(1)));
+    if (kit::Switch("all", effects.on, ImVec2(S(40), S(22))))
+        host.SetSwitch(Switch::Effects, !effects.on);
+    Tooltip(effects.on ? "Turn all effects off" : "Turn effects back on");
+    SearchBox(page, y, "##search", "Search effects", state.search, sizeof(state.search));
+    y += S(12);
+    ListEffects(effects, model.games[index].preset);
+
+    const float top = y;
+    BeginCard(page);
+    y += S(6);
+    const float pad = S(20);
+    if (effects.loading)
+    {
+        const ImVec2 center = page.At(page.left + pad + S(8), y + S(22));
+        const float start = static_cast<float>(ImGui::GetTime()) * 5.0f;
+        page.draw->PathArcTo(center, S(8), start, start + 4.2f, 32);
+        page.draw->PathStroke(kAccent, 0, S(2.5f));
+        const std::string text = effects.list.empty() ? "Loading effects. The first time can take a minute."
+                                                      : "Compiling effects " + std::to_string(effects.loaded) + " of " + std::to_string(effects.total);
+        Line(page.draw, center.x + S(20), page.origin.x + page.right - pad, center.y, text, kDim, kBody);
+        y += S(44);
+    }
+    else if (effects.list.empty() && effects.broken.empty())
+    {
+        y += S(12);
+        y += Paragraph(page.draw, page.At(page.left + pad, y), page.origin.x + page.right - pad, "No effects are installed.", kDim, kBody);
+        y += S(18);
+    }
+    std::optional<size_t> from, to;
+    const bool searching = state.search[0] != 0;
+    if (!effects.list.empty())
+    {
+        Line(page.draw, page.origin.x + page.left + pad, page.origin.x + page.right - pad, page.origin.y + y + S(16), "Active", kDim, kNote, true);
+        y += S(30);
+        for (size_t row : state.activeRows)
+            EffectRow(effects, host, row, page, y, from, to);
+        if (state.activeRows.empty())
+        {
+            y += S(4);
+            y += Paragraph(page.draw, page.At(page.left + pad, y), page.origin.x + page.right - pad,
+                           searching ? "No active effects match." : "No effects are on. Pick a preset or turn effects on below.", kDim, kBody);
+            y += S(12);
+        }
+        RowSeparator(page, y + S(6));
+        y += S(12);
+        const bool open = searching || state.showAll;
+        if (GroupHeading(page, y, "all", "All effects", state.otherRows.size(), open) && !searching)
+            state.showAll = !state.showAll;
+        if (open)
+            for (size_t row : state.otherRows)
+                EffectRow(effects, host, row, page, y, from, to);
+    }
+    if (!effects.broken.empty())
+    {
+        if (!effects.list.empty())
+        {
+            RowSeparator(page, y + S(6));
+            y += S(12);
+        }
+        const bool open = !state.shownErrors.empty();
+        if (GroupHeading(page, y, "broken", "Did not compile", effects.broken.size(), open))
+            state.shownErrors = open ? std::string() : effects.broken.front().file;
+        for (const BrokenEffect& broken : effects.broken)
+        {
+            if (!open)
+                break;
+            ImGui::PushID(broken.file.c_str());
+            const bool shown = state.shownErrors == broken.file;
+            const ImVec2 min = page.At(page.left + S(6), y);
+            const ImVec2 size(page.right - page.left - S(12), S(40));
+            ImGui::SetCursorScreenPos(min);
+            if (ImGui::InvisibleButton("errors", size, ImGuiButtonFlags_EnableNav))
+                state.shownErrors = broken.file;
+            const bool hovered = ImGui::IsItemHovered();
+            HandOnHover();
+            if (hovered || shown)
+                page.draw->AddRectFilled(min, min + size, kCardHover, S(8));
+            Line(page.draw, min.x + S(14), min.x + size.x - S(14), min.y + size.y / 2, broken.file, kText, kBody);
+            y += size.y;
+            if (shown)
+            {
+                y += S(4);
+                y += Paragraph(page.draw, page.At(page.left + pad, y), page.origin.x + page.right - pad, broken.errors, kDim, kNote);
+                y += S(10);
+            }
+            ImGui::PopID();
+        }
+    }
+    y += S(8);
+    EndCard(page, top, y);
+    y += S(28);
+    if (from && to && *from != *to)
+        host.MoveEffect(*from, *to);
+}
+
 void GamePage(const Model& model, Host& host, size_t index, const Page& page, float& y, float windowLeft, float windowWidth)
 {
     const Game& game = model.games[index];
     GameHero(model, host, index, page, y, windowLeft, windowWidth);
     PresetsSection(model, host, index, page, y);
+    if (model.effects && game.running)
+        EffectsSection(model, host, index, page, y);
     if (game.performance)
     {
         SectionHeading(page, y, "PERFORMANCE");
@@ -1548,6 +2031,25 @@ void DeleteDialog(const Model& model, Host& host)
     EndDialog();
 }
 
+// Asks before resetting an effect's settings, which cannot be got back with auto-save on.
+void ResetEffectDialog(const Model& model, Host& host)
+{
+    if (!BeginDialog("##reseteffect", state.openResetEffect, 400))
+        return;
+    std::optional<size_t> effect;
+    if (model.effects)
+        for (size_t i = 0; i < model.effects->list.size() && !effect; ++i)
+            if (model.effects->list[i].key == state.resetting)
+                effect = i;
+    DialogText("Reset every setting of " + (effect ? model.effects->list[*effect].name : std::string()) + "?", "They go back to their defaults.");
+    const int clicked = DialogButtons({ "Cancel", "Reset" });
+    if (clicked == 1 && effect)
+        host.ResetSettings(*effect, std::nullopt);
+    if (clicked >= 0 || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        ImGui::CloseCurrentPopup();
+    EndDialog();
+}
+
 // Follows the model: a game added since the last frame shows its page, and a page whose game is gone goes Home.
 void Follow(const Model& model)
 {
@@ -1627,6 +2129,7 @@ void Draw(const Model& model, Host& host, float windowScale)
     PresetNameDialog(model, host);
     UnsavedDialog(model, host);
     DeleteDialog(model, host);
+    ResetEffectDialog(model, host);
     ImGui::End();
     ImGui::PopFont();
 }
