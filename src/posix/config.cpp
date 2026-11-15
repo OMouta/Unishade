@@ -392,7 +392,7 @@ int ValidFrameRate(int fps)
 
 std::string PerformanceSection(const std::string& game)
 {
-    return game.empty() ? "Performance" : "Performance." + game;
+    return game.empty() ? "PERFORMANCE" : "PERFORMANCE." + game;
 }
 } // namespace
 
@@ -400,8 +400,9 @@ int FrameRateLimit(const std::string& game)
 {
     const IniText ini(ReadFile(DataDirectory() / "Unishade.ini"));
     std::string value;
-    int fps = ini.Get("Performance", "FrameRateLimit", value) ? std::atoi(value.c_str()) : 0;
-    if (!game.empty() && ini.Get(PerformanceSection(game), "FrameRateLimit", value))
+    int fps = ini.Get("PERFORMANCE", "FrameRateLimit", value) ? std::atoi(value.c_str()) : 0;
+    // An empty value is a game without its own.
+    if (!game.empty() && ini.Get(PerformanceSection(game), "FrameRateLimit", value) && !value.empty())
         fps = std::atoi(value.c_str());
     return ValidFrameRate(fps);
 }
@@ -420,9 +421,11 @@ void RenamePerformance(const std::string& from, const std::string& to)
     const fs::path path = DataDirectory() / "Unishade.ini";
     IniText ini(ReadFile(path));
     std::string value;
-    if (!ini.Get(PerformanceSection(from), "FrameRateLimit", value))
+    // Sections are found without case, so a name that only changes case already has its settings.
+    if (Lowercase(from) == Lowercase(to) || !ini.Get(PerformanceSection(from), "FrameRateLimit", value))
         return;
     ini.Set(PerformanceSection(to), "FrameRateLimit", value);
+    ini.Set(PerformanceSection(from), "FrameRateLimit", "");
     if (!WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
 }
