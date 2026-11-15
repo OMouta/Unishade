@@ -110,7 +110,8 @@ void InSingleThreadedApartment(Work work)
     }).join();
 }
 
-// Shortcuts arrive as WM_HOTKEY at a window of the main thread, which GLFW's message loop hands to it.
+// Shortcuts and the notification area icon's messages arrive at a hidden window of the main thread, which GLFW's message
+// loop hands them to. Not a message-only window, since Windows sends TaskbarCreated only to top-level windows.
 HWND messageWindow = nullptr;
 HotkeyCallback hotkeyCallback;
 // Windows only says that a shortcut was pressed, so one held down ends when its key is up again.
@@ -122,11 +123,104 @@ struct Registration
 std::map<int, Registration> registrations;
 std::vector<int> pressedHotkeys;
 
+constexpr UINT kTrayMessage = WM_APP + 16;
+constexpr UINT kTrayIcon = 1;
+constexpr UINT_PTR kTrayTimer = 1;
+enum TrayCommand : UINT
+{
+    kOpenCommand = 1,
+    kEffectsCommand,
+    kQuitCommand,
+};
+Tray tray;
+bool trayWanted = false;
+bool trayShown = false;
+HICON trayIcon = nullptr;
+UINT taskbarCreated = 0;
+
+NOTIFYICONDATAW TrayData()
+{
+    NOTIFYICONDATAW data{ sizeof(data) };
+    data.hWnd = messageWindow;
+    data.uID = kTrayIcon;
+    return data;
+}
+
+// Tried again every few seconds while the notification area is not ready.
+void ShowTrayIcon()
+{
+    if (!trayIcon)
+        trayIcon = static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                                                 GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
+    NOTIFYICONDATAW data = TrayData();
+    data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
+    data.uCallbackMessage = kTrayMessage;
+    data.hIcon = trayIcon;
+    wcscpy_s(data.szTip, std::size(data.szTip), L"Unishade");
+    // TaskbarCreated also comes when the taskbar's scaling changes, while the icon is still there.
+    Shell_NotifyIconW(NIM_DELETE, &data);
+    trayShown = Shell_NotifyIconW(NIM_ADD, &data) != FALSE;
+    if (trayShown)
+    {
+        data.uVersion = NOTIFYICON_VERSION_4;
+        Shell_NotifyIconW(NIM_SETVERSION, &data);
+    }
+    else
+        SetTimer(messageWindow, kTrayTimer, 5000, nullptr);
+}
+
+void TrayMenu(int x, int y)
+{
+    const HMENU menu = CreatePopupMenu();
+    if (!menu)
+        return;
+    AppendMenuW(menu, MF_STRING, kOpenCommand, L"Open Unishade");
+    AppendMenuW(menu, MF_STRING | (tray.effectsShown() ? MF_CHECKED : MF_UNCHECKED), kEffectsCommand, L"Show effects");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kQuitCommand, L"Quit");
+    SetMenuDefaultItem(menu, kOpenCommand, FALSE);
+    // Otherwise the menu stays open when clicking elsewhere.
+    SetForegroundWindow(messageWindow);
+    const UINT align = GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN : TPM_LEFTALIGN;
+    const UINT command = static_cast<UINT>(TrackPopupMenuEx(menu, align | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, x, y, messageWindow, nullptr));
+    PostMessageW(messageWindow, WM_NULL, 0, 0);
+    DestroyMenu(menu);
+    switch (command)
+    {
+    case kOpenCommand: tray.open(); break;
+    case kEffectsCommand: tray.toggleEffects(); break;
+    case kQuitCommand: tray.quit(); break;
+    }
+}
+
 LRESULT CALLBACK MessageProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
-    if (message == WM_HOTKEY)
+    if (message == taskbarCreated && taskbarCreated)
     {
+        if (trayWanted)
+            ShowTrayIcon();
+        return 0;
+    }
+    switch (message)
+    {
+    case WM_HOTKEY:
         pressedHotkeys.push_back(static_cast<int>(wParam));
+        return 0;
+    case WM_TIMER:
+        if (wParam == kTrayTimer)
+        {
+            KillTimer(window, kTrayTimer);
+            if (trayWanted)
+                ShowTrayIcon();
+        }
+        return 0;
+    case kTrayMessage:
+        switch (LOWORD(lParam))
+        {
+        case NIN_SELECT:
+        case NIN_KEYSELECT: tray.open(); break;
+        case WM_CONTEXTMENU: TrayMenu(static_cast<short>(LOWORD(wParam)), static_cast<short>(HIWORD(wParam))); break;
+        }
         return 0;
     }
     return DefWindowProcW(window, message, wParam, lParam);
@@ -627,12 +721,17 @@ bool Init(std::string& error)
     windowClass.hInstance = GetModuleHandleW(nullptr);
     windowClass.lpszClassName = L"UnishadeMessages";
     RegisterClassW(&windowClass);
-    messageWindow = CreateWindowExW(0, windowClass.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, windowClass.hInstance, nullptr);
+    messageWindow =
+        CreateWindowExW(WS_EX_TOOLWINDOW, windowClass.lpszClassName, L"", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, windowClass.hInstance, nullptr);
     if (!messageWindow)
     {
         error = "Could not create a window for shortcuts.";
         return false;
     }
+    taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+    // Explorer runs without administrator rights, so Unishade running with them must accept its messages.
+    ChangeWindowMessageFilterEx(messageWindow, taskbarCreated, MSGFLT_ALLOW, nullptr);
+    ChangeWindowMessageFilterEx(messageWindow, kTrayMessage, MSGFLT_ALLOW, nullptr);
     if (!wgc::GraphicsCaptureSession::IsSupported())
     {
         error = "Windows Graphics Capture is not available, and Unishade needs it to copy the game's picture. Update Windows and the graphics driver.";
@@ -644,6 +743,7 @@ bool Init(std::string& error)
 
 void Shutdown()
 {
+    RemoveTrayIcon();
     StopCapture();
     for (const auto& [id, registration] : std::map<int, Registration>(registrations))
         UnregisterHotkey(id);
@@ -805,6 +905,34 @@ void SetupLauncherWindow(GLFWwindow* window)
     DwmSetWindowAttribute(launcher, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
     const COLORREF caption = RGB((theme::kSidebar >> 16) & 0xFF, (theme::kSidebar >> 8) & 0xFF, theme::kSidebar & 0xFF);
     DwmSetWindowAttribute(launcher, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
+}
+
+void AddTrayIcon(Tray actions)
+{
+    tray = std::move(actions);
+    trayWanted = true;
+    ShowTrayIcon();
+}
+
+void RemoveTrayIcon()
+{
+    trayWanted = false;
+    if (messageWindow)
+        KillTimer(messageWindow, kTrayTimer);
+    if (trayShown)
+    {
+        NOTIFYICONDATAW data = TrayData();
+        Shell_NotifyIconW(NIM_DELETE, &data);
+        trayShown = false;
+    }
+    if (trayIcon)
+        DestroyIcon(trayIcon);
+    trayIcon = nullptr;
+}
+
+bool TrayIconShown()
+{
+    return trayShown;
 }
 
 void PrepareOverlayWindow()

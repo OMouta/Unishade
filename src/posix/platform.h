@@ -93,6 +93,22 @@ bool SaveWindowIcon(const Window& window, const std::string& path);
 // elsewhere.
 void SetupLauncherWindow(GLFWwindow* window);
 
+// What the notification area icon does. Each runs on the main thread while GLFW handles events.
+struct Tray
+{
+    std::function<void()> open; // a click on the icon, or Open Unishade in its menu
+    std::function<bool()> effectsShown;
+    std::function<void()> toggleEffects;
+    std::function<void()> quit;
+};
+// Shows Unishade in the notification area on Windows, so closing the launcher can leave it running there. Elsewhere
+// there is none.
+void AddTrayIcon(Tray tray);
+void RemoveTrayIcon();
+// Whether the icon shows now. Windows may not have a notification area yet, such as right after signing in, or lose
+// the icon when Explorer restarts. It is added again then.
+bool TrayIconShown();
+
 // Call right before creating the overlay window, after GLFW's hints for it. On macOS the window GLFW creates next is
 // then a panel that can take the keyboard without making Unishade the active program, so the game stays in front and
 // on its Space while the menu is open. Does nothing on X11.

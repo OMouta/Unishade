@@ -55,6 +55,9 @@ public:
     void Run();
     void Shutdown();
 
+    // Shows the launcher again after it was closed into the notification area or minimized, in front.
+    void ShowLauncher();
+
     // For the launcher and the menu.
     void OpenMenu();
     // Gives input back to the game, unless the user went to another window.

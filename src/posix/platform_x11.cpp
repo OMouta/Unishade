@@ -1328,6 +1328,19 @@ void SetupLauncherWindow(GLFWwindow*)
 {
 }
 
+void AddTrayIcon(Tray)
+{
+}
+
+void RemoveTrayIcon()
+{
+}
+
+bool TrayIconShown()
+{
+    return false;
+}
+
 void PrepareOverlayWindow()
 {
 }

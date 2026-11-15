@@ -346,7 +346,7 @@ if(APPLE)
 elseif(WIN32)
     # Unishade.exe like the ReShade host, so in a folder of its own until it replaces it. The manifest makes UTF-8 the
     # program's code page, which the narrow file and path functions then use, as they do on the other systems.
-    add_executable(UnishadeVulkan WIN32 "${POSIX_DIR}/main.cpp" "${POSIX_DIR}/Unishade.manifest")
+    add_executable(UnishadeVulkan WIN32 "${POSIX_DIR}/main.cpp" "${POSIX_DIR}/Unishade.manifest" "${POSIX_DIR}/Unishade.rc")
     set_target_properties(UnishadeVulkan PROPERTIES OUTPUT_NAME Unishade RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/vulkan$<0:>")
     # A program without a console window that still starts at main.
     target_link_options(UnishadeVulkan PRIVATE /ENTRY:mainCRTStartup)

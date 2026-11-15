@@ -115,6 +115,18 @@ bool App::Init(std::string& error)
     if (!overlay.surface.Create(overlay.window, true, error) || !InitUi(overlay, error))
         return false;
 
+    // Closing the launcher leaves Unishade running in the notification area, where Quit ends it. Without one, it quits.
+    platform::AddTrayIcon({ .open = [this] { ShowLauncher(); },
+                            .effectsShown = [this] { return captureEnabled; },
+                            .toggleEffects = [this] { ToggleOverlay(); },
+                            .quit = [this] { glfwSetWindowShouldClose(launcher.window, GLFW_TRUE); } });
+    glfwSetWindowCloseCallback(launcher.window, [](GLFWwindow* window) {
+        if (!platform::TrayIconShown())
+            return;
+        glfwSetWindowShouldClose(window, GLFW_FALSE);
+        glfwHideWindow(window);
+    });
+
     platform::SetHotkeyCallback([this](int id, bool pressed) { OnHotkey(id, pressed); });
     for (const Shortcut& shortcut : kShortcuts)
         if (shortcut.always && !RegisterShortcut(shortcut, settings.hotkeys.*shortcut.member))
@@ -211,9 +223,18 @@ void App::Run()
         }
 
         const bool launcherActive = glfwGetWindowAttrib(launcher.window, GLFW_FOCUSED) || glfwGetWindowAttrib(launcher.window, GLFW_HOVERED);
-        if (!glfwGetWindowAttrib(launcher.window, GLFW_ICONIFIED) && Now() - lastLauncherFrame >= (launcherActive ? 1.0 / 60 : 0.25))
+        const bool launcherShown = glfwGetWindowAttrib(launcher.window, GLFW_VISIBLE) && !glfwGetWindowAttrib(launcher.window, GLFW_ICONIFIED);
+        if (launcherShown && Now() - lastLauncherFrame >= (launcherActive ? 1.0 / 60 : 0.25))
             RenderLauncher();
     }
+}
+
+void App::ShowLauncher()
+{
+    glfwShowWindow(launcher.window);
+    if (glfwGetWindowAttrib(launcher.window, GLFW_ICONIFIED))
+        glfwRestoreWindow(launcher.window);
+    glfwFocusWindow(launcher.window);
 }
 
 void App::Shutdown()
