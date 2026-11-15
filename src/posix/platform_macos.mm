@@ -971,6 +971,10 @@ bool SaveWindowIcon(const Window& window, const std::string& path)
     }
 }
 
+void SetupLauncherWindow(GLFWwindow*)
+{
+}
+
 void PrepareOverlayWindow()
 {
     glfwCocoaPanelHint(GLFW_TRUE);

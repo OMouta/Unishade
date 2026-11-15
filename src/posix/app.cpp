@@ -74,6 +74,7 @@ bool App::Init(std::string& error)
     glfwDefaultWindowHints();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     // The same sizes as on Windows, at 100% scaling.
     launcher.window = glfwCreateWindow(1120, 740, "Unishade", nullptr, nullptr);
     if (!launcher.window || !launcher.surface.Create(launcher.window, false, error) || !InitUi(launcher, error))
@@ -83,12 +84,14 @@ bool App::Init(std::string& error)
         return false;
     }
     SetWindowIcon(launcher.window);
+    platform::SetupLauncherWindow(launcher.window);
     // Limits are in the screen's units, which macOS keeps the same at every scaling.
     float scaleX = 1, scaleY = 1;
 #ifndef __APPLE__
     glfwGetWindowContentScale(launcher.window, &scaleX, &scaleY);
 #endif
     glfwSetWindowSizeLimits(launcher.window, static_cast<int>(880 * scaleX), static_cast<int>(560 * scaleY), GLFW_DONT_CARE, GLFW_DONT_CARE);
+    glfwShowWindow(launcher.window);
 
     // The overlay covers the game's window exactly. Clicks go through to the game until the menu opens.
     glfwDefaultWindowHints();

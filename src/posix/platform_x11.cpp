@@ -1324,6 +1324,10 @@ std::vector<Process> ListProcesses()
     return processes;
 }
 
+void SetupLauncherWindow(GLFWwindow*)
+{
+}
+
 void PrepareOverlayWindow()
 {
 }

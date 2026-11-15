@@ -6,6 +6,7 @@
 #include "gpu.h"
 #include "log.h"
 #include "text.h"
+#include "theme.h"
 
 #include <d3d11_4.h>
 #include <dwmapi.h>
@@ -795,6 +796,15 @@ bool SaveWindowIcon(const Window& window, const std::string& path)
         }
     });
     return saved;
+}
+
+void SetupLauncherWindow(GLFWwindow* window)
+{
+    const HWND launcher = glfwGetWin32Window(window);
+    const BOOL dark = TRUE;
+    DwmSetWindowAttribute(launcher, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+    const COLORREF caption = RGB((theme::kSidebar >> 16) & 0xFF, (theme::kSidebar >> 8) & 0xFF, theme::kSidebar & 0xFF);
+    DwmSetWindowAttribute(launcher, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
 }
 
 void PrepareOverlayWindow()
