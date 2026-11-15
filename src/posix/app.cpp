@@ -2,6 +2,9 @@
 #include "log.h"
 #include "theme.h"
 #include "ui.h"
+#ifdef _WIN32
+#include "upscale.h"
+#endif
 
 #include <GLFW/glfw3.h>
 #include <stb_image_write.h>
@@ -234,6 +237,9 @@ void App::Shutdown()
         ui->window = nullptr;
     }
     runtime.Shutdown();
+#ifdef _WIN32
+    ReleaseUpscaler();
+#endif
     platform::Shutdown();
     gpu.Shutdown();
 }
@@ -559,13 +565,21 @@ void App::RenderOverlay()
     runtime.Render(surface.commands, Source(), effectsEnabled && !comparing && !compareButton);
     FullBarrier(surface.commands);
     const GpuImage& output = runtime.Output();
-    VkImageBlit blit{};
-    blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-    blit.srcOffsets[1] = { int(output.width), int(output.height), 1 };
-    blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-    blit.dstOffsets[1] = { int(surface.extent.width), int(surface.extent.height), 1 };
-    vkCmdBlitImage(surface.commands, output.image, VK_IMAGE_LAYOUT_GENERAL, surface.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
-                   VK_FILTER_LINEAR);
+#ifdef _WIN32
+    const bool upscaled = Upscale(surface.commands, effectResolution, output, surface.image, surface.extent);
+#else
+    const bool upscaled = false;
+#endif
+    if (!upscaled)
+    {
+        VkImageBlit blit{};
+        blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blit.srcOffsets[1] = { int(output.width), int(output.height), 1 };
+        blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blit.dstOffsets[1] = { int(surface.extent.width), int(surface.extent.height), 1 };
+        vkCmdBlitImage(surface.commands, output.image, VK_IMAGE_LAYOUT_GENERAL, surface.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                       VK_FILTER_LINEAR);
+    }
 
     BeginUi(overlay);
     DrawOverlay(*this);

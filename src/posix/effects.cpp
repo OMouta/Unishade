@@ -1367,7 +1367,8 @@ bool Runtime::CreateTargets()
         gpu.DestroyImage(*image);
     gpu.DestroyBuffer(staging);
     const VkImageUsageFlags transfer = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    if (!gpu.CreateImage(backbuffer, width, height, 1, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | transfer) ||
+    // Sampled by FSR, which reads the output when it upscales.
+    if (!gpu.CreateImage(backbuffer, width, height, 1, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | transfer) ||
         !gpu.CreateImage(color, width, height, 1, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | transfer) ||
         !gpu.CreateBuffer(staging, VkDeviceSize(width) * height * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true))
     {

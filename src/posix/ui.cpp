@@ -1210,7 +1210,7 @@ void GeneralSettings(App& app)
     ImGui::Dummy(ImVec2(0, S(14)));
     Heading("PERFORMANCE");
     Text("Effect resolution", kText, 14.5f);
-    Text("Effects run on a smaller picture that is stretched to the game's size. Lower is faster and softer, and screenshots get "
+    Text("Effects run on a smaller picture that FSR upscales to the game's size. Lower is faster and softer, and screenshots get "
          "smaller. For " + (app.game.empty() ? std::string("every game without its own setting.") : app.game + " only."),
          kDim, 13);
     ImGui::Dummy(ImVec2(0, S(2)));
