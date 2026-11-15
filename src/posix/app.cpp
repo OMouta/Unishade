@@ -272,6 +272,11 @@ void App::StartCapture(const platform::Window& window)
     if (!retrying)
         Log(LogLevel::Info, "Capturing %s", window.title.c_str());
     FollowGame();
+#ifdef _WIN32
+    effectResolution = EffectResolution(game);
+    platform::SetFrameScale(effectResolution);
+    Log(LogLevel::Info, "Effect resolution: %d%%.", effectResolution);
+#endif
     if (!startHintShown)
     {
         ShowToast("opens the Unishade menu", 6, HotkeyText(kEditModeHotkey));
@@ -1178,6 +1183,16 @@ void App::TakeScreenshots()
         screenshot = screenshots.erase(screenshot);
     }
 }
+
+#ifdef _WIN32
+void App::SetEffectResolution(int percent)
+{
+    ::SetEffectResolution(game, percent);
+    effectResolution = EffectResolution(game);
+    platform::SetFrameScale(effectResolution);
+    Log(LogLevel::Info, "Settings: effect_resolution=%d%% for %s.", effectResolution, game.empty() ? "every game" : game.c_str());
+}
+#endif
 
 bool App::EffectsInstalled()
 {

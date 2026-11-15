@@ -143,6 +143,11 @@ bool Capturing();
 void SetCaptureIdle(bool idle);
 // Swaps in the newest frame when it is newer than frame.serial. Returns whether it did.
 bool TakeFrame(Frame& frame);
+#ifdef _WIN32
+// Frames come at this percentage of the window's size from the next one on, for effects that run on a smaller
+// picture. 100 until set. Windows only, as the effect resolution is for now.
+void SetFrameScale(int percent);
+#endif
 // Set when capture stopped by itself, such as when the window closed. Cleared by StartCapture.
 std::string CaptureError();
 // Whether capture stopped because the user stopped it, as macOS lets them from the menu bar. Starting again at once

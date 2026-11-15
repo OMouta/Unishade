@@ -382,3 +382,46 @@ void SetGamePreset(const std::string& game, const fs::path& preset)
     if (!WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
 }
+
+namespace
+{
+std::string PerformanceSection(const std::string& game)
+{
+    return game.empty() ? "PERFORMANCE" : "PERFORMANCE." + game;
+}
+} // namespace
+
+int EffectResolution(const std::string& game)
+{
+    const IniText ini(ReadFile(DataDirectory() / "Unishade.ini"));
+    std::string value;
+    int percent = ini.Get("PERFORMANCE", "EffectResolution", value) ? atoi(value.c_str()) : 100;
+    // An empty value is a game without its own.
+    if (!game.empty() && ini.Get(PerformanceSection(game), "EffectResolution", value) && !value.empty())
+        percent = atoi(value.c_str());
+    // Anything else is 100, as on the ReShade host.
+    return percent < 25 || percent > 100 ? 100 : percent;
+}
+
+void SetEffectResolution(const std::string& game, int percent)
+{
+    const fs::path path = DataDirectory() / "Unishade.ini";
+    IniText ini(ReadFile(path));
+    ini.Set(PerformanceSection(game), "EffectResolution", std::to_string(percent));
+    if (!WriteFile(path, ini.Text()))
+        Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
+}
+
+void RenamePerformance(const std::string& from, const std::string& to)
+{
+    const fs::path path = DataDirectory() / "Unishade.ini";
+    IniText ini(ReadFile(path));
+    std::string value;
+    // Sections are found without case, so a name that only changes case already has its settings.
+    if (Lowercase(from) == Lowercase(to) || !ini.Get(PerformanceSection(from), "EffectResolution", value))
+        return;
+    ini.Set(PerformanceSection(to), "EffectResolution", value);
+    ini.Set(PerformanceSection(from), "EffectResolution", "");
+    if (!WriteFile(path, ini.Text()))
+        Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
+}

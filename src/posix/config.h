@@ -71,6 +71,13 @@ bool SaveSettings(const Settings& settings);
 fs::path GamePreset(const std::string& game);
 void SetGamePreset(const std::string& game, const fs::path& preset);
 
+// The percentage of the game's picture effects run at, kept as on the ReShade host: in [PERFORMANCE.<game>] of
+// Unishade.ini for a saved game with its own, otherwise in [PERFORMANCE], which an empty game reads and sets.
+int EffectResolution(const std::string& game);
+void SetEffectResolution(const std::string& game, int percent);
+// Moves a game's own settings to its new name.
+void RenamePerformance(const std::string& from, const std::string& to);
+
 // "A=1,B" as ReShade writes preprocessor definitions, and back.
 std::vector<std::pair<std::string, std::string>> ParseDefinitions(const std::string& text);
 std::string FormatDefinitions(const std::vector<std::pair<std::string, std::string>>& definitions);

@@ -83,6 +83,12 @@ public:
     // While the menu records a shortcut, every shortcut is let go so its keys reach the menu.
     void SuspendHotkeys(bool suspended);
     bool EffectsInstalled();
+#ifdef _WIN32
+    // For the game being played, or the default without a saved game. Effects run on a picture this much of the game's
+    // size, upscaled to it.
+    void SetEffectResolution(int percent);
+    int effectResolution = 100;
+#endif
     // A short message at the bottom of the game, with an optional key before it.
     void ShowToast(std::string text, double seconds = 3.0, std::string key = {});
     std::string HotkeyText(int id) const;

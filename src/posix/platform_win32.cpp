@@ -390,6 +390,7 @@ struct Capture
     // once capture runs.
     std::optional<float> sdrWhite;
     ULONGLONG nextHdrCheck = 0;
+    std::atomic<int> scale = 100; // SetFrameScale's
     // Held while a frame is copied, so stopping waits for it.
     std::mutex copying;
     // The rest is shared with the threads frames arrive on.
@@ -559,8 +560,9 @@ winrt::com_ptr<ID3DBlob> CompileShader(const char* entry, const char* target)
     return code;
 }
 
-// Draws the frame into target, which is width by height, an HDR frame as SDR. Whether it is HDR comes from the frame's
-// own format, since a frame captured before HDR was turned on or off can still arrive.
+// Draws the frame into target, which is width by height: smaller for effects below 100%, and an HDR frame as SDR.
+// Whether it is HDR comes from the frame's own format, since a frame captured before HDR was turned on or off can still
+// arrive.
 void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& desc, ID3D11RenderTargetView* target, UINT width, UINT height)
 {
     if (!d3d.sampler)
@@ -708,12 +710,15 @@ void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
             IID_PPV_ARGS(texture.put())));
         D3D11_TEXTURE2D_DESC desc{};
         texture->GetDesc(&desc);
+        const UINT scale = static_cast<UINT>(capture.scale.load());
+        const UINT width = std::max(desc.Width * scale / 100, 1u);
+        const UINT height = std::max(desc.Height * scale / 100, 1u);
 
         const bool shared = capture.onGpu;
         std::shared_ptr<Slot> slot;
         {
             std::lock_guard lock(capture.mutex);
-            slot = FreeSlot(desc.Width, desc.Height, shared);
+            slot = FreeSlot(width, height, shared);
         }
         if (!slot)
             return;
@@ -722,13 +727,13 @@ void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
             d3d.context->Unmap(slot->texture.get(), 0);
             slot->mapped = {};
         }
-        if (desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+        if (width != desc.Width || height != desc.Height || desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
             DrawFrame(texture.get(), desc, *slot);
         else
             d3d.context->CopyResource(slot->texture.get(), texture.get());
         Frame copied;
-        copied.width = desc.Width;
-        copied.height = desc.Height;
+        copied.width = width;
+        copied.height = height;
         if (shared)
         {
             // Vulkan reads the texture as soon as the host takes the frame, so the copy has to be done by then.
@@ -1232,6 +1237,11 @@ void SetCaptureIdle(bool idle)
         return;
     capture.idle = idle;
     capture.session.MinUpdateInterval(std::chrono::milliseconds(idle ? 200 : 1));
+}
+
+void SetFrameScale(int percent)
+{
+    capture.scale = percent;
 }
 
 bool TakeFrame(Frame& frame)

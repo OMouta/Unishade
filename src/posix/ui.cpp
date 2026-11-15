@@ -1206,6 +1206,20 @@ void GeneralSettings(App& app)
     }
 #endif
 
+#ifdef _WIN32
+    ImGui::Dummy(ImVec2(0, S(14)));
+    Heading("PERFORMANCE");
+    Text("Effect resolution", kText, 14.5f);
+    Text("Effects run on a smaller picture that is stretched to the game's size. Lower is faster and softer, and screenshots get "
+         "smaller. For " + (app.game.empty() ? std::string("every game without its own setting.") : app.game + " only."),
+         kDim, 13);
+    ImGui::Dummy(ImVec2(0, S(2)));
+    const auto& choices = launcher::kEffectResolutions;
+    const auto chosen = std::find(std::begin(choices), std::end(choices), app.effectResolution);
+    if (const int clicked = Segmented("resolution", { "100%", "75%", "50%" }, static_cast<int>(chosen - std::begin(choices)), kAccent); clicked >= 0)
+        app.SetEffectResolution(choices[clicked]);
+#endif
+
     ImGui::Dummy(ImVec2(0, S(14)));
     Heading("EFFECTS");
     for (const fs::path& path : app.settings.effectPaths)
@@ -1736,6 +1750,7 @@ std::string RenameGame(App& app, size_t index, std::string name)
         SetGamePreset(name, moveFolder && preset.parent_path() == from ? to / preset.filename() : preset);
         SetGamePreset(key, fs::path());
     }
+    RenamePerformance(key, name);
     if (playing)
         app.game = FolderName(name);
     // The preset still loaded after the game closed moves too, or a save would make the old folder again.
