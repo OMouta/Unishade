@@ -326,6 +326,7 @@ UniformSource SourceKind(const std::string& source)
         { "overlay_hovered", UniformSource::OverlayHovered },
         { "ui_hovered", UniformSource::OverlayHovered },
         { "screenshot", UniformSource::Screenshot },
+        { "bufready_depth", UniformSource::DepthReady },
     };
     if (source.empty())
         return UniformSource::None;
@@ -1291,20 +1292,41 @@ bool Runtime::Init(const Settings& initial)
     if (vkCreatePipelineCache(gpu.device, &cacheInfo, nullptr, &pipelineCache) != VK_SUCCESS)
         pipelineCache = VK_NULL_HANDLE;
 
-    if (!gpu.CreateImage(depth, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) ||
-        !gpu.CreateImage(blank, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT))
+    return CreateEmpty(blank, 1, 1, VK_FORMAT_R8G8B8A8_UNORM) && CreateDepth();
+}
+
+// An image effects only read, cleared to zero.
+bool Runtime::CreateEmpty(GpuImage& image, uint32_t imageWidth, uint32_t imageHeight, VkFormat format)
+{
+    if (!gpu.CreateImage(image, imageWidth, imageHeight, 1, format, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT))
         return false;
     VkCommandBuffer commands = gpu.BeginCommands();
     if (!commands)
         return false;
     const VkClearColorValue zero{};
     const VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-    for (const GpuImage* image : { &depth, &blank })
-    {
-        InitLayout(commands, *image);
-        vkCmdClearColorImage(commands, image->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
-    }
+    InitLayout(commands, image);
+    vkCmdClearColorImage(commands, image.image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
     return gpu.SubmitAndWait(commands);
+}
+
+bool Runtime::CreateDepth()
+{
+    gpu.DestroyImage(depth);
+    if (depthProvided && width && height)
+        return CreateEmpty(depth, width, height, VK_FORMAT_R32_SFLOAT);
+    return CreateEmpty(depth, 1, 1, VK_FORMAT_R8G8B8A8_UNORM);
+}
+
+void Runtime::ProvideDepth(bool provided)
+{
+    if (provided == depthProvided)
+        return;
+    depthProvided = provided;
+    // Effects hold the image they read as DEPTH, and are prepared again with the new one.
+    DestroyAllGpu();
+    if (!CreateDepth())
+        Log(LogLevel::Error, "Could not create a %ux%u image for depth.", width, height);
 }
 
 void Runtime::Shutdown()
@@ -1378,6 +1400,11 @@ bool Runtime::CreateTargets()
     // Without it, passes that use stencil run on every pixel, which ReShade accepts too.
     if (stencilFormat != VK_FORMAT_UNDEFINED && !gpu.CreateImage(stencil, width, height, 1, stencilFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT))
         Log(LogLevel::Warning, "Could not create a %ux%u stencil image for effects.", width, height);
+    if (depthProvided && !CreateDepth())
+    {
+        Log(LogLevel::Error, "Could not create a %ux%u image for depth.", width, height);
+        return false;
+    }
     VkCommandBuffer commands = gpu.BeginCommands();
     if (!commands)
         return false;
@@ -1820,6 +1847,8 @@ bool Runtime::LoadPreset(const fs::path& path)
     presetPath = path;
     dirty = false;
     presetIni = PresetIni(ReadFile(path));
+    presetValues.clear();
+    ++presetGeneration;
     PresetDefinitions definitions;
     std::string value;
     if (presetIni.Get("", "PreprocessorDefinitions", value))
@@ -1912,6 +1941,8 @@ PresetIni Runtime::ComposePreset(PresetIni preset, const std::vector<std::string
     preset.Set("", "Techniques", PresetIni::Join(enabled));
     // While effects load, the order keeps the places of the techniques still to come.
     preset.Set("", "TechniqueSorting", PresetIni::Join(order));
+    for (const auto& [section, key, text] : presetValues)
+        preset.Set(section, key, text);
     // Each effect's definitions, which the menu changes. The preset's own are left as they are.
     for (const std::string& section : preset.SectionNames())
         if (!presetDefinitions.effects.count(section))
@@ -1957,6 +1988,24 @@ bool Runtime::SavePresetAs(const fs::path& path)
         return false;
     presetPath = path;
     return true;
+}
+
+std::string Runtime::PresetValue(const std::string& section, const std::string& key) const
+{
+    std::string value;
+    presetIni.Get(section, key, value);
+    return value;
+}
+
+void Runtime::SetPresetValue(const std::string& section, const std::string& key, const std::string& value)
+{
+    std::string current;
+    if (presetIni.Get(section, key, current) && current == value)
+        return;
+    presetIni.Set(section, key, value);
+    std::erase_if(presetValues, [&](const auto& entry) { return PresetIni::Same(entry[0], section) && PresetIni::Same(entry[1], key); });
+    presetValues.push_back({ section, key, value });
+    dirty = true;
 }
 
 std::vector<std::string> Runtime::MissingTechniques() const
@@ -2336,6 +2385,12 @@ void Runtime::UpdateSpecialUniforms(Effect& effect)
         case UniformSource::Screenshot:
         {
             const int value = input.screenshot;
+            SetValue(effect, uniform, &value, 1);
+            break;
+        }
+        case UniformSource::DepthReady:
+        {
+            const int value = depthProvided;
             SetValue(effect, uniform, &value, 1);
             break;
         }
@@ -3097,7 +3152,7 @@ void CopySource(VkCommandBuffer commands, const Runtime::Source& source, VkImage
 }
 } // namespace
 
-void Runtime::Render(VkCommandBuffer commands, const Source& source, bool enabled)
+void Runtime::CopyIn(VkCommandBuffer commands, const Source& source)
 {
     if (!width || !height)
         return;
@@ -3126,7 +3181,12 @@ void Runtime::Render(VkCommandBuffer commands, const Source& source, bool enable
         vkCmdCopyBufferToImage(commands, staging.buffer, backbuffer.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
     }
     FullBarrier(commands);
+}
 
+void Runtime::RenderEffects(VkCommandBuffer commands, bool enabled)
+{
+    if (!width || !height)
+        return;
     const auto now = std::chrono::steady_clock::now();
     frameTime = std::chrono::duration<float, std::milli>(now - lastFrame).count();
     lastFrame = now;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "addons.h"
 #include "config.h"
 #include "effects.h"
 #include "games.h"
@@ -96,6 +97,7 @@ public:
 
     Settings settings;
     fx::Runtime runtime;
+    Addons addons;
     EffectSetup setup;
     std::vector<AutoGame> autoGames;
     std::optional<platform::Window> selected;

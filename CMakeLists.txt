@@ -96,6 +96,14 @@ fetch_file("${ONNXRUNTIME_HEADERS_URL}/onnxruntime_c_api.h" 9ed0d7054a4e74249467
 fetch_file("${ONNXRUNTIME_HEADERS_URL}/onnxruntime_ep_c_api.h" e94ac3490697bdb107844fa9d403952ee7136134132a057eae5c1207b57ce352 "${ONNXRUNTIME_INCLUDE}/onnxruntime_ep_c_api.h")
 fetch_file("https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.4/include/onnxruntime/core/providers/dml/dml_provider_factory.h" 893ddb645545bddad8c3f24bb768e97651c9ce45ec22076b435439889e4228c8 "${ONNXRUNTIME_INCLUDE}/dml_provider_factory.h")
 
+# Depth estimation as an add-on of the Vulkan host, Depth.dll. Its model and ONNX Runtime go in Addons/Depth.
+add_library(depth_addon SHARED src/depth/depth_addon.cpp src/depth/depth_model.cpp)
+set_target_properties(depth_addon PROPERTIES OUTPUT_NAME Depth)
+target_include_directories(depth_addon PRIVATE src "${ONNXRUNTIME_INCLUDE}")
+target_compile_definitions(depth_addon PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(depth_addon PRIVATE /W4 /permissive- /EHsc)
+target_link_libraries(depth_addon PRIVATE d3d11 d3d12 d3dcompiler dxgi windowsapp)
+
 # The in-game menu draws through ReShade's own Dear ImGui, so it needs the header of the exact version ReShade
 # exports its functions for. Only the header: the functions are ReShade's.
 set(RESHADE_IMGUI_INCLUDE "${CMAKE_BINARY_DIR}/reshade-imgui")
@@ -199,7 +207,8 @@ set_target_properties(installer PROPERTIES
     OUTPUT_NAME "Unishade-Setup-${PROJECT_VERSION}"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/installer$<0:>")
 
-# DLSS5 calls NVIDIA's nvngx_dlssnr.dll directly. Built on request, with a program that runs an image through it:
+# DLSS5 calls NVIDIA's nvngx_dlssnr.dll directly. Unishade_nvngx.dll is also the DLSS5 add-on of the Vulkan host, which
+# takes nvngx_dlssnr.dll from Addons/Unishade_nvngx. A program that runs an image through it is built on request:
 # cmake --build build --config Release --target dlss5_check
 set(NGX_INCLUDE "${CMAKE_BINARY_DIR}/ngx")
 set(NGX_URL "https://raw.githubusercontent.com/NVIDIA/DLSS/v310.9.16/include")
@@ -207,8 +216,8 @@ fetch_file("${NGX_URL}/nvsdk_ngx_defs.h" ea23f33497cd274860d1c25a97644fce807dcb0
 fetch_file("${NGX_URL}/nvsdk_ngx_params.h" 943bc8cc5cdae03b6303016fbad3183636f2335ae27a2d18776798c3b4efabbc "${NGX_INCLUDE}/nvsdk_ngx_params.h")
 
 # Its path has to contain nvngx.dll. See src/dlss5/dlss5.cpp.
-add_library(Unishade_nvngx SHARED EXCLUDE_FROM_ALL src/dlss5/dlss5.cpp)
-target_include_directories(Unishade_nvngx PRIVATE "${NGX_INCLUDE}")
+add_library(Unishade_nvngx SHARED src/dlss5/dlss5.cpp src/dlss5/dlss5_addon.cpp)
+target_include_directories(Unishade_nvngx PRIVATE src "${NGX_INCLUDE}")
 target_compile_definitions(Unishade_nvngx PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_DLSS5_EXPORTS)
 target_compile_definitions(Unishade_nvngx PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
 target_compile_options(Unishade_nvngx PRIVATE /W4 /permissive- /EHsc)

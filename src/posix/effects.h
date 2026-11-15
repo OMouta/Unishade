@@ -31,7 +31,7 @@ namespace fx
 enum class UniformSource : uint8_t
 {
     None,
-    Other, // one the host cannot provide, such as depth, which stays zero
+    Other, // one the host cannot provide, which stays zero
     FrameTime,
     FrameCount,
     Timer,
@@ -47,6 +47,7 @@ enum class UniformSource : uint8_t
     OverlayActive,
     OverlayHovered,
     Screenshot,
+    DepthReady,
 };
 
 // The annotations a source reads, taken once, so setting the values every frame needs no lookups.
@@ -265,7 +266,19 @@ public:
         size_t stride = 0;
     };
     // Copies the game's picture in and runs every enabled technique on it, or none when effects is false.
-    void Render(VkCommandBuffer commands, const Source& source, bool effects);
+    void Render(VkCommandBuffer commands, const Source& source, bool effects)
+    {
+        CopyIn(commands, source);
+        RenderEffects(commands, effects);
+    }
+    // Render in two steps, for add-ons that work on the picture in between, in commands of their own: the picture is
+    // in the output after CopyIn. RenderEffects starts with nothing between it and the commands before it.
+    void CopyIn(VkCommandBuffer commands, const Source& source);
+    void RenderEffects(VkCommandBuffer commands, bool effects);
+    // Gives effects a DEPTH the size of the picture, R32_SFLOAT, which something else fills, such as an add-on, and
+    // tells them through bufready_depth. Otherwise DEPTH is empty. A change prepares the effects again.
+    void ProvideDepth(bool provided);
+    const GpuImage& Depth() const { return depth; }
     // The picture after Render, in VK_IMAGE_LAYOUT_GENERAL. BGRA.
     const GpuImage& Output() const { return backbuffer; }
     // Reads the output back, as RGBA pixels. Waits for the graphics card.
@@ -284,6 +297,12 @@ public:
     void SetDirty() { dirty = true; }
     // Techniques the preset turns on whose effect file was not found.
     std::vector<std::string> MissingTechniques() const;
+    // Keys of the preset outside the effects' sections, such as add-ons' settings. Empty when the preset has none.
+    // Setting one is a change to the preset, which saving writes.
+    std::string PresetValue(const std::string& section, const std::string& key) const;
+    void SetPresetValue(const std::string& section, const std::string& key, const std::string& value);
+    // Goes up whenever a preset loads, the same one again included.
+    uint64_t PresetGeneration() const { return presetGeneration; }
 
     // A preprocessor definition's value for an effect: from the preset's section for the effect, the preset's own
     // definitions or the global ones in Unishade.ini. Empty when none sets it, so the effect uses its default.
@@ -368,6 +387,8 @@ private:
     void DestroyGpu(Effect& effect);
     void DestroyAllGpu();
     bool CreateTargets();
+    bool CreateEmpty(GpuImage& image, uint32_t imageWidth, uint32_t imageHeight, VkFormat format);
+    bool CreateDepth();
     void HandleToggleKeys();
     void UpdateSpecialUniforms(Effect& effect);
     VkSampler Sampler(const reshadefx::sampler_desc& desc);
@@ -391,7 +412,8 @@ private:
 
     GpuImage backbuffer; // what passes without a render target write to
     GpuImage color;      // a copy of backbuffer, which effects read as COLOR
-    GpuImage depth;      // effects read DEPTH from here, which stays empty: the game's depth is out of reach
+    GpuImage depth;      // effects read DEPTH from here, empty unless ProvideDepth: the game's depth is out of reach
+    bool depthProvided = false;
     GpuImage blank;      // bound where an effect reads a texture it is writing in the same pass
     GpuImage stencil;    // the size of backbuffer, for passes that use stencil
     VkFormat stencilFormat = VK_FORMAT_UNDEFINED;
@@ -412,6 +434,9 @@ private:
     fs::path presetPath;
     PresetIni presetIni; // as loaded or last saved
     PresetDefinitions presetDefinitions;
+    // SetPresetValue's keys since the preset loaded, which saving writes into the file.
+    std::vector<std::array<std::string, 3>> presetValues;
+    uint64_t presetGeneration = 0;
     bool dirty = false;
     // The definition SetDefinition changed last, until the effects compiled with it, and the value it had in the
     // effect's section, if any.

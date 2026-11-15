@@ -293,6 +293,7 @@ enum class SettingsPage
 {
     General,
     Shortcuts,
+    Addons,
 };
 
 enum class NameAction
@@ -1245,9 +1246,89 @@ void ShortcutSettings(App& app)
         Text(menu.shortcutError, kError, 13.5f);
 }
 
+// A plain page for now: the approval of files that are not official, on and off, and each add-on's settings.
+void AddonSettings(App& app)
+{
+    for (const Addons::Addon& addon : app.addons.List())
+    {
+        ImGui::PushID(addon.file.c_str());
+        if (addon.state == Addons::State::Pending)
+        {
+            Text(addon.file, kText, 14.5f);
+            Text("Not an official add-on. Load it?", kWarning, 13);
+            if (Button("Load", ImVec2(S(90), S(30)), true))
+                app.addons.Approve(addon.file, true);
+            ImGui::SameLine(0, S(8));
+            if (Button("Don't load", ImVec2(S(110), S(30))))
+                app.addons.Approve(addon.file, false);
+        }
+        else
+        {
+            const bool on = addon.state == Addons::State::Enabled;
+            const std::string title = addon.name + (addon.official ? "" : " (not official)");
+            if (SwitchRow("on", on, title.c_str(), addon.description.empty() ? addon.file.c_str() : addon.description.c_str()))
+                app.addons.SetEnabled(addon.file, !on);
+            if (addon.state == Addons::State::Failed)
+                Text(addon.error, kError, 13);
+        }
+        if (addon.state == Addons::State::Enabled || addon.state == Addons::State::Failed)
+            for (size_t i = 0; i < addon.settings.size(); ++i)
+            {
+                const Addons::Setting& setting = addon.settings[i];
+                ImGui::PushID(static_cast<int>(i));
+                ImGui::SetNextItemWidth(S(220));
+                float value = setting.value;
+                bool changed = false;
+                if (setting.type == UNISHADE_SETTING_TOGGLE)
+                {
+                    bool checked = value != 0;
+                    changed = ImGui::Checkbox(setting.label.c_str(), &checked);
+                    value = checked;
+                }
+                else if (setting.type == UNISHADE_SETTING_CHOICE)
+                {
+                    int choice = static_cast<int>(value);
+                    const char* current = choice < static_cast<int>(setting.choices.size()) ? setting.choices[choice].c_str() : "";
+                    if (ImGui::BeginCombo(setting.label.c_str(), current))
+                    {
+                        for (int c = 0; c < static_cast<int>(setting.choices.size()); ++c)
+                            if (ImGui::Selectable(setting.choices[c].c_str(), c == choice))
+                            {
+                                changed = true;
+                                choice = c;
+                            }
+                        ImGui::EndCombo();
+                    }
+                    value = static_cast<float>(choice);
+                }
+                else if (setting.type == UNISHADE_SETTING_INTEGER)
+                {
+                    int number = static_cast<int>(value);
+                    changed = ImGui::SliderInt(setting.label.c_str(), &number, static_cast<int>(setting.min), static_cast<int>(setting.max));
+                    value = static_cast<float>(number);
+                }
+                else
+                    changed = ImGui::SliderFloat(setting.label.c_str(), &value, setting.min, setting.max, "%.2f");
+                Tooltip(setting.tooltip);
+                if (changed)
+                    app.addons.SetSetting(addon.file, i, value);
+                ImGui::PopID();
+            }
+        ImGui::PopID();
+        ImGui::Dummy(ImVec2(0, S(10)));
+    }
+    if (app.addons.List().empty())
+        Text("No add-ons in the Addons folder.", kDim, 13);
+    if (Button("Look again", ImVec2(S(120), S(32))))
+        app.addons.Scan();
+    ImGui::SameLine(0, S(8));
+    if (Button("Open Addons folder", ImVec2(S(170), S(32))))
+        platform::Open((DataDirectory() / "Addons").string());
+}
+
 void SettingsTab(App& app)
 {
-    const int clicked = Segmented("page", { "General", "Shortcuts" }, static_cast<int>(menu.settingsPage), kBorder);
+    const int clicked = Segmented("page", { "General", "Shortcuts", "Add-ons" }, static_cast<int>(menu.settingsPage), kBorder);
     if (clicked >= 0)
     {
         // A shortcut left waiting for keys on its page would take the next key pressed on another.
@@ -1257,8 +1338,10 @@ void SettingsTab(App& app)
     ImGui::Dummy(ImVec2(0, S(6)));
     if (menu.settingsPage == SettingsPage::General)
         GeneralSettings(app);
-    else
+    else if (menu.settingsPage == SettingsPage::Shortcuts)
         ShortcutSettings(app);
+    else
+        AddonSettings(app);
 }
 
 // Status
