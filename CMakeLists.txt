@@ -204,6 +204,21 @@ set_target_properties(installer PROPERTIES
     OUTPUT_NAME "Unishade-Setup-${PROJECT_VERSION}"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/installer$<0:>")
 
+# DLSS5 calls NVIDIA's nvngx_dlssnr.dll directly. Built on request:
+# cmake --build build --config Release --target Unishade_nvngx
+set(NGX_INCLUDE "${CMAKE_BINARY_DIR}/ngx")
+set(NGX_URL "https://raw.githubusercontent.com/NVIDIA/DLSS/v310.9.16/include")
+fetch_file("${NGX_URL}/nvsdk_ngx_defs.h" ea23f33497cd274860d1c25a97644fce807dcb0037c594547203343103fad03e "${NGX_INCLUDE}/nvsdk_ngx_defs.h")
+fetch_file("${NGX_URL}/nvsdk_ngx_params.h" 943bc8cc5cdae03b6303016fbad3183636f2335ae27a2d18776798c3b4efabbc "${NGX_INCLUDE}/nvsdk_ngx_params.h")
+
+# Its path has to contain nvngx.dll. See src/dlss5/dlss5.cpp.
+add_library(Unishade_nvngx SHARED EXCLUDE_FROM_ALL src/dlss5/dlss5.cpp)
+target_include_directories(Unishade_nvngx PRIVATE "${NGX_INCLUDE}")
+target_compile_definitions(Unishade_nvngx PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_DLSS5_EXPORTS)
+target_compile_definitions(Unishade_nvngx PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
+target_compile_options(Unishade_nvngx PRIVATE /W4 /permissive- /EHsc)
+target_link_libraries(Unishade_nvngx PRIVATE d3d12 dxgi windowsapp)
+
 if(BUILD_TESTING)
     add_executable(log_tests tests/log_tests.cpp src/log.cpp)
     target_compile_definitions(log_tests PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_VERSION="${PROJECT_VERSION}")
