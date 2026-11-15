@@ -119,6 +119,8 @@ public:
     std::map<std::string, bool> folderOpen;
     // The launcher asks whether to save unsaved changes before quitting.
     bool quitAsked = false;
+    // Started by Windows at sign-in: the launcher waits in the notification area, or minimized until there is one.
+    bool startMinimized = false;
     bool captureEnabled = true;
     bool menuOpen = false;
     bool effectsEnabled = true;

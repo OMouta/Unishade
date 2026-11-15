@@ -109,6 +109,13 @@ void RemoveTrayIcon();
 // the icon when Explorer restarts. It is added again then.
 bool TrayIconShown();
 
+#ifdef _WIN32
+// Whether Windows starts this Unishade.exe with --minimized when the user signs in. Off once Unishade moved, until it
+// is turned on again, and while Task Manager's Startup apps turn it off.
+bool StartsWithWindows();
+void SetStartWithWindows(bool start);
+#endif
+
 // Windows ends Unishade at shutdown or sign-out without returning to the main loop, a few seconds after calling this
 // on the main thread. Whatever must be saved is saved in it. Never called elsewhere, where signals quit as usual.
 void SetSessionEndCallback(std::function<void()> callback);

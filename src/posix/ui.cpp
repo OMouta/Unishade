@@ -370,6 +370,9 @@ struct LauncherState
     std::map<std::string, std::string> installErrors;
     std::map<std::string, bool> addonsWhole;
     std::string addonsFolder; // its files as last seen, with their sizes and times
+#ifdef _WIN32
+    bool startsWithWindows = false; // read with the presets, since Task Manager can turn it off meanwhile
+#endif
 };
 LauncherState launcherState;
 
@@ -399,6 +402,9 @@ void RefreshLauncher()
     launcherState.folders.clear();
     launcherState.addonsWhole.clear();
     launcherState.gamesStale = true;
+#ifdef _WIN32
+    launcherState.startsWithWindows = platform::StartsWithWindows();
+#endif
 }
 
 const std::vector<fs::path>& PresetsOf(const fs::path& folder)
@@ -775,6 +781,13 @@ public:
             SaveSettings(app.settings);
             Log(LogLevel::Info, "Settings: discord_presence=%d.", on);
         }
+#ifdef _WIN32
+        else if (which == launcher::Switch::StartWithWindows)
+        {
+            platform::SetStartWithWindows(on);
+            RefreshLauncher();
+        }
+#endif
     }
 
     void PressCard(size_t card, size_t button) override
@@ -1699,6 +1712,9 @@ launcher::Model DescribeLauncher(App& app)
     model.discord = std::move(discord);
 #endif
 
+#ifdef _WIN32
+    model.settings.startWithWindows = launcherState.startsWithWindows;
+#endif
     model.settings.autoSavePresets = app.settings.autoSavePresets;
     if (platform::OverlayCanStayBehind())
         model.settings.keepEffectsVisible = app.settings.keepEffectsVisible;

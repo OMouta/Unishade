@@ -1241,6 +1241,66 @@ bool TrayIconShown()
     return trayShown;
 }
 
+namespace
+{
+// Windows starts Unishade at sign-in with this entry. Task Manager's Startup apps turn entries off in the other key
+// without removing them.
+constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr wchar_t kStartupApprovedKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+constexpr wchar_t kRunValue[] = L"Unishade";
+
+std::wstring StartCommand()
+{
+    std::wstring path(32768, L'\0');
+    path.resize(GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size())));
+    return L"\"" + path + L"\" --minimized";
+}
+} // namespace
+
+bool StartsWithWindows()
+{
+    std::wstring command(32768, L'\0');
+    DWORD size = static_cast<DWORD>(command.size() * sizeof(wchar_t));
+    if (RegGetValueW(HKEY_CURRENT_USER, kRunKey, kRunValue, RRF_RT_REG_SZ, nullptr, command.data(), &size) != ERROR_SUCCESS ||
+        _wcsicmp(command.c_str(), StartCommand().c_str()) != 0)
+        return false;
+    // The first byte is odd when Task Manager turned it off.
+    BYTE approved[64]{};
+    size = sizeof(approved);
+    return RegGetValueW(HKEY_CURRENT_USER, kStartupApprovedKey, kRunValue, RRF_RT_REG_BINARY, nullptr, approved, &size) != ERROR_SUCCESS ||
+           !(approved[0] & 1);
+}
+
+void SetStartWithWindows(bool start)
+{
+    LSTATUS status = ERROR_SUCCESS;
+    if (start)
+    {
+        const std::wstring command = StartCommand();
+        HKEY key = nullptr;
+        status = RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
+        if (status == ERROR_SUCCESS)
+        {
+            status = RegSetValueExW(key, kRunValue, 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()),
+                                    static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
+            RegCloseKey(key);
+        }
+        // Turned on here, it should not stay off in Task Manager.
+        if (status == ERROR_SUCCESS)
+            RegDeleteKeyValueW(HKEY_CURRENT_USER, kStartupApprovedKey, kRunValue);
+    }
+    else
+    {
+        status = RegDeleteKeyValueW(HKEY_CURRENT_USER, kRunKey, kRunValue);
+        if (status == ERROR_FILE_NOT_FOUND)
+            status = ERROR_SUCCESS;
+    }
+    if (status != ERROR_SUCCESS)
+        Report(LogLevel::Warning, "Could not change whether Unishade starts with Windows (error %ld).", static_cast<long>(status));
+    else
+        Log(LogLevel::Info, start ? "Unishade starts with Windows." : "Unishade no longer starts with Windows.");
+}
+
 void SetSessionEndCallback(std::function<void()> callback)
 {
     sessionEnd = std::move(callback);

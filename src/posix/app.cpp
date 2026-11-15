@@ -100,7 +100,6 @@ bool App::Init(std::string& error)
     glfwGetWindowContentScale(launcher.window, &scaleX, &scaleY);
 #endif
     glfwSetWindowSizeLimits(launcher.window, static_cast<int>(880 * scaleX), static_cast<int>(560 * scaleY), GLFW_DONT_CARE, GLFW_DONT_CARE);
-    glfwShowWindow(launcher.window);
 
     // The overlay covers the game's window exactly. Clicks go through to the game until the menu opens.
     glfwDefaultWindowHints();
@@ -137,6 +136,10 @@ bool App::Init(std::string& error)
             app.Quit();
     });
     platform::SetSessionEndCallback([this] { EndSession(); });
+    if (!startMinimized)
+        glfwShowWindow(launcher.window);
+    else if (!platform::TrayIconShown())
+        glfwIconifyWindow(launcher.window);
 
     platform::SetHotkeyCallback([this](int id, bool pressed) { OnHotkey(id, pressed); });
     for (const Shortcut& shortcut : kShortcuts)

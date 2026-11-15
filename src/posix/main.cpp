@@ -341,6 +341,9 @@ int main(int argc, char** argv)
         // Started by platform::Relaunch, while the Unishade that asked for it quits.
         if (!strcmp(argv[i], "--relaunch"))
             relaunched = true;
+        // How Windows starts it at sign-in.
+        else if (!strcmp(argv[i], "--minimized"))
+            app.startMinimized = true;
         else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h"))
         {
             Usage();
