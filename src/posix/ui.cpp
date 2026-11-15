@@ -369,6 +369,7 @@ struct LauncherState
     std::vector<std::unique_ptr<AddonInstall>> installs;
     std::map<std::string, std::string> installErrors;
     std::map<std::string, bool> addonsWhole;
+    std::string addonsFolder; // its files as last seen, with their sizes and times
 };
 LauncherState launcherState;
 
@@ -1442,6 +1443,25 @@ launcher::EffectSetting SettingOf(const Addons::Setting& setting)
     return shown;
 }
 
+// Reads the Addons folder again when its files changed, so one dropped there shows without a restart. Installs write
+// there, and read it again once they are done.
+void LookForAddons(App& app)
+{
+    if (!launcherState.installs.empty())
+        return;
+    std::string files;
+    std::error_code error;
+    for (fs::directory_iterator it(DataDirectory() / "Addons", error), end; !error && it != end; it.increment(error))
+        if (it->is_regular_file(error))
+            files += it->path().filename().string() + ' ' + std::to_string(it->file_size(error)) + ' ' +
+                     std::to_string(it->last_write_time(error).time_since_epoch().count()) + '\n';
+    if (files != launcherState.addonsFolder)
+    {
+        launcherState.addonsFolder = std::move(files);
+        app.addons.Scan();
+    }
+}
+
 // Whether every file of an official add-on is in the Addons folder, read once until the launcher reads the disk again.
 bool Whole(const Addons::Official& official)
 {
@@ -1549,6 +1569,7 @@ launcher::Model DescribeLauncher(App& app)
     if (glfwGetTime() - launcherState.presetsRead > kPresetsInterval)
     {
         RefreshLauncher();
+        LookForAddons(app);
         launcherState.presetsRead = glfwGetTime();
     }
     const auto running = [&app](const AutoGame& saved) {
