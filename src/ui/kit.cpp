@@ -234,7 +234,7 @@ void Tooltip(const std::string& text)
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(10), S(7)));
     if (ImGui::BeginTooltip())
     {
-        Text(text, kText, 13, S(300));
+        Text(text, kText, kNote, S(300));
         ImGui::EndTooltip();
     }
     ImGui::PopStyleVar();
@@ -295,7 +295,7 @@ int Segmented(const char* id, std::initializer_list<const char*> choices, int se
     int clicked = -1;
     int index = 0;
     ImGui::PushID(id);
-    PushSize(13.5f);
+    PushSize(kNote);
     for (const char* choice : choices)
     {
         const ImVec2 min = start + ImVec2(size.x * index, 0);
