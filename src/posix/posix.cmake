@@ -293,7 +293,7 @@ elseif(WIN32)
     # The standard and POSIX C functions MSVC warns about are used as on the other systems.
     target_compile_definitions(unishade_core PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
     target_compile_definitions(unishade_core PRIVATE UNISHADE_USER_AGENT="Unishade/${PROJECT_VERSION}")
-    target_link_libraries(unishade_core PUBLIC d3d11 dxgi dwmapi windowsapp winhttp bcrypt)
+    target_link_libraries(unishade_core PUBLIC d3d11 d3dcompiler dxgi dwmapi windowsapp winhttp bcrypt)
 else()
     target_link_libraries(unishade_core PUBLIC X11::X11 X11::Xcomposite X11::Xext)
     # XRes tells which process owns a window even for sandboxed programs such as Flatpak apps. It is loaded at

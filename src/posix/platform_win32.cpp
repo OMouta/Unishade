@@ -8,6 +8,7 @@
 #include "text.h"
 
 #include <d3d11_4.h>
+#include <d3dcompiler.h>
 #include <dwmapi.h>
 #include <dxgi1_2.h>
 #include <shellapi.h>
@@ -202,13 +203,123 @@ void RequestBorderlessCapture()
     }
 }
 
+// HDR, as the ReShade host's hdr.cpp tells it
+
+// The window's monitor and Windows' display paths only share the GDI device name, such as \\.\DISPLAY1.
+bool FindDisplayPath(HWND window, DISPLAYCONFIG_PATH_INFO& found)
+{
+    MONITORINFOEXW monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (!GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitorInfo))
+        return false;
+
+    UINT32 pathCount = 0, modeCount = 0;
+    if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount) != ERROR_SUCCESS)
+        return false;
+    std::vector<DISPLAYCONFIG_PATH_INFO> paths(pathCount);
+    std::vector<DISPLAYCONFIG_MODE_INFO> modes(modeCount);
+    if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &pathCount, paths.data(), &modeCount, modes.data(), nullptr) != ERROR_SUCCESS)
+        return false;
+
+    for (UINT32 i = 0; i < pathCount; ++i)
+    {
+        DISPLAYCONFIG_SOURCE_DEVICE_NAME source{};
+        source.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+        source.header.size = sizeof(source);
+        source.header.adapterId = paths[i].sourceInfo.adapterId;
+        source.header.id = paths[i].sourceInfo.id;
+        if (DisplayConfigGetDeviceInfo(&source.header) == ERROR_SUCCESS && monitorInfo.szDevice == std::wstring(source.viewGdiDeviceName))
+        {
+            found = paths[i];
+            return true;
+        }
+    }
+    // Asked every second, so each display that cannot be found is said once.
+    static std::wstring missing;
+    if (missing != monitorInfo.szDevice)
+    {
+        missing = monitorInfo.szDevice;
+        Log(LogLevel::Info, "Could not find %s in Windows' display settings, so it is captured without HDR.", Utf8(missing).c_str());
+    }
+    return false;
+}
+
+// How bright Windows makes SDR white on the window's display, in nits, while HDR is on there. Nothing while it is off,
+// including wide color on an SDR display, or when the display cannot be found.
+std::optional<float> HdrWhiteLevel(HWND window)
+{
+    DISPLAYCONFIG_PATH_INFO path{};
+    if (!FindDisplayPath(window, path))
+        return std::nullopt;
+
+    // Wide color on an SDR display is advanced color too, but keeps SDR brightness, so it is captured as SDR.
+    DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO color{};
+    color.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
+    color.header.size = sizeof(color);
+    color.header.adapterId = path.targetInfo.adapterId;
+    color.header.id = path.targetInfo.id;
+    if (DisplayConfigGetDeviceInfo(&color.header) != ERROR_SUCCESS || !color.advancedColorEnabled || color.wideColorEnforced)
+        return std::nullopt;
+
+    // 1000 is 80 nits, scRGB's own SDR white, which is also taken when Windows does not say.
+    DISPLAYCONFIG_SDR_WHITE_LEVEL level{};
+    level.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
+    level.header.size = sizeof(level);
+    level.header.adapterId = path.targetInfo.adapterId;
+    level.header.id = path.targetInfo.id;
+    if (DisplayConfigGetDeviceInfo(&level.header) != ERROR_SUCCESS || level.SDRWhiteLevel == 0)
+        return 80.0f;
+    return level.SDRWhiteLevel / 1000.0f * 80.0f;
+}
+
 // Capture
 
+// While HDR is on, frames are captured in 16-bit floats, since 8 bits would clip them, and turned back into SDR before
+// effects see them.
 constexpr DirectXPixelFormat kCaptureFormat = DirectXPixelFormat::B8G8R8A8UIntNormalized;
+constexpr DirectXPixelFormat kHdrCaptureFormat = DirectXPixelFormat::R16G16B16A16Float;
+// HDR can be turned on or off, SDR brightness changed and the game moved to another display while it is captured,
+// so the display is asked again this often. Asking takes QueryDisplayConfig, which is too slow for every frame.
+constexpr ULONGLONG kHdrCheckInterval = 1000;
 constexpr int32_t kCaptureBuffers = 3;
 // The host holds up to three frames: the one it shows, the one the graphics card may still draw and the newest one it
 // has not taken. Capture copies into a fourth.
 constexpr size_t kSlots = 4;
+
+// Draws a texture over the whole target with one triangle, the ReShade host's shader. tonemap does it for an HDR frame.
+constexpr char kDrawShader[] = R"(
+Texture2D Frame : register(t0);
+SamplerState Smooth : register(s0);
+cbuffer Hdr : register(b0)
+{
+    float SdrWhite; // in scRGB, where 1 is 80 nits
+};
+struct Corner
+{
+    float4 position : SV_Position;
+    float2 at : TEXCOORD;
+};
+
+Corner vs(uint id : SV_VertexID)
+{
+    Corner corner;
+    corner.at = float2((id << 1) & 2, id & 2);
+    corner.position = float4(corner.at * float2(2, -2) + float2(-1, 1), 0, 1);
+    return corner;
+}
+
+float4 ps(Corner corner) : SV_Target
+{
+    return Frame.Sample(Smooth, corner.at);
+}
+
+// Turns linear scRGB back into the sRGB an SDR frame has, with SDR white at 1.
+float4 tonemap(Corner corner) : SV_Target
+{
+    float3 color = saturate(Frame.Sample(Smooth, corner.at).rgb / SdrWhite);
+    return float4(color <= 0.0031308 ? color * 12.92 : 1.055 * pow(color, 1 / 2.4) - 0.055, 1);
+}
+)";
 
 struct Direct3D
 {
@@ -222,6 +333,21 @@ struct Direct3D
     winrt::com_ptr<ID3D11Fence> fence;
     uint64_t fenceValue = 0;
     winrt::handle fenceEvent;
+
+    // What drawing a frame as SDR takes, made on first use.
+    winrt::com_ptr<ID3D11VertexShader> vertexShader;
+    winrt::com_ptr<ID3D11PixelShader> pixelShader;
+    winrt::com_ptr<ID3D11PixelShader> tonemapShader;
+    winrt::com_ptr<ID3D11Buffer> sdrWhite;
+    winrt::com_ptr<ID3D11SamplerState> sampler;
+    // Capture's textures are not promised to be readable by shaders. Frames whose texture is not are copied into this
+    // one first, and copyFrames is set once a view on one could not be made.
+    winrt::com_ptr<ID3D11Texture2D> readable;
+    winrt::com_ptr<ID3D11ShaderResourceView> readableView;
+    bool copyFrames = false;
+    // What frames copied through memory are drawn into, since a texture the processor reads cannot be drawn into.
+    winrt::com_ptr<ID3D11Texture2D> drawn;
+    winrt::com_ptr<ID3D11RenderTargetView> drawnTarget;
 };
 Direct3D d3d;
 
@@ -230,6 +356,7 @@ Direct3D d3d;
 struct Slot
 {
     winrt::com_ptr<ID3D11Texture2D> texture;
+    winrt::com_ptr<ID3D11RenderTargetView> target; // the shared texture's, made when a frame is first drawn into it
     UINT width = 0;
     UINT height = 0;
     bool shared = false;
@@ -258,6 +385,11 @@ struct Capture
     wgc::Direct3D11CaptureFramePool::FrameArrived_revoker frameArrived;
     wgc::GraphicsCaptureItem::Closed_revoker closed;
     bool idle = false;
+    HWND window = nullptr;
+    // HdrWhiteLevel of the window's display, asked again at nextHdrCheck. Only the threads frames arrive on use them
+    // once capture runs.
+    std::optional<float> sdrWhite;
+    ULONGLONG nextHdrCheck = 0;
     // Held while a frame is copied, so stopping waits for it.
     std::mutex copying;
     // The rest is shared with the threads frames arrive on.
@@ -392,6 +524,162 @@ std::shared_ptr<Slot> FreeSlot(UINT width, UINT height, bool shared)
     return slot;
 }
 
+DirectXPixelFormat CaptureFormat()
+{
+    return capture.sdrWhite ? kHdrCaptureFormat : kCaptureFormat;
+}
+
+// Follows HDR turning on or off on the window's display and its SDR brightness changing. On the threads frames
+// arrive on.
+void UpdateHdr(const wgc::Direct3D11CaptureFramePool& pool)
+{
+    const ULONGLONG now = GetTickCount64();
+    if (now < capture.nextHdrCheck)
+        return;
+    capture.nextHdrCheck = now + kHdrCheckInterval;
+    const std::optional<float> level = HdrWhiteLevel(capture.window);
+    if (level.has_value() == capture.sdrWhite.has_value())
+    {
+        if (level != capture.sdrWhite)
+            Log(LogLevel::Info, "SDR white on the game's display changed: %.1f -> %.1f nits.", *capture.sdrWhite, *level);
+        capture.sdrWhite = level;
+        return;
+    }
+    // Frames already captured in the old format are drawn by their own format.
+    capture.sdrWhite = level;
+    pool.Recreate(d3d.captureDevice, CaptureFormat(), kCaptureBuffers, capture.size);
+    Log(LogLevel::Info, "HDR turned %s on the game's display, so capture continues in format %d, SDR_white=%.1f nits.", level ? "on" : "off",
+        static_cast<int>(CaptureFormat()), level.value_or(80));
+}
+
+winrt::com_ptr<ID3DBlob> CompileShader(const char* entry, const char* target)
+{
+    winrt::com_ptr<ID3DBlob> code;
+    winrt::check_hresult(D3DCompile(kDrawShader, sizeof(kDrawShader) - 1, "draw", nullptr, nullptr, entry, target, 0, 0, code.put(), nullptr));
+    return code;
+}
+
+// Draws the frame into target, which is width by height, an HDR frame as SDR. Whether it is HDR comes from the frame's
+// own format, since a frame captured before HDR was turned on or off can still arrive.
+void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& desc, ID3D11RenderTargetView* target, UINT width, UINT height)
+{
+    if (!d3d.sampler)
+    {
+        const auto vertex = CompileShader("vs", "vs_4_0");
+        const auto pixel = CompileShader("ps", "ps_4_0");
+        const auto tonemap = CompileShader("tonemap", "ps_4_0");
+        winrt::check_hresult(d3d.device->CreateVertexShader(vertex->GetBufferPointer(), vertex->GetBufferSize(), nullptr, d3d.vertexShader.put()));
+        winrt::check_hresult(d3d.device->CreatePixelShader(pixel->GetBufferPointer(), pixel->GetBufferSize(), nullptr, d3d.pixelShader.put()));
+        winrt::check_hresult(d3d.device->CreatePixelShader(tonemap->GetBufferPointer(), tonemap->GetBufferSize(), nullptr, d3d.tonemapShader.put()));
+        D3D11_BUFFER_DESC constants{};
+        constants.ByteWidth = 16;
+        constants.Usage = D3D11_USAGE_DEFAULT;
+        constants.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        winrt::check_hresult(d3d.device->CreateBuffer(&constants, nullptr, d3d.sdrWhite.put()));
+        D3D11_SAMPLER_DESC sampler{};
+        sampler.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+        sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sampler.ComparisonFunc = D3D11_COMPARISON_NEVER;
+        winrt::check_hresult(d3d.device->CreateSamplerState(&sampler, d3d.sampler.put()));
+    }
+
+    // A view made for this draw only, so none outlives the frame's return to the pool.
+    winrt::com_ptr<ID3D11ShaderResourceView> view;
+    if (!d3d.copyFrames && (desc.BindFlags & D3D11_BIND_SHADER_RESOURCE))
+        if (const HRESULT made = d3d.device->CreateShaderResourceView(frame, nullptr, view.put()); FAILED(made))
+        {
+            if (FAILED(d3d.device->GetDeviceRemovedReason()))
+                winrt::throw_hresult(made);
+            view = nullptr;
+            d3d.copyFrames = true;
+            Log(LogLevel::Info, "Captured frames cannot be read directly (0x%08X), so they are copied first.", static_cast<unsigned>(made));
+        }
+    if (!view)
+    {
+        D3D11_TEXTURE2D_DESC copy{};
+        if (d3d.readable)
+            d3d.readable->GetDesc(&copy);
+        if (copy.Width != desc.Width || copy.Height != desc.Height || copy.Format != desc.Format)
+        {
+            copy = desc;
+            copy.MipLevels = 1;
+            copy.ArraySize = 1;
+            copy.SampleDesc = { 1, 0 };
+            copy.Usage = D3D11_USAGE_DEFAULT;
+            copy.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            copy.CPUAccessFlags = 0;
+            copy.MiscFlags = 0;
+            d3d.readableView = nullptr;
+            d3d.readable = nullptr;
+            winrt::check_hresult(d3d.device->CreateTexture2D(&copy, nullptr, d3d.readable.put()));
+            winrt::check_hresult(d3d.device->CreateShaderResourceView(d3d.readable.get(), nullptr, d3d.readableView.put()));
+        }
+        d3d.context->CopyResource(d3d.readable.get(), frame);
+        view = d3d.readableView;
+    }
+    const bool hdr = desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+    if (hdr)
+    {
+        const float sdrWhite[4] = { capture.sdrWhite.value_or(80) / 80 };
+        d3d.context->UpdateSubresource(d3d.sdrWhite.get(), 0, nullptr, sdrWhite, 0, 0);
+    }
+
+    const D3D11_VIEWPORT viewport{ 0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1 };
+    ID3D11ShaderResourceView* views[] = { view.get() };
+    ID3D11SamplerState* samplers[] = { d3d.sampler.get() };
+    ID3D11Buffer* constants[] = { d3d.sdrWhite.get() };
+    d3d.context->IASetInputLayout(nullptr);
+    d3d.context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    d3d.context->VSSetShader(d3d.vertexShader.get(), nullptr, 0);
+    d3d.context->PSSetShader(hdr ? d3d.tonemapShader.get() : d3d.pixelShader.get(), nullptr, 0);
+    d3d.context->PSSetShaderResources(0, 1, views);
+    d3d.context->PSSetSamplers(0, 1, samplers);
+    d3d.context->PSSetConstantBuffers(0, 1, constants);
+    d3d.context->RSSetState(nullptr);
+    d3d.context->RSSetViewports(1, &viewport);
+    d3d.context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+    d3d.context->OMSetDepthStencilState(nullptr, 0);
+    d3d.context->OMSetRenderTargets(1, &target, nullptr);
+    d3d.context->Draw(3, 0);
+    // Neither stays bound: the frame goes back to the pool and the target is Vulkan's to read.
+    views[0] = nullptr;
+    d3d.context->PSSetShaderResources(0, 1, views);
+    d3d.context->OMSetRenderTargets(0, nullptr, nullptr);
+}
+
+// Draws the frame into the slot. A frame copied through memory is drawn into a texture of the slot's size first.
+void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& desc, Slot& slot)
+{
+    if (slot.shared)
+    {
+        if (!slot.target)
+            winrt::check_hresult(d3d.device->CreateRenderTargetView(slot.texture.get(), nullptr, slot.target.put()));
+        DrawFrame(frame, desc, slot.target.get(), slot.width, slot.height);
+        return;
+    }
+    D3D11_TEXTURE2D_DESC drawn{};
+    if (d3d.drawn)
+        d3d.drawn->GetDesc(&drawn);
+    if (drawn.Width != slot.width || drawn.Height != slot.height)
+    {
+        drawn = {};
+        drawn.Width = slot.width;
+        drawn.Height = slot.height;
+        drawn.MipLevels = 1;
+        drawn.ArraySize = 1;
+        drawn.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        drawn.SampleDesc = { 1, 0 };
+        drawn.Usage = D3D11_USAGE_DEFAULT;
+        drawn.BindFlags = D3D11_BIND_RENDER_TARGET;
+        d3d.drawnTarget = nullptr;
+        d3d.drawn = nullptr;
+        winrt::check_hresult(d3d.device->CreateTexture2D(&drawn, nullptr, d3d.drawn.put()));
+        winrt::check_hresult(d3d.device->CreateRenderTargetView(d3d.drawn.get(), nullptr, d3d.drawnTarget.put()));
+    }
+    DrawFrame(frame, desc, d3d.drawnTarget.get(), slot.width, slot.height);
+    d3d.context->CopyResource(slot.texture.get(), d3d.drawn.get());
+}
+
 void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
 {
     std::lock_guard copying(capture.copying);
@@ -403,6 +691,7 @@ void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
             frame = next;
         if (!frame || !capture.running)
             return;
+        UpdateHdr(pool);
         const SizeInt32 size = frame.ContentSize();
         if (size.Width != capture.size.Width || size.Height != capture.size.Height)
         {
@@ -410,7 +699,7 @@ void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
             if (size.Width > 0 && size.Height > 0)
             {
                 capture.size = size;
-                pool.Recreate(d3d.captureDevice, kCaptureFormat, kCaptureBuffers, size);
+                pool.Recreate(d3d.captureDevice, CaptureFormat(), kCaptureBuffers, size);
             }
             return;
         }
@@ -433,7 +722,10 @@ void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
             d3d.context->Unmap(slot->texture.get(), 0);
             slot->mapped = {};
         }
-        d3d.context->CopyResource(slot->texture.get(), texture.get());
+        if (desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+            DrawFrame(texture.get(), desc, *slot);
+        else
+            d3d.context->CopyResource(slot->texture.get(), texture.get());
         Frame copied;
         copied.width = desc.Width;
         copied.height = desc.Height;
@@ -858,6 +1150,9 @@ bool StartCapture(const Window& window, std::string& error)
         wgc::GraphicsCaptureItem item{ nullptr };
         winrt::check_hresult(interop->CreateForWindow(Handle(window.id), winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(item)));
         const bool onGpu = d3d.shareable && gpu.win32Memory && CanImport();
+        capture.window = Handle(window.id);
+        capture.sdrWhite = HdrWhiteLevel(capture.window);
+        capture.nextHdrCheck = GetTickCount64() + kHdrCheckInterval;
         {
             std::lock_guard lock(capture.mutex);
             capture.error.clear();
@@ -868,7 +1163,7 @@ bool StartCapture(const Window& window, std::string& error)
             capture.onGpu = onGpu;
             capture.running = true;
         }
-        capture.pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded(d3d.captureDevice, kCaptureFormat, kCaptureBuffers, capture.size);
+        capture.pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded(d3d.captureDevice, CaptureFormat(), kCaptureBuffers, capture.size);
         capture.frameArrived = capture.pool.FrameArrived(winrt::auto_revoke, [](const wgc::Direct3D11CaptureFramePool& pool, const auto&) { OnFrameArrived(pool); });
         capture.closed = item.Closed(winrt::auto_revoke, [](const auto&, const auto&) { FailCapture("The window closed."); });
         capture.session = capture.pool.CreateCaptureSession(item);
@@ -890,7 +1185,10 @@ bool StartCapture(const Window& window, std::string& error)
         if (ApiInformation::IsPropertyPresent(kSessionClass, L"MinUpdateInterval"))
             capture.session.MinUpdateInterval(std::chrono::milliseconds(1));
         capture.session.StartCapture();
-        Log(LogLevel::Info, "Capturing %dx%d. Frames %s.", capture.size.Width, capture.size.Height,
+        char hdr[64] = "";
+        if (capture.sdrWhite)
+            snprintf(hdr, sizeof(hdr), " in HDR, SDR_white=%.1f nits", *capture.sdrWhite);
+        Log(LogLevel::Info, "Capturing %dx%d%s. Frames %s.", capture.size.Width, capture.size.Height, hdr,
             onGpu                  ? "stay on the graphics card, shared from Direct3D 11"
             : !d3d.shareable       ? "are copied through memory, since Direct3D 11 cannot share them with Vulkan's graphics card"
             : !gpu.win32Memory     ? "are copied through memory, since Vulkan has no VK_KHR_external_memory_win32"
