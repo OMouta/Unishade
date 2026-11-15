@@ -126,6 +126,7 @@ bool App::Init(std::string& error)
         glfwSetWindowShouldClose(window, GLFW_FALSE);
         glfwHideWindow(window);
     });
+    platform::SetSessionEndCallback([this] { EndSession(); });
 
     platform::SetHotkeyCallback([this](int id, bool pressed) { OnHotkey(id, pressed); });
     for (const Shortcut& shortcut : kShortcuts)
@@ -235,6 +236,20 @@ void App::ShowLauncher()
     if (glfwGetWindowAttrib(launcher.window, GLFW_ICONIFIED))
         glfwRestoreWindow(launcher.window);
     glfwFocusWindow(launcher.window);
+}
+
+// Windows ends Unishade once this returns. With auto-save off, unsaved changes stay unsaved: nobody can be asked now,
+// and writing them could overwrite a preset the user chose not to save.
+void App::EndSession()
+{
+    Log(LogLevel::Info, "Windows is shutting down or signing out. Saving presets.");
+    for (std::future<std::string>& screenshot : screenshots)
+        screenshot.wait();
+    if (runtime.Dirty() && settings.autoSavePresets)
+        runtime.SavePreset();
+    else if (runtime.Dirty())
+        Log(LogLevel::Warning, "The unsaved changes to %s were not saved.", runtime.PresetPath().stem().string().c_str());
+    FlushLog();
 }
 
 void App::Shutdown()

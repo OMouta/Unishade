@@ -110,8 +110,9 @@ void InSingleThreadedApartment(Work work)
     }).join();
 }
 
-// Shortcuts and the notification area icon's messages arrive at a hidden window of the main thread, which GLFW's message
-// loop hands them to. Not a message-only window, since Windows sends TaskbarCreated only to top-level windows.
+// Shortcuts, the notification area icon and the end of the session arrive at a hidden window of the main thread, which
+// GLFW's message loop hands them to. Not a message-only window, since Windows sends TaskbarCreated and the end of the
+// session only to top-level windows.
 HWND messageWindow = nullptr;
 HotkeyCallback hotkeyCallback;
 // Windows only says that a shortcut was pressed, so one held down ends when its key is up again.
@@ -137,6 +138,7 @@ bool trayWanted = false;
 bool trayShown = false;
 HICON trayIcon = nullptr;
 UINT taskbarCreated = 0;
+std::function<void()> sessionEnd;
 
 NOTIFYICONDATAW TrayData()
 {
@@ -221,6 +223,13 @@ LRESULT CALLBACK MessageProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
         case NIN_KEYSELECT: tray.open(); break;
         case WM_CONTEXTMENU: TrayMenu(static_cast<short>(LOWORD(wParam)), static_cast<short>(HIWORD(wParam))); break;
         }
+        return 0;
+    case WM_QUERYENDSESSION:
+        return TRUE;
+    // Windows ends the process once this returns.
+    case WM_ENDSESSION:
+        if (wParam && sessionEnd)
+            sessionEnd();
         return 0;
     }
     return DefWindowProcW(window, message, wParam, lParam);
@@ -933,6 +942,11 @@ void RemoveTrayIcon()
 bool TrayIconShown()
 {
     return trayShown;
+}
+
+void SetSessionEndCallback(std::function<void()> callback)
+{
+    sessionEnd = std::move(callback);
 }
 
 void PrepareOverlayWindow()

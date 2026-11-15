@@ -109,6 +109,10 @@ void RemoveTrayIcon();
 // the icon when Explorer restarts. It is added again then.
 bool TrayIconShown();
 
+// Windows ends Unishade at shutdown or sign-out without returning to the main loop, a few seconds after calling this
+// on the main thread. Whatever must be saved is saved in it. Never called elsewhere, where signals quit as usual.
+void SetSessionEndCallback(std::function<void()> callback);
+
 // Call right before creating the overlay window, after GLFW's hints for it. On macOS the window GLFW creates next is
 // then a panel that can take the keyboard without making Unishade the active program, so the game stays in front and
 // on its Space while the menu is open. Does nothing on X11.

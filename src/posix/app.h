@@ -121,6 +121,7 @@ public:
     UiWindow overlay;
 
 private:
+    void EndSession();
     void OnHotkey(int id, bool pressed);
     void UpdateTarget();
     std::optional<platform::Window> GameInFront();

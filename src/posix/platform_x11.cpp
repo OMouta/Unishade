@@ -1341,6 +1341,10 @@ bool TrayIconShown()
     return false;
 }
 
+void SetSessionEndCallback(std::function<void()>)
+{
+}
+
 void PrepareOverlayWindow()
 {
 }
