@@ -7,6 +7,10 @@
 
 #include <stb_image_resize2.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <process.h>
+#else
 #include <sys/resource.h>
 #include <unistd.h>
 #ifdef __APPLE__
@@ -14,6 +18,7 @@
 #include <sys/qos.h>
 #else
 #include <sys/syscall.h>
+#endif
 #endif
 
 #include <algorithm>
@@ -280,11 +285,23 @@ struct CompileJob
 // priority stays moderate, since shutting down waits for the step a compile is on.
 void LowerThreadPriority()
 {
-#ifdef __APPLE__
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+#elif defined(__APPLE__)
     pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
 #else
     // Linux sets the nice value of a single thread through its thread ID.
     setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), 10);
+#endif
+}
+
+// Windows has only rand, which ReShade uses there, and whose largest value is the default maximum of random uniforms.
+long Random()
+{
+#ifdef _WIN32
+    return std::rand();
+#else
+    return random();
 #endif
 }
 
@@ -1798,7 +1815,7 @@ void Runtime::ApplyPreset(Effect& effect, size_t effectIndex)
 
 bool Runtime::LoadPreset(const fs::path& path)
 {
-    Log(LogLevel::Info, "Loading preset: %s.", path.c_str());
+    Log(LogLevel::Info, "Loading preset: %s.", path.string().c_str());
     presetPath = path;
     dirty = false;
     presetIni = PresetIni(ReadFile(path));
@@ -1849,7 +1866,7 @@ bool Runtime::WritePreset(const fs::path& path, PresetIni preset)
     preset = ComposePreset(std::move(preset), order);
     if (!WriteFile(path, preset.Text()))
     {
-        Log(LogLevel::Warning, "Could not save the preset %s.", path.c_str());
+        Log(LogLevel::Warning, "Could not save the preset %s.", path.string().c_str());
         return false;
     }
     sorting = order;
@@ -2211,7 +2228,11 @@ void Runtime::UpdateSpecialUniforms(Effect& effect)
         {
             const time_t now = time(nullptr);
             tm local{};
+#ifdef _WIN32
+            localtime_s(&local, &now);
+#else
             localtime_r(&now, &local);
+#endif
             const int value[4] = { local.tm_year + 1900, local.tm_mon + 1, local.tm_mday, local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec };
             SetValue(effect, uniform, value, 4);
             break;
@@ -2219,7 +2240,7 @@ void Runtime::UpdateSpecialUniforms(Effect& effect)
         case UniformSource::Random:
         {
             const int low = annotated.randomMin, high = annotated.randomMax;
-            const int value = low + static_cast<int>(random() % static_cast<unsigned>(std::abs(high - low) + 1));
+            const int value = low + static_cast<int>(Random() % static_cast<unsigned>(std::abs(high - low) + 1));
             SetValue(effect, uniform, &value, 1);
             break;
         }
@@ -2230,7 +2251,7 @@ void Runtime::UpdateSpecialUniforms(Effect& effect)
             const float smoothing = annotated.smoothing;
             float value[2];
             GetValue(effect, uniform, value, 2);
-            float increment = stepHigh == 0 ? stepLow : stepLow + std::fmod(static_cast<float>(random()), stepHigh - stepLow + 1);
+            float increment = stepHigh == 0 ? stepLow : stepLow + std::fmod(static_cast<float>(Random()), stepHigh - stepLow + 1);
             const float seconds = frameTime / 1000.0f;
             if (value[1] >= 0)
             {

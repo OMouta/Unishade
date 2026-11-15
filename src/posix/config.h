@@ -10,13 +10,13 @@
 namespace fs = std::filesystem;
 
 // Where settings, presets, effects and the log live: ~/Library/Application Support/Unishade on macOS,
-// $XDG_DATA_HOME/unishade (~/.local/share/unishade) on Linux. Created on first use. Empty when there is no home
-// folder to put it in, which the host refuses to start without.
+// $XDG_DATA_HOME/unishade (~/.local/share/unishade) on Linux, the folder of Unishade.exe on Windows. Created on first
+// use. Empty when there is no home folder to put it in, which the host refuses to start without.
 const fs::path& DataDirectory();
 fs::path PresetsDirectory();
 fs::path EffectsDirectory(); // reshade-shaders, laid out like ReShade's: Shaders and Textures
 // Unishade in the pictures folder: ~/Pictures on macOS, and on Linux XDG_PICTURES_DIR from the environment or
-// user-dirs.dirs, which names it in the desktop's language, or ~/Pictures without one.
+// user-dirs.dirs, which names it in the desktop's language, or ~/Pictures without one. Windows says where it is.
 fs::path ScreenshotDirectory();
 // A folder such as XDG_PICTURES_DIR from the text of user-dirs.dirs, whose lines look like
 // XDG_PICTURES_DIR="$HOME/Pictures". Empty when the text does not name it, or names the home folder, which turns it

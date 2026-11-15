@@ -1,6 +1,11 @@
 #include "log.h"
 #include "config.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#define PATH_MAX 32768
+#else
 #include <sys/utsname.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -10,6 +15,7 @@
 #include <mach-o/dyld.h>
 #else
 #include <ucontext.h>
+#endif
 #endif
 
 #include <algorithm>
@@ -39,6 +45,121 @@ char crashPath[PATH_MAX]{};
 size_t logSize = 0;
 const auto startedAt = std::chrono::steady_clock::now();
 
+#ifdef _WIN32
+// As in the ReShade host's log.cpp: the exception, then each address of the stack in its module, so an offline
+// debugger can place them without symbols installed here.
+HANDLE OpenEmergencyLog()
+{
+    return CreateFileA(crashPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_ALWAYS,
+                       FILE_ATTRIBUTE_NORMAL, nullptr);
+}
+
+void EmergencyWrite(HANDLE out, const char* format, ...)
+{
+    char text[2048];
+    va_list args;
+    va_start(args, format);
+    const int length = vsnprintf(text, sizeof(text), format, args);
+    va_end(args);
+    if (length <= 0)
+        return;
+    DWORD written = 0;
+    for (const HANDLE target : { out, GetStdHandle(STD_ERROR_HANDLE) })
+        if (target && target != INVALID_HANDLE_VALUE)
+            WriteFile(target, text, static_cast<DWORD>(std::min(static_cast<size_t>(length), sizeof(text) - 1)), &written, nullptr);
+}
+
+void WriteStack(HANDLE out, CONTEXT context)
+{
+    // A damaged stack must not keep what was written already from reaching the disk.
+    __try
+    {
+#if defined(_M_X64)
+        for (unsigned i = 0; i < 64 && context.Rip; ++i)
+        {
+            void* base = nullptr;
+            RtlPcToFileHeader(reinterpret_cast<void*>(context.Rip), &base);
+            char module[MAX_PATH] = "unknown";
+            if (base)
+                GetModuleFileNameA(static_cast<HMODULE>(base), module, sizeof(module));
+            EmergencyWrite(out, "  #%02u %s+0x%llX\n", i, module, static_cast<unsigned long long>(context.Rip - reinterpret_cast<uintptr_t>(base)));
+            const DWORD64 previousStack = context.Rsp;
+            DWORD64 functionBase = 0;
+            if (const auto entry = RtlLookupFunctionEntry(context.Rip, &functionBase, nullptr))
+            {
+                void* data = nullptr;
+                DWORD64 frame = 0;
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, functionBase, context.Rip, entry, &context, &data, &frame, nullptr);
+            }
+            else
+            {
+                context.Rip = *reinterpret_cast<DWORD64*>(context.Rsp);
+                context.Rsp += sizeof(DWORD64);
+            }
+            if (context.Rsp <= previousStack)
+                break;
+        }
+#endif
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        EmergencyWrite(out, "The rest of the stack is unreadable.\n");
+    }
+}
+
+LONG WINAPI OnCrash(EXCEPTION_POINTERS* exception)
+{
+    const HANDLE out = OpenEmergencyLog();
+    EmergencyWrite(out, "\nFATAL: exception=0x%08lX address=%p pid=%lu\n", exception->ExceptionRecord->ExceptionCode,
+                   exception->ExceptionRecord->ExceptionAddress, GetCurrentProcessId());
+    WriteStack(out, *exception->ContextRecord);
+    if (out != INVALID_HANDLE_VALUE)
+    {
+        FlushFileBuffers(out);
+        CloseHandle(out);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void OnTerminate()
+{
+    const HANDLE out = OpenEmergencyLog();
+    EmergencyWrite(out, "\nFATAL: std::terminate\n");
+    try
+    {
+        if (const auto error = std::current_exception())
+            std::rethrow_exception(error);
+    }
+    catch (const std::exception& e)
+    {
+        EmergencyWrite(out, "%s\n", e.what());
+    }
+    catch (...)
+    {
+        EmergencyWrite(out, "Unhandled exception of unknown type.\n");
+    }
+    CONTEXT context{};
+    RtlCaptureContext(&context);
+    WriteStack(out, context);
+    if (out != INVALID_HANDLE_VALUE)
+    {
+        FlushFileBuffers(out);
+        CloseHandle(out);
+    }
+    std::abort();
+}
+
+std::string SystemName()
+{
+    // GetVersionEx reports Windows 8 to programs without a compatibility manifest.
+    RTL_OSVERSIONINFOW version{ sizeof(version) };
+    using RtlGetVersion = LONG(WINAPI*)(RTL_OSVERSIONINFOW*);
+    if (const auto get = reinterpret_cast<RtlGetVersion>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion")))
+        get(&version);
+    return "Windows " + std::to_string(version.dwMajorVersion) + "." + std::to_string(version.dwMinorVersion) + "." +
+           std::to_string(version.dwBuildNumber);
+}
+#else
 int OpenEmergencyLog()
 {
     return open(crashPath, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0600);
@@ -142,6 +263,14 @@ void OnTerminate()
     std::abort();
 }
 
+std::string SystemName()
+{
+    utsname system{};
+    uname(&system);
+    return std::string(system.sysname) + " " + system.release + " (" + system.machine + ")";
+}
+#endif
+
 const char* LevelName(LogLevel level)
 {
     switch (level)
@@ -176,7 +305,11 @@ void Write(LogLevel level, bool report, const char* format, va_list args)
     const auto now = std::chrono::system_clock::now();
     const time_t seconds = std::chrono::system_clock::to_time_t(now);
     tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &seconds);
+#else
     localtime_r(&seconds, &local);
+#endif
     strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &local);
     const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000;
     const auto uptime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - startedAt).count();
@@ -191,7 +324,7 @@ void Write(LogLevel level, bool report, const char* format, va_list args)
         if (!error)
         {
             fclose(file);
-            file = fopen(path.c_str(), "a");
+            file = fopen(path.string().c_str(), "a");
             logSize = 0;
             if (file)
                 logSize = static_cast<size_t>(fprintf(file, "Unishade " UNISHADE_VERSION " log continued. Earlier entries are in Unishade.previous.log.\n"));
@@ -222,12 +355,16 @@ void Write(LogLevel level, bool report, const char* format, va_list args)
 // Crashes are written to crashPath, when there is one, and to stderr.
 void InstallCrashHandlers()
 {
+#ifdef _WIN32
+    SetUnhandledExceptionFilter(OnCrash);
+#else
     struct sigaction action{};
     action.sa_sigaction = OnCrash;
     action.sa_flags = SA_SIGINFO | SA_RESETHAND;
     sigemptyset(&action.sa_mask);
     for (int signal : { SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE })
         sigaction(signal, &action, nullptr);
+#endif
     std::set_terminate(OnTerminate);
 }
 } // namespace
@@ -237,18 +374,21 @@ void InitLog()
     path = DataDirectory() / "Unishade.log";
     std::error_code ignored;
     std::filesystem::rename(path, DataDirectory() / "Unishade.old.log", ignored);
-    file = fopen(path.c_str(), "a");
+    file = fopen(path.string().c_str(), "a");
     const int openError = file ? 0 : errno;
     std::error_code sizeError;
     const auto size = std::filesystem::file_size(path, sizeError);
     logSize = sizeError ? 0 : static_cast<size_t>(size);
-    snprintf(crashPath, sizeof(crashPath), "%s", path.c_str());
+    snprintf(crashPath, sizeof(crashPath), "%s", path.string().c_str());
     InstallCrashHandlers();
 
-    utsname system{};
-    uname(&system);
-    Log(LogLevel::Info, "Unishade %s on %s %s (%s)", UNISHADE_VERSION, system.sysname, system.release, system.machine);
-    Log(LogLevel::Info, "Session started: pid=%ld, build=" __DATE__ " " __TIME__ ", data=%s.", static_cast<long>(getpid()), path.parent_path().c_str());
+#ifdef _WIN32
+    const long pid = static_cast<long>(GetCurrentProcessId());
+#else
+    const long pid = static_cast<long>(getpid());
+#endif
+    Log(LogLevel::Info, "Unishade %s on %s", UNISHADE_VERSION, SystemName().c_str());
+    Log(LogLevel::Info, "Session started: pid=%ld, build=" __DATE__ " " __TIME__ ", data=%s.", pid, path.parent_path().string().c_str());
     if (!file)
         Log(LogLevel::Warning, "Could not open Unishade.log: %s.", strerror(openError));
     else if (ignored && ignored != std::errc::no_such_file_or_directory)
@@ -262,9 +402,7 @@ void InitLog()
 void InitTerminalLog()
 {
     InstallCrashHandlers();
-    utsname system{};
-    uname(&system);
-    Log(LogLevel::Info, "Unishade %s on %s %s (%s)", UNISHADE_VERSION, system.sysname, system.release, system.machine);
+    Log(LogLevel::Info, "Unishade %s on %s", UNISHADE_VERSION, SystemName().c_str());
 }
 
 void FlushLog()
@@ -273,7 +411,11 @@ void FlushLog()
     if (file)
     {
         fflush(file);
+#ifdef _WIN32
+        _commit(_fileno(file));
+#else
         fsync(fileno(file));
+#endif
     }
 }
 

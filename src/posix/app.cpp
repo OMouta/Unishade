@@ -12,7 +12,11 @@
 #include <cstring>
 #include <ctime>
 #include <iterator>
+#ifdef _WIN32
+#define strcasecmp _stricmp
+#else
 #include <strings.h>
+#endif
 #include <system_error>
 
 App app;
@@ -36,15 +40,15 @@ const Shortcut* FindShortcut(int id)
 bool App::Init(std::string& error)
 {
     settings = LoadSettings();
-    Log(LogLevel::Info, "Settings: auto_save=%d, preset=%s, definitions=%s.", settings.autoSavePresets, settings.preset.c_str(),
+    Log(LogLevel::Info, "Settings: auto_save=%d, preset=%s, definitions=%s.", settings.autoSavePresets, settings.preset.string().c_str(),
         FormatDefinitions(settings.definitions).c_str());
 #ifdef __APPLE__
     Log(LogLevel::Info, "Settings: skip_title_bar=%d.", settings.skipTitleBar);
 #endif
     for (const fs::path& path : settings.effectPaths)
-        Log(LogLevel::Info, "Effect search path: %s.", path.c_str());
+        Log(LogLevel::Info, "Effect search path: %s.", path.string().c_str());
     for (const fs::path& path : settings.texturePaths)
-        Log(LogLevel::Info, "Texture search path: %s.", path.c_str());
+        Log(LogLevel::Info, "Texture search path: %s.", path.string().c_str());
     for (const Shortcut& shortcut : kShortcuts)
         Log(LogLevel::Info, "Shortcut: %s=%s.", shortcut.label, FormatHotkey(settings.hotkeys.*shortcut.member).c_str());
     try
@@ -177,7 +181,7 @@ void App::Run()
                                "gpu_frame=%d, effects_loading=%d, device_lost=%d, preset=%s.",
                 static_cast<unsigned long long>(active ? active->id : 0), active ? active->pid : 0, captureEnabled, overlayVisible,
                 menuOpen, inFront, frame.width, frame.height, static_cast<unsigned long long>(frame.serial), frame.image != VK_NULL_HANDLE,
-                runtime.Loading(), gpu.lost, runtime.PresetPath().c_str());
+                runtime.Loading(), gpu.lost, runtime.PresetPath().string().c_str());
             nextStateLog = Now() + 30;
         }
         // A new frame is drawn at once. Other renders, for the menu, a message or to keep effects that move going,
@@ -818,7 +822,7 @@ std::vector<fs::path> PresetsIn(const fs::path& folder)
         if (entry.is_regular_file(error) && Lowercase(entry.path().extension().string()) == ".ini")
             presets.push_back(entry.path());
     std::sort(presets.begin(), presets.end(), [](const fs::path& a, const fs::path& b) {
-        return strcasecmp(a.stem().c_str(), b.stem().c_str()) < 0;
+        return strcasecmp(a.stem().string().c_str(), b.stem().string().c_str()) < 0;
     });
     return presets;
 }
@@ -884,7 +888,7 @@ fs::path App::NewPresetFolder() const
     // Names on Linux differ by case, and a folder named in another case is still the game's.
     std::error_code error;
     for (const auto& entry : fs::directory_iterator(root, error))
-        if (entry.is_directory(error) && !strcasecmp(entry.path().filename().c_str(), game.c_str()))
+        if (entry.is_directory(error) && !strcasecmp(entry.path().filename().string().c_str(), game.c_str()))
             return entry.path();
     return root / game;
 }
@@ -1039,7 +1043,7 @@ void App::StepPreset(int step)
     const auto current = std::find(presets.begin(), presets.end(), runtime.PresetPath());
     const long count = static_cast<long>(presets.size());
     // From a preset in a closed folder, the next one is the first shown and the previous one the last.
-    const long index = current != presets.end() ? current - presets.begin() : step > 0 ? -1 : count;
+    const long index = current != presets.end() ? static_cast<long>(current - presets.begin()) : step > 0 ? -1 : count;
     SwitchPreset(presets[((index + step) % count + count) % count], true, false);
 }
 
@@ -1090,7 +1094,11 @@ void App::SaveScreenshot()
     char stamp[64];
     const time_t now = time(nullptr);
     tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &now);
+#else
     localtime_r(&now, &local);
+#endif
     strftime(stamp, sizeof(stamp), "%Y-%m-%d %H-%M-%S", &local);
     // Window titles can hold anything, slashes included, so the name keeps none of that.
     std::string name = SafeFileName(active ? active->title : "Unishade") + " " + stamp;
@@ -1137,12 +1145,12 @@ void App::SaveScreenshot()
             image = std::move(after);
         std::error_code error;
         fs::create_directories(path.parent_path(), error);
-        if (!stbi_write_png(path.c_str(), int(imageWidth), int(height), 4, image.data(), int(imageWidth) * 4))
+        if (!stbi_write_png(path.string().c_str(), int(imageWidth), int(height), 4, image.data(), int(imageWidth) * 4))
         {
-            Report(LogLevel::Warning, "Could not save the screenshot to %s.", path.c_str());
+            Report(LogLevel::Warning, "Could not save the screenshot to %s.", path.string().c_str());
             return {};
         }
-        Log(LogLevel::Info, "Screenshot saved to %s", path.c_str());
+        Log(LogLevel::Info, "Screenshot saved to %s", path.string().c_str());
         return "Screenshot saved to " + shown;
     };
     try
@@ -1151,7 +1159,7 @@ void App::SaveScreenshot()
     }
     catch (const std::system_error&)
     {
-        Report(LogLevel::Warning, "Could not save the screenshot to %s.", path.c_str());
+        Report(LogLevel::Warning, "Could not save the screenshot to %s.", path.string().c_str());
     }
 }
 

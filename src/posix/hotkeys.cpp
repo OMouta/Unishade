@@ -35,6 +35,11 @@ constexpr ImGuiKey kLastFunctionKey = ImGuiKey_F24;
 
 bool IsShortcutKey(ImGuiKey key)
 {
+#ifdef _WIN32
+    // Windows keeps F12 for the debugger.
+    if (key == ImGuiKey_F12)
+        return false;
+#endif
     if ((key >= ImGuiKey_A && key <= ImGuiKey_Z) || (key >= ImGuiKey_0 && key <= ImGuiKey_9) || (key >= ImGuiKey_F1 && key <= kLastFunctionKey))
         return true;
     return std::any_of(std::begin(kNamedKeys), std::end(kNamedKeys), [key](const NamedKey& named) { return named.key == key; });
@@ -72,6 +77,10 @@ bool ParseHotkey(std::string_view text, Hotkey& result)
                 key = named.key;
     if (key == ImGuiKey_None)
         return false;
+#ifdef _WIN32
+    if (key == ImGuiKey_F12)
+        return false;
+#endif
     result = { modifiers, key };
     return true;
 }
@@ -106,8 +115,13 @@ std::string FormatHotkey(const Hotkey& hotkey)
         text += "Alt+";
     if (hotkey.modifiers & kShift)
         text += "Shift+";
+#ifdef _WIN32
+    if (hotkey.modifiers & kSuper)
+        text += "Win+";
+#else
     if (hotkey.modifiers & kSuper)
         text += "Super+";
+#endif
 #endif
     return text + key;
 }

@@ -25,12 +25,19 @@ void InitLog();
 // neither rotated away nor written by two processes. Crashes are reported on stderr too.
 void InitTerminalLog();
 
+// GCC and Clang check the arguments against the format. MSVC has no such attribute.
+#ifdef _MSC_VER
+#define PRINTF_FORMAT(string, first)
+#else
+#define PRINTF_FORMAT(string, first) __attribute__((format(printf, string, first)))
+#endif
+
 // Writes a timestamped line to the log. Warnings and errors are also shown in the launcher and the menu.
 // printf-style. Safe from any thread. At 16 MB the file rolls over to Unishade.previous.log.
-void Log(LogLevel level, const char* format, ...) __attribute__((format(printf, 2, 3)));
+void Log(LogLevel level, const char* format, ...) PRINTF_FORMAT(2, 3);
 
 // Like Log, but shown in the launcher and the menu at any level.
-void Report(LogLevel level, const char* format, ...) __attribute__((format(printf, 2, 3)));
+void Report(LogLevel level, const char* format, ...) PRINTF_FORMAT(2, 3);
 
 // What Report and warnings and errors have shown so far, oldest first: the last 40, each message once.
 std::vector<Notice> Notices();

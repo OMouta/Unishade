@@ -15,7 +15,11 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 #include <stb_image.h>
+#ifdef _WIN32
+#define strcasecmp _stricmp
+#else
 #include <strings.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -476,7 +480,7 @@ void MoveMenu(App& app, const fs::path& preset)
     {
         const std::string name = FolderName(game.name);
         if (!name.empty() && std::none_of(targets.begin(), targets.end(), [&](const auto& target) {
-                return !strcasecmp(target.second.filename().c_str(), name.c_str());
+                return !strcasecmp(target.second.filename().string().c_str(), name.c_str());
             }))
             targets.emplace_back(name, PresetsDirectory() / name);
     }
@@ -523,7 +527,7 @@ void PresetRow(App& app, const fs::path& path, bool active)
     const std::string name = path.stem().string();
     // By path: two presets of a folder can share a name, as Name.ini and Name.INI can on Linux, and a preset from
     // elsewhere can join a folder that has one of its name.
-    ImGui::PushID(path.c_str());
+    ImGui::PushID(path.string().c_str());
     const ImVec2 start = ImGui::GetCursorScreenPos();
     const ImVec2 size(ImGui::GetContentRegionAvail().x, S(44));
     ImGui::SetNextItemAllowOverlap();
@@ -654,7 +658,7 @@ bool FolderSection(App& app, const PresetFolder& folder, const fs::path& current
     if (searching && shown.empty())
         return false;
 
-    ImGui::PushID(folder.path.c_str());
+    ImGui::PushID(folder.path.string().c_str());
     const bool open = searching || app.FolderOpen(folder);
     if (FolderHeader(folder, open, shown.size()) && !searching)
         app.folderOpen[folder.path.string()] = !open;
@@ -1617,7 +1621,7 @@ fs::path GameFolder(const std::string& folder)
     const fs::path root = PresetsDirectory();
     std::error_code error;
     for (const auto& entry : fs::directory_iterator(root, error))
-        if (entry.is_directory(error) && !strcasecmp(entry.path().filename().c_str(), folder.c_str()))
+        if (entry.is_directory(error) && !strcasecmp(entry.path().filename().string().c_str(), folder.c_str()))
             return entry.path();
     return root / folder;
 }
@@ -1758,7 +1762,7 @@ std::string RenameGame(App& app, size_t index, std::string name)
 void DownloadEffects(App& app)
 {
     if (app.runtime.Dirty() && !app.settings.autoSavePresets)
-        Report(LogLevel::Warning, "Save or discard the changes to %s in the menu before downloading effects.", app.runtime.PresetPath().stem().c_str());
+        Report(LogLevel::Warning, "Save or discard the changes to %s in the menu before downloading effects.", app.runtime.PresetPath().stem().string().c_str());
     else
         app.setup.Start();
 }
@@ -1900,8 +1904,8 @@ public:
             SetGamePreset(folder, path);
         // The launcher is not over the game, so what goes wrong is also reported here.
         else if (!app.SwitchPreset(path, false, false))
-            Report(LogLevel::Warning, "Save or discard the changes to %s in the menu to switch to %s.", app.runtime.PresetPath().stem().c_str(),
-                   path.stem().c_str());
+            Report(LogLevel::Warning, "Save or discard the changes to %s in the menu to switch to %s.", app.runtime.PresetPath().stem().string().c_str(),
+                   path.stem().string().c_str());
     }
 
     void OpenPresetsFolder(size_t game) override

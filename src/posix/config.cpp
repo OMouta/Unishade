@@ -3,10 +3,19 @@
 #include "log.h"
 #include "names.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#include <fcntl.h>
+#include <io.h>
+#include <share.h>
+#include <shlobj.h>
+#include <sys/stat.h>
+#else
 #include <fcntl.h>
 #include <pwd.h>
 #include <sys/file.h>
 #include <unistd.h>
+#endif
 
 #include <cerrno>
 #include <cstdlib>
@@ -20,6 +29,10 @@ namespace
 // Empty when there is none, rather than a folder everyone can write to.
 fs::path Home()
 {
+#ifdef _WIN32
+    const wchar_t* profile = _wgetenv(L"USERPROFILE");
+    return profile && *profile ? fs::path(profile) : fs::path();
+#else
     if (const char* home = getenv("HOME"); home && *home == '/')
         return home;
     // Programs started without HOME, such as by some service managers, still have one in the user database.
@@ -30,6 +43,7 @@ fs::path Home()
     if (getpwuid_r(getuid(), &entry, buffer.data(), buffer.size(), &found) == 0 && found && found->pw_dir && found->pw_dir[0] == '/')
         return found->pw_dir;
     return {};
+#endif
 }
 
 // Relative paths in Unishade.ini are relative to the data folder, so the folder can move.
@@ -77,7 +91,12 @@ std::string FormatPaths(const std::vector<fs::path>& paths)
 const fs::path& DataDirectory()
 {
     static const fs::path directory = [] {
-#ifdef __APPLE__
+#ifdef _WIN32
+        // Beside Unishade.exe, as with the ReShade host.
+        std::wstring executable(32768, L'\0');
+        executable.resize(GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size())));
+        fs::path path = fs::path(executable).parent_path();
+#elif defined(__APPLE__)
         if (Home().empty())
             return fs::path();
         fs::path path = Home() / "Library" / "Application Support" / "Unishade";
@@ -107,7 +126,16 @@ fs::path EffectsDirectory()
 fs::path ScreenshotDirectory()
 {
     const fs::path home = Home();
-#ifndef __APPLE__
+#ifdef _WIN32
+    // Where the system keeps pictures, which can be elsewhere than the profile's Pictures, such as in OneDrive.
+    PWSTR folder = nullptr;
+    fs::path pictures;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Pictures, 0, nullptr, &folder)))
+        pictures = folder;
+    CoTaskMemFree(folder);
+    if (!pictures.empty())
+        return pictures / "Unishade";
+#elif !defined(__APPLE__)
     fs::path pictures;
     const char* config = getenv("XDG_CONFIG_HOME");
     if (const char* folder = getenv("XDG_PICTURES_DIR"); folder && *folder == '/')
@@ -167,6 +195,31 @@ std::string SafeFileName(std::string name)
     return name.empty() ? "Unishade" : name;
 }
 
+#ifdef _WIN32
+FileLock::FileLock(const fs::path& path)
+{
+    if (_wsopen_s(&fd, path.c_str(), _O_RDWR | _O_CREAT | _O_NOINHERIT | _O_BINARY, _SH_DENYNO, _S_IREAD | _S_IWRITE) != 0)
+    {
+        error = strerror(errno);
+        fd = -1;
+        return;
+    }
+    OVERLAPPED whole{};
+    if (LockFileEx(reinterpret_cast<HANDLE>(_get_osfhandle(fd)), LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &whole))
+        return;
+    const DWORD code = GetLastError();
+    busy = code == ERROR_LOCK_VIOLATION;
+    error = std::system_category().message(static_cast<int>(code));
+    _close(fd);
+    fd = -1;
+}
+
+FileLock::~FileLock()
+{
+    if (fd >= 0)
+        _close(fd);
+}
+#else
 FileLock::FileLock(const fs::path& path)
 {
     fd = open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
@@ -185,6 +238,7 @@ FileLock::~FileLock()
     if (fd >= 0)
         close(fd);
 }
+#endif
 
 std::string ReadFile(const fs::path& path)
 {
@@ -290,7 +344,7 @@ Settings LoadSettings()
     settings.skipTitleBar = !ini.Get("HOST", "SkipTitleBar", value) || value != "0";
 
     if ((ini.Changed() || !existed) && !WriteFile(path, ini.Text()))
-        Log(LogLevel::Warning, "Could not write %s.", path.c_str());
+        Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
     return settings;
 }
 
@@ -310,7 +364,7 @@ bool SaveSettings(const Settings& settings)
 #endif
     if (WriteFile(path, ini.Text()))
         return true;
-    Log(LogLevel::Warning, "Could not write %s.", path.c_str());
+    Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
     return false;
 }
 
@@ -326,5 +380,5 @@ void SetGamePreset(const std::string& game, const fs::path& preset)
     IniText ini(ReadFile(path));
     ini.Set("GAMEPRESETS", game, Relative(preset));
     if (!WriteFile(path, ini.Text()))
-        Log(LogLevel::Warning, "Could not write %s.", path.c_str());
+        Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
 }

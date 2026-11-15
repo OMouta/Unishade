@@ -4,7 +4,11 @@
 
 #include <algorithm>
 #include <stdexcept>
+#ifdef _WIN32
+#define strcasecmp _stricmp
+#else
 #include <strings.h>
+#endif
 
 namespace
 {
@@ -20,6 +24,8 @@ std::vector<AutoGame> DefaultAutoGames()
 {
 #ifdef __APPLE__
     return { { "RobloxPlayer", "Roblox" } };
+#elif defined(_WIN32)
+    return { { "RobloxPlayerBeta.exe", "Roblox" } };
 #else
     // Sober runs Roblox's Android version natively. Roblox's Windows version also runs through Wine.
     return { { "sober", "Roblox" }, { "RobloxPlayerBeta.exe", "Roblox" } };
@@ -28,8 +34,14 @@ std::vector<AutoGame> DefaultAutoGames()
 
 bool MatchesProcess(const AutoGame& game, const std::string& executable, const std::string& command)
 {
+#ifdef _WIN32
+    // Windows paths take either slash and ignore case.
+    if (game.executable.find_first_of("/\\") != std::string::npos)
+        return !strcasecmp(executable.c_str(), game.executable.c_str());
+#else
     if (game.executable.find('/') != std::string::npos)
         return executable == game.executable;
+#endif
     return !strcasecmp(BaseName(executable).c_str(), game.executable.c_str()) ||
            (!command.empty() && !strcasecmp(BaseName(command).c_str(), game.executable.c_str()));
 }

@@ -4,11 +4,20 @@
 #include "package_files.h"
 #include "preset_ini.h"
 
+#ifdef _WIN32
+#include "net.h"
+#include "text.h"
+
+#include <random>
+#else
 #include <signal.h>
 #include <spawn.h>
 #include <stdlib.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+extern char** environ;
+#endif
 
 #include <chrono>
 #include <cerrno>
@@ -17,19 +26,42 @@
 #include <stdexcept>
 #include <utility>
 
-extern char** environ;
-
 namespace
 {
+// net.h has its own on Windows.
+#ifndef _WIN32
 struct Cancelled
 {
 };
+#endif
 
 // Limits for what a download may bring, so a broken or hostile server cannot fill the disk or the memory. They are
 // far above what effect packages and presets need.
 constexpr uintmax_t kMaxListSize = 4 << 20; // the lists and presets
 constexpr uintmax_t kMaxPackageSize = 512 << 20;
 
+#ifdef _WIN32
+// Through WinHTTP, as Setup downloads. Only https.
+void Download(const std::string& url, const fs::path& path, const std::atomic<bool>& cancel, uintmax_t limit, bool = false)
+{
+    fs::create_directories(path.parent_path());
+    ::Download(Wide(url), path, {}, limit, cancel);
+}
+
+// The temporary folder is the user's own on Windows.
+fs::path MakeWorkFolder()
+{
+    const fs::path temporary = fs::temp_directory_path();
+    std::random_device random;
+    for (int attempt = 0; attempt < 16; ++attempt)
+    {
+        const fs::path folder = temporary / ("unishade-setup-" + std::to_string(random()));
+        if (fs::create_directory(folder))
+            return folder;
+    }
+    throw std::runtime_error("Could not create a folder for downloads in " + temporary.string() + ".");
+}
+#else
 // Downloads with curl, which macOS and nearly every Linux system have. Only https, redirects included, except for
 // the sources given on the command line, which tests can point at local files. Throws on failure or when cancelled.
 void Download(const std::string& url, const fs::path& path, const std::atomic<bool>& cancel, uintmax_t limit, bool fromCommandLine = false)
@@ -96,6 +128,7 @@ fs::path MakeWorkFolder()
         throw std::runtime_error("Could not create a folder for downloads in " + temporary.string() + ".");
     return folder;
 }
+#endif
 
 // SHA-256, for the preset checksums.
 struct Sha256State

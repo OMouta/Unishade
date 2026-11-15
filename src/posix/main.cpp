@@ -6,12 +6,17 @@
 #include "log.h"
 #include "setup.h"
 
+// Before GLFW's header, which otherwise defines APIENTRY itself.
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 #include <GLFW/glfw3.h>
 #include <stb_image.h>
 #include <stb_image_write.h>
-
-#include <fcntl.h>
-#include <unistd.h>
 
 #include <cerrno>
 #include <chrono>
@@ -35,8 +40,50 @@ bool HaveDataDirectory()
 
 // Ctrl-C, kill and logging out end Unishade the same way closing the launcher does, so App::Shutdown still saves
 // the preset and the pipeline cache and stops a download.
-constexpr int kStopSignals[] = { SIGINT, SIGTERM, SIGHUP };
 volatile sig_atomic_t stopSignal = 0;
+
+// The launcher a stop signal closes. Never destroyed, since the thread that uses it may still wait while the
+// process exits.
+struct QuitRequest
+{
+    std::mutex mutex;
+    GLFWwindow* window = nullptr;
+    bool requested = false;
+};
+QuitRequest& quitRequest = *new QuitRequest;
+
+void RequestQuit()
+{
+    std::lock_guard lock(quitRequest.mutex);
+    quitRequest.requested = true;
+    if (quitRequest.window)
+    {
+        glfwSetWindowShouldClose(quitRequest.window, GLFW_TRUE);
+        glfwPostEmptyEvent();
+    }
+}
+
+#ifdef _WIN32
+// Windows tells a console program of Ctrl-C and of its console closing on a thread of its own, which may call GLFW.
+BOOL WINAPI OnConsoleControl(DWORD)
+{
+    stopSignal = SIGINT;
+    RequestQuit();
+    return TRUE;
+}
+
+void CatchStopSignals()
+{
+    SetConsoleCtrlHandler(OnConsoleControl, TRUE);
+}
+
+bool WatchStopSignals()
+{
+    CatchStopSignals();
+    return true;
+}
+#else
+constexpr int kStopSignals[] = { SIGINT, SIGTERM, SIGHUP };
 int signalPipe[2] = { -1, -1 };
 
 void OnStopSignal(int signal)
@@ -73,16 +120,6 @@ void CatchStopSignals()
     }
 }
 
-// The launcher a stop signal closes. Never destroyed, since the thread that uses it may still wait while the
-// process exits.
-struct QuitRequest
-{
-    std::mutex mutex;
-    GLFWwindow* window = nullptr;
-    bool requested = false;
-};
-QuitRequest& quitRequest = *new QuitRequest;
-
 // Turns a stop signal into a request to close the launcher, from a thread of its own, since a signal handler may
 // not call GLFW. The thread is detached and only waits, so it does not keep the process alive.
 bool WatchStopSignals()
@@ -97,19 +134,13 @@ bool WatchStopSignals()
         unsigned char byte = 0;
         ssize_t count;
         while ((count = read(signalPipe[0], &byte, 1)) < 0 && errno == EINTR) {}
-        if (count != 1)
-            return;
-        std::lock_guard lock(quitRequest.mutex);
-        quitRequest.requested = true;
-        if (quitRequest.window)
-        {
-            glfwSetWindowShouldClose(quitRequest.window, GLFW_TRUE);
-            glfwPostEmptyEvent();
-        }
+        if (count == 1)
+            RequestQuit();
     }).detach();
     CatchStopSignals();
     return true;
 }
+#endif
 
 // The launcher a stop signal closes, or none once it is about to be destroyed. A signal that came before there was
 // a launcher closes it at once.
@@ -134,7 +165,7 @@ int InstallEffects()
         if (line != last)
             printf("%3d%%  %s\n", int(state.fraction * 100), line.c_str());
         last = line;
-        usleep(200'000);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
     // Waits for the setup thread, and stops it first after a signal.
     setup.Cancel();
@@ -165,7 +196,7 @@ void Usage()
            "                                Applies a preset to an image without a window, to check effects.\n"
            "                                --gpu-source hands the image over on the graphics card, as zero-copy\n"
            "                                capture does.\n",
-           UNISHADE_VERSION, DataDirectory().c_str());
+           UNISHADE_VERSION, DataDirectory().string().c_str());
 }
 
 // Applies a preset to an image with the same code the overlay uses, without any window. gpuSource hands the
@@ -295,6 +326,15 @@ int Render(const char* input, const char* preset, const char* output, bool gpuSo
 
 int main(int argc, char** argv)
 {
+#ifdef _WIN32
+    // Unishade has no console of its own, so it writes to the one it was started from, unless its output already goes
+    // somewhere.
+    if (GetFileType(GetStdHandle(STD_ERROR_HANDLE)) == FILE_TYPE_UNKNOWN && AttachConsole(ATTACH_PARENT_PROCESS))
+    {
+        freopen("CONOUT$", "w", stdout);
+        freopen("CONOUT$", "w", stderr);
+    }
+#endif
     bool relaunched = false;
     for (int i = 1; i < argc; ++i)
     {
@@ -376,9 +416,9 @@ int main(int argc, char** argv)
     InitLog();
     // Where locks do not work, such as on some network file systems, a second Unishade cannot be told apart.
     if (!instance->Locked())
-        Log(LogLevel::Warning, "Could not lock %s: %s.", lockPath.c_str(), instance->Error().c_str());
+        Log(LogLevel::Warning, "Could not lock %s: %s.", lockPath.string().c_str(), instance->Error().c_str());
     glfwSetErrorCallback([](int code, const char* description) { Log(LogLevel::Warning, "GLFW error %d: %s", code, description); });
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(_WIN32)
     // Only X11 lets the overlay sit over another program's window.
     glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
 #endif
