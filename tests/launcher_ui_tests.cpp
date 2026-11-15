@@ -75,6 +75,7 @@ public:
     void DiscardChanges() override { calls.push_back("discard"); }
     void SetEffect(size_t effect, bool on) override { calls.push_back("effect " + std::to_string(effect) + (on ? " on" : " off")); }
     void MoveEffect(size_t from, size_t to) override { calls.push_back("move " + std::to_string(from) + " " + std::to_string(to)); }
+    void CloseMenu() override { calls.push_back("close"); }
 
     void SetSwitch(launcher::Switch, bool) override {}
     void PressCard(size_t, size_t) override {}
@@ -94,11 +95,11 @@ public:
     void ResetShortcuts() override {}
 };
 
-void Frame(Host& host, const launcher::Model& model)
+void Frame(Host& host, const launcher::Model& model, launcher::Place place = launcher::Place::Window)
 {
     items.clear();
     ImGui::NewFrame();
-    launcher::Draw(model, host, 1);
+    launcher::Draw(model, host, 1, place);
     ImGui::Render();
 }
 
@@ -282,6 +283,43 @@ bool EffectsTests(Host& host)
     ok &= Check(host.calls == std::vector<std::string>{ "move 0 2" }, "dropping an effect on another moves it there");
     return ok;
 }
+// Over the game the launcher opens on the page of the game being played, and Escape goes back to the game.
+bool PanelTests(Host& host)
+{
+    bool ok = true;
+    launcher::Model model = EffectsModel();
+    model.games.insert(model.games.begin(), launcher::Game{ .id = "other", .name = "Other", .executable = "other.exe" });
+    const auto panel = [&] { Frame(host, model, launcher::Place::Game); };
+    panel();
+    panel();
+    ok &= Check(Count("effect") == 2, "the panel opens on the page of the game being played");
+    ok &= Check(Find("home") && Find("back"), "the panel has the rail and the menu's buttons");
+    if (const std::optional<ImVec2> home = Find("home"))
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(home->x, home->y);
+        panel();
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        panel();
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        panel();
+        panel();
+    }
+    ok &= Check(Count("effect") == 0, "the rail goes to Home");
+    launcher::Reset(launcher::Place::Game);
+    panel();
+    panel();
+    ok &= Check(Count("effect") == 2, "the panel opens on the game's page again once reset");
+
+    host.calls.clear();
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddKeyEvent(ImGuiKey_Escape, true);
+    panel();
+    io.AddKeyEvent(ImGuiKey_Escape, false);
+    panel();
+    ok &= Check(host.calls == std::vector<std::string>{ "close" }, "Escape goes back to the game");
+    return ok;
+}
 } // namespace
 
 int main()
@@ -313,6 +351,10 @@ int main()
     {
         Host host;
         ok &= EffectsTests(host);
+    }
+    {
+        Host host;
+        ok &= PanelTests(host);
     }
 
     kit::ForgetContext(context);
