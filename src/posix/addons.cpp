@@ -110,10 +110,15 @@ float ValidValue(const Addons::Setting& setting, float value)
 #ifdef _WIN32
 void* OpenLibrary(const fs::path& path, std::string& error)
 {
+    // Windows would otherwise show a box of its own for a file it cannot load, and wait until it is closed.
+    DWORD mode = 0;
+    SetThreadErrorMode(SEM_FAILCRITICALERRORS, &mode);
     // The add-on's own imports resolve from its folder first.
     HMODULE module = LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    const DWORD code = GetLastError();
+    SetThreadErrorMode(mode, nullptr);
     if (!module)
-        error = "Windows could not load it (error " + std::to_string(GetLastError()) + ").";
+        error = "Windows could not load it (error " + std::to_string(code) + ").";
     return module;
 }
 
