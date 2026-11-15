@@ -474,7 +474,8 @@ void Line(ImDrawList* draw, float left, float right, float middle, const std::st
     PushSize(size, bold);
     const ImVec2 measured = ImGui::CalcTextSize(text.c_str());
     const float x = centered ? left + (right - left - measured.x) / 2 : left;
-    if (measured.x <= right - left)
+    // Callers often give right as left plus the measured width, which rounding can leave a hair short.
+    if (measured.x <= right - left + 0.5f)
         draw->AddText(ImVec2(x, middle - measured.y / 2), color, text.c_str());
     else
     {
