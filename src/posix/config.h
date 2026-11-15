@@ -54,6 +54,8 @@ struct Settings
     bool autoSavePresets = true;
     // macOS only: effects leave out the title bar of a game in a window. platform.h says how it is told apart.
     bool skipTitleBar = true;
+    // Windows only: Discord shows the game Unishade runs on. discord.h says what it shows.
+    bool discordPresence = true;
     fs::path preset;
     // Searched recursively, like ReShade's paths ending in \**.
     std::vector<fs::path> effectPaths;

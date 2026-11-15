@@ -3,6 +3,7 @@
 #include "theme.h"
 #include "ui.h"
 #ifdef _WIN32
+#include "discord.h"
 #include "upscale.h"
 #endif
 
@@ -47,6 +48,9 @@ bool App::Init(std::string& error)
         FormatDefinitions(settings.definitions).c_str());
 #ifdef __APPLE__
     Log(LogLevel::Info, "Settings: skip_title_bar=%d.", settings.skipTitleBar);
+#endif
+#ifdef _WIN32
+    Log(LogLevel::Info, "Settings: discord_presence=%d.", settings.discordPresence);
 #endif
     for (const fs::path& path : settings.effectPaths)
         Log(LogLevel::Info, "Effect search path: %s.", path.string().c_str());
@@ -154,6 +158,9 @@ void App::Run()
         TakeScreenshots();
 
         UpdateTarget();
+#ifdef _WIN32
+        UpdateDiscord();
+#endif
         // Once per pass, since on X11 each asks the X server.
         const bool overlayFocused = glfwGetWindowAttrib(overlay.window, GLFW_FOCUSED);
         inFront = active && (platform::ProcessInFront(active->pid) || overlayFocused);

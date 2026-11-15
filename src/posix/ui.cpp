@@ -3,6 +3,9 @@
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "ui.h"
+#ifdef _WIN32
+#include "discord.h"
+#endif
 #include "log.h"
 #include "image.h"
 #include "menu_layout.h"
@@ -1818,6 +1821,12 @@ public:
                 app.runtime.SavePreset();
             SaveSettings(app.settings);
         }
+        else if (which == launcher::Switch::DiscordPresence)
+        {
+            app.settings.discordPresence = on;
+            SaveSettings(app.settings);
+            Log(LogLevel::Info, "Settings: discord_presence=%d.", on);
+        }
     }
 
     void PressCard(size_t card, size_t button) override
@@ -2165,6 +2174,28 @@ launcher::Model DescribeLauncher(App& app)
         platform::Open(folder.string());
     });
     link("Docs", [] { platform::Open("https://unishade.me/docs/"); });
+
+#ifdef _WIN32
+    launcher::Discord discord{ .on = app.settings.discordPresence };
+    if (!app.active)
+        discord.status = "Shows up once Unishade is running on a game.";
+    else
+        switch (const DiscordStatus status = CurrentDiscordStatus(); status.state)
+        {
+        case DiscordState::Idle:
+        case DiscordState::Connecting: discord.status = "Connecting to Discord..."; break;
+        case DiscordState::Closed: discord.status = "Waiting for Discord to open."; break;
+        case DiscordState::Showing:
+            discord.status = "Showing " + app.active->title + " on Discord.";
+            discord.level = launcher::Level::Ok;
+            break;
+        case DiscordState::Refused:
+            discord.status = "Discord refused it: " + status.error;
+            discord.level = launcher::Level::Warning;
+            break;
+        }
+    model.discord = std::move(discord);
+#endif
 
     model.settings.autoSavePresets = app.settings.autoSavePresets;
     for (size_t i = 0; i < std::size(kShortcuts); ++i)

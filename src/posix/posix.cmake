@@ -292,7 +292,8 @@ if(APPLE)
     list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_macos.mm")
 elseif(WIN32)
     # Effects download through the ReShade host's WinHTTP code.
-    list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_win32.cpp" "${POSIX_DIR}/../net.cpp" "${POSIX_DIR}/upscale.cpp" "${FSR_SOURCE}")
+    list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_win32.cpp" "${POSIX_DIR}/../net.cpp" "${POSIX_DIR}/upscale.cpp" "${FSR_SOURCE}"
+        "${POSIX_DIR}/discord_win32.cpp")
 else()
     list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_x11.cpp")
 endif()
