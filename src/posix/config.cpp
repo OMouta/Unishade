@@ -383,6 +383,50 @@ bool SaveSettings(const Settings& settings)
     return false;
 }
 
+namespace
+{
+int ValidFrameRate(int fps)
+{
+    return fps <= 0 ? 0 : std::clamp(fps, 30, 500);
+}
+
+std::string PerformanceSection(const std::string& game)
+{
+    return game.empty() ? "Performance" : "Performance." + game;
+}
+} // namespace
+
+int FrameRateLimit(const std::string& game)
+{
+    const IniText ini(ReadFile(DataDirectory() / "Unishade.ini"));
+    std::string value;
+    int fps = ini.Get("Performance", "FrameRateLimit", value) ? std::atoi(value.c_str()) : 0;
+    if (!game.empty() && ini.Get(PerformanceSection(game), "FrameRateLimit", value))
+        fps = std::atoi(value.c_str());
+    return ValidFrameRate(fps);
+}
+
+void SetFrameRateLimit(const std::string& game, int fps)
+{
+    const fs::path path = DataDirectory() / "Unishade.ini";
+    IniText ini(ReadFile(path));
+    ini.Set(PerformanceSection(game), "FrameRateLimit", std::to_string(ValidFrameRate(fps)));
+    if (!WriteFile(path, ini.Text()))
+        Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
+}
+
+void RenamePerformance(const std::string& from, const std::string& to)
+{
+    const fs::path path = DataDirectory() / "Unishade.ini";
+    IniText ini(ReadFile(path));
+    std::string value;
+    if (!ini.Get(PerformanceSection(from), "FrameRateLimit", value))
+        return;
+    ini.Set(PerformanceSection(to), "FrameRateLimit", value);
+    if (!WriteFile(path, ini.Text()))
+        Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
+}
+
 fs::path GamePreset(const std::string& game)
 {
     std::string value;

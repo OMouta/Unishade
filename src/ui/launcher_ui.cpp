@@ -426,14 +426,16 @@ void PerformanceRows(const Page& page, float& y, Host& host, const Performance& 
             state->rateFor.reset();
         y += height + S(18);
     }
-    RowSeparator(page, y);
-
-    const int resolution = ChoicesRow(page, y, "resolution", "Effect resolution",
-                                      "Effects run on a smaller picture that FSR upscales to the game's size. Lower is faster and softer. The menu gets "
-                                      "softer too, and screenshots get smaller.",
-                                      { "100%", "75%", "50%" }, ChoiceOf(kEffectResolutions, performance.effectResolution));
-    if (resolution >= 0)
-        host.SetPerformance(game, PerformanceSetting::EffectResolution, kEffectResolutions[resolution]);
+    if (performance.effectResolution)
+    {
+        RowSeparator(page, y);
+        const int resolution = ChoicesRow(page, y, "resolution", "Effect resolution",
+                                          "Effects run on a smaller picture that FSR upscales to the game's size. Lower is faster and softer. The menu "
+                                          "gets softer too, and screenshots get smaller.",
+                                          { "100%", "75%", "50%" }, ChoiceOf(kEffectResolutions, *performance.effectResolution));
+        if (resolution >= 0)
+            host.SetPerformance(game, PerformanceSetting::EffectResolution, kEffectResolutions[resolution]);
+    }
     if (performance.depthSize)
     {
         RowSeparator(page, y);

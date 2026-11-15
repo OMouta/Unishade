@@ -2,6 +2,7 @@
 
 #include "config.h"
 #include "effects.h"
+#include "frame_limit.h"
 #include "games.h"
 #include "gpu.h"
 #include "platform.h"
@@ -57,6 +58,8 @@ public:
 
     // Shows the launcher again after it was closed into the notification area or minimized, in front.
     void ShowLauncher();
+    // Reads the frame rate limit of the game being played again, such as after Performance changed it.
+    void UpdateFrameRateLimit();
     // Quits once the launcher asked about unsaved changes, if there are any. Signals quit without asking.
     void Quit();
 
@@ -185,6 +188,11 @@ private:
     std::map<int, double> windowlessSince; // saved games' processes without a window, since when
     std::set<int> windowlessNoticed;
     double lastOverlayFrame = 0;
+    // The most frames a second the overlay shows, or 0, and the schedule renders keep to it. A new frame waits for its
+    // turn in framePending.
+    int frameRateLimit = 0;
+    FrameLimit frameLimit;
+    bool framePending = false;
     // Renders no new frame asked for, such as the menu's, are held to the refresh rate of the overlay's monitor. This
     // is the time between two of them, looked up again now and then since the overlay moves with the game.
     double overlayInterval = 1.0 / 60;

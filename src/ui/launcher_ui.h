@@ -157,12 +157,12 @@ struct Effects
     std::vector<BrokenEffect> broken;
 };
 
-// A game's performance settings, or the defaults. Only on Windows.
+// A game's performance settings, or the defaults.
 struct Performance
 {
     int frameRate = 0; // 0 shows every frame the game draws
-    int effectResolution = 100;
-    std::optional<int> depthSize; // while depth estimation is installed
+    std::optional<int> effectResolution; // where effects can run on a smaller picture
+    std::optional<int> depthSize;        // while depth estimation is installed
 };
 
 enum class PerformanceSetting

@@ -332,6 +332,7 @@ struct LauncherState
     // The games as last shown, made again when what they were made from changes: the saved games, the game being
     // played and its preset, or what was read from disk. DrawLauncher lends them to the model.
     std::vector<launcher::Game> games;
+    int defaultFrameRate = 0; // read with the games
     std::string gamesPlaying;
     fs::path gamesInUse;
     bool gamesStale = true;
@@ -461,6 +462,7 @@ std::string RenameGame(App& app, size_t index, std::string name)
         SetGamePreset(name, moveFolder && preset.parent_path() == from ? to / preset.filename() : preset);
         SetGamePreset(key, fs::path());
     }
+    RenamePerformance(key, FolderName(name));
     if (playing)
         app.game = FolderName(name);
     // The preset still loaded after the game closed moves too, or a save would make the old folder again.
@@ -1023,7 +1025,16 @@ public:
         RefreshLauncher();
     }
 
-    void SetPerformance(std::optional<size_t>, launcher::PerformanceSetting, int) override {}
+    // Effect resolution and depth detail are not offered here. A window picked for now uses and changes the settings
+    // for every game, as does Settings.
+    void SetPerformance(std::optional<size_t> game, launcher::PerformanceSetting setting, int value) override
+    {
+        if (setting != launcher::PerformanceSetting::FrameRate || (game && !Listed(app, *game)))
+            return;
+        SetFrameRateLimit(game && *game < app.autoGames.size() ? FolderName(app.autoGames[*game].name) : std::string(), value);
+        app.UpdateFrameRateLimit();
+        RefreshLauncher();
+    }
     void StepMenuSize(int step) override
     {
         app.settings.menuScale = std::clamp(app.settings.menuScale + 0.25f * static_cast<float>(step), kSmallestMenuScale, kLargestMenuScale);
@@ -1256,6 +1267,7 @@ launcher::Model DescribeLauncher(App& app)
         launcherState.gamesStale = false;
         launcherState.gamesPlaying = app.game;
         launcherState.gamesInUse = app.runtime.PresetPath();
+        launcherState.defaultFrameRate = FrameRateLimit({});
         const fs::path root = PresetsDirectory();
         for (const AutoGame& saved : app.autoGames)
         {
@@ -1266,7 +1278,8 @@ launcher::Model DescribeLauncher(App& app)
                                  .executable = saved.executable,
                                  .picture = path.string(),
                                  .enabled = saved.enabled,
-                                 .running = running(saved) };
+                                 .running = running(saved),
+                                 .performance = launcher::Performance{ .frameRate = FrameRateLimit(folder) } };
             const bool playing = !folder.empty() && !strcasecmp(app.game.c_str(), folder.c_str());
             const fs::path inUse = playing ? app.runtime.PresetPath() : folder.empty() ? fs::path() : GamePreset(folder);
             const auto add = [&](const fs::path& preset, const std::string& from) {
@@ -1289,7 +1302,12 @@ launcher::Model DescribeLauncher(App& app)
     if (Picked(app, app.autoGames.size()))
     {
         // Its own presets are the ones for all games.
-        launcher::Game picked{ .id = "picked", .name = app.active->title, .executable = fs::path(app.activeExecutable).filename().string(), .running = true, .picked = true };
+        launcher::Game picked{ .id = "picked",
+                               .name = app.active->title,
+                               .executable = fs::path(app.activeExecutable).filename().string(),
+                               .running = true,
+                               .picked = true,
+                               .performance = launcher::Performance{ .frameRate = launcherState.defaultFrameRate } };
         const fs::path& inUse = app.runtime.PresetPath();
         for (const fs::path& preset : PresetsOf(PresetsDirectory()))
             picked.presets.push_back({ preset.string(), preset.stem().string(), "All games", preset == inUse });
@@ -1343,6 +1361,7 @@ launcher::Model DescribeLauncher(App& app)
     model.settings.canShrinkMenu = app.settings.menuScale > kSmallestMenuScale + 0.01f;
     model.settings.canGrowMenu = app.settings.menuScale < kLargestMenuScale - 0.01f;
     model.settings.reloadEffects = true;
+    model.settings.performance = launcher::Performance{ .frameRate = launcherState.defaultFrameRate };
 #ifdef __APPLE__
     model.settings.skipTitleBar = app.settings.skipTitleBar;
 #endif

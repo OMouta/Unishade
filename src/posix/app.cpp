@@ -40,6 +40,7 @@ const Shortcut* FindShortcut(int id)
 bool App::Init(std::string& error)
 {
     settings = LoadSettings();
+    UpdateFrameRateLimit();
     Log(LogLevel::Info, "Settings: auto_save=%d, preset=%s, definitions=%s.", settings.autoSavePresets, settings.preset.string().c_str(),
         FormatDefinitions(settings.definitions).c_str());
 #ifdef __APPLE__
@@ -148,7 +149,7 @@ void App::Run()
         // A render held back happens as soon as it is due, so the last change in the menu always gets drawn.
         double timeout = overlayVisible ? (menuOpen ? overlayInterval : 0.1) : 0.25;
         if (overlayVisible && renderHeld)
-            timeout = std::min(timeout, lastOverlayFrame + overlayInterval - Now());
+            timeout = std::min(timeout, lastOverlayFrame + std::max(overlayInterval, frameRateLimit ? 0.5 / frameRateLimit : 0.0) - Now());
         glfwWaitEventsTimeout(std::max(timeout, 0.001));
         platform::PollHotkeys();
         runtime.Update();
@@ -201,19 +202,27 @@ void App::Run()
                 runtime.Loading(), gpu.lost, runtime.PresetPath().string().c_str());
             nextStateLog = Now() + 30;
         }
-        // A new frame is drawn at once. Other renders, for the menu, a message or to keep effects that move going,
-        // are held to the display's rate: mouse events wake the loop far more often, and each render runs the whole
-        // effect chain.
+        // A new frame is drawn at once, unless the frame rate limit holds it back. Other renders, for the menu, a
+        // message or to keep effects that move going, are held to the display's rate as well: mouse events wake the
+        // loop far more often, and each render runs the whole effect chain.
         const bool toastShowing = !toast.empty() && Now() < toastUntil;
         renderHeld = false;
+        framePending = (framePending || newFrame) && overlayVisible;
         if (overlayVisible && HasFrame())
         {
             UpdateOverlayInterval();
             const bool wanted = menuOpen || toastShowing || Now() - lastOverlayFrame > 0.1;
-            if (newFrame || (wanted && Now() - lastOverlayFrame >= overlayInterval))
+            const int64_t time = static_cast<int64_t>(Now() * 1e6);
+            const int64_t interval = frameRateLimit ? 1000000 / frameRateLimit : 0;
+            if ((!frameRateLimit || frameLimit.Ready(time, interval)) && (framePending || (wanted && Now() - lastOverlayFrame >= overlayInterval)))
+            {
                 RenderOverlay();
+                framePending = false;
+                if (frameRateLimit)
+                    frameLimit.Allow(time, interval);
+            }
             else
-                renderHeld = wanted;
+                renderHeld = wanted || framePending;
         }
 
         // Once the preset's own effects are in. The rest of the library can take minutes at low priority, and a
@@ -969,6 +978,14 @@ bool App::MovePreset(const fs::path& preset, const fs::path& folder, std::string
 }
 
 // Switching to a saved game switches to the preset last used in it.
+void App::UpdateFrameRateLimit()
+{
+    const int limit = FrameRateLimit(game);
+    if (limit != frameRateLimit)
+        Log(LogLevel::Info, "Frame rate limit: %d for %s.", limit, game.empty() ? "every game" : game.c_str());
+    frameRateLimit = limit;
+}
+
 void App::FollowGame()
 {
     game.clear();
@@ -978,6 +995,7 @@ void App::FollowGame()
             game = FolderName(saved.name);
             break;
         }
+    UpdateFrameRateLimit();
     if (game.empty())
         return;
 

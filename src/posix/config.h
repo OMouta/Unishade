@@ -74,6 +74,14 @@ Settings LoadSettings();
 // Returns false when the file cannot be written.
 bool SaveSettings(const Settings& settings);
 
+// The most frames a second the overlay shows, for a saved game by its presets folder's name, or with an empty name for
+// every game without its own, from [Performance] in Unishade.ini. 0 shows every frame the game draws. A limit is kept
+// between 30 and 500.
+int FrameRateLimit(const std::string& game);
+void SetFrameRateLimit(const std::string& game, int fps);
+// Moves a game's own performance settings to its new name.
+void RenamePerformance(const std::string& from, const std::string& to);
+
 // The preset last used in a saved game, from Unishade.ini. Empty when the game has none yet.
 fs::path GamePreset(const std::string& game);
 void SetGamePreset(const std::string& game, const fs::path& preset);
