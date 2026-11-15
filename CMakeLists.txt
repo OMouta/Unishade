@@ -96,6 +96,14 @@ fetch_file("${ONNXRUNTIME_HEADERS_URL}/onnxruntime_c_api.h" 9ed0d7054a4e74249467
 fetch_file("${ONNXRUNTIME_HEADERS_URL}/onnxruntime_ep_c_api.h" e94ac3490697bdb107844fa9d403952ee7136134132a057eae5c1207b57ce352 "${ONNXRUNTIME_INCLUDE}/onnxruntime_ep_c_api.h")
 fetch_file("https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.4/include/onnxruntime/core/providers/dml/dml_provider_factory.h" 893ddb645545bddad8c3f24bb768e97651c9ce45ec22076b435439889e4228c8 "${ONNXRUNTIME_INCLUDE}/dml_provider_factory.h")
 
+# Depth estimation as an add-on of the Vulkan host, Depth.dll. Its model and ONNX Runtime go in Addons/Depth.
+add_library(depth_addon SHARED src/depth/depth_addon.cpp src/depth/depth_model.cpp)
+set_target_properties(depth_addon PROPERTIES OUTPUT_NAME Depth)
+target_include_directories(depth_addon PRIVATE src "${ONNXRUNTIME_INCLUDE}")
+target_compile_definitions(depth_addon PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(depth_addon PRIVATE /W4 /permissive- /EHsc)
+target_link_libraries(depth_addon PRIVATE d3d11 d3d12 d3dcompiler dxgi windowsapp)
+
 # The in-game menu draws through ReShade's own Dear ImGui, so it needs the header of the exact version ReShade
 # exports its functions for. Only the header: the functions are ReShade's.
 set(RESHADE_IMGUI_INCLUDE "${CMAKE_BINARY_DIR}/reshade-imgui")

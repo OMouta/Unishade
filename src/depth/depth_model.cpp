@@ -82,9 +82,10 @@ DepthModel::~DepthModel()
 
 void DepthModel::Load(const std::wstring& directory, const std::wstring& modelFile, int width, int height, ID3D12Device* device)
 {
-    // DirectML.dll is an import of onnxruntime.dll and resolves from the exe directory as well.
-    library = LoadLibraryW((directory + L"onnxruntime.dll").c_str());
+    // DirectML.dll is an import of onnxruntime.dll. Loaded first, it is the one onnxruntime.dll gets, rather than the
+    // copy in System32, which is not the version this ONNX Runtime was built with.
     dmlLibrary = LoadLibraryW((directory + L"DirectML.dll").c_str());
+    library = LoadLibraryExW((directory + L"onnxruntime.dll").c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!library || !dmlLibrary)
         throw std::runtime_error("onnxruntime.dll or DirectML.dll could not be loaded.");
 
