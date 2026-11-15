@@ -1881,6 +1881,49 @@ void EffectsSection(const Model& model, Host& host, size_t index, const Page& pa
         host.MoveEffect(*from, *to);
 }
 
+// The settings of the add-ons that are on, which the preset keeps as it keeps the effects' settings.
+void AddonSettingsSection(const Model& model, Host& host, const Page& page, float& y)
+{
+    const auto shown = [](const Addon& addon) { return addon.state == AddonState::On && !addon.settings.empty(); };
+    if (!model.addons || std::none_of(model.addons->begin(), model.addons->end(), shown))
+        return;
+    SectionHeading(page, y, "ADD-ONS");
+    const float top = y;
+    BeginCard(page);
+    y += S(6);
+    for (size_t i = 0; i < model.addons->size(); ++i)
+    {
+        const Addon& addon = (*model.addons)[i];
+        if (!shown(addon))
+            continue;
+        ImGui::PushID(addon.id.c_str());
+        Line(page.draw, page.origin.x + page.left + S(20), page.origin.x + page.right - S(20), page.origin.y + y + S(22), addon.name, kText, kBody);
+        y += S(44);
+        const float left = page.left + S(6);
+        ImGui::SetCursorScreenPos(page.At(left, y));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, kInset);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(16), S(14)));
+        ImGui::BeginChild("settings", ImVec2(page.right - S(6) - left, 0),
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
+                          ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::PopStyleVar();
+        PushSize(kNote);
+        for (size_t setting = 0; setting < addon.settings.size(); ++setting)
+        {
+            EffectSetting value;
+            if (SettingRow(host, i, setting, addon.settings[setting], value))
+                host.SetAddonSetting(i, setting, value);
+        }
+        ImGui::PopFont();
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+        y = ImGui::GetItemRectMax().y - page.origin.y + S(8);
+        ImGui::PopID();
+    }
+    EndCard(page, top, y);
+    y += S(28);
+}
+
 void GamePage(const Model& model, Host& host, size_t index, const Page& page, float& y, float windowLeft, float windowWidth)
 {
     const Game& game = model.games[index];
@@ -1890,7 +1933,10 @@ void GamePage(const Model& model, Host& host, size_t index, const Page& page, fl
         GameHero(model, host, index, page, y, windowLeft, windowWidth);
     PresetsSection(model, host, index, page, y);
     if (model.effects && game.running)
+    {
         EffectsSection(model, host, index, page, y);
+        AddonSettingsSection(model, host, page, y);
+    }
     if (game.performance)
     {
         SectionHeading(page, y, "PERFORMANCE");

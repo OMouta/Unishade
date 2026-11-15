@@ -1179,6 +1179,12 @@ public:
             app.addons.SetEnabled(launcherState.addonFiles[addon], on);
     }
 
+    void SetAddonSetting(size_t addon, size_t setting, const launcher::EffectSetting& value) override
+    {
+        if (addon < launcherState.addonFiles.size())
+            app.addons.SetSetting(launcherState.addonFiles[addon], setting, value.floating ? value.floats[0] : static_cast<float>(value.ints[0]));
+    }
+
     void OpenAddonsFolder() override
     {
         const fs::path folder = DataDirectory() / "Addons";
@@ -1408,6 +1414,34 @@ launcher::AddonState StateOf(Addons::State state)
     return launcher::AddonState::Off;
 }
 
+// An add-on's setting as the launcher shows the settings of effects.
+launcher::EffectSetting SettingOf(const Addons::Setting& setting)
+{
+    using Control = launcher::EffectSetting::Control;
+    launcher::EffectSetting shown;
+    shown.label = setting.label;
+    shown.tooltip = setting.tooltip;
+    shown.resettable = false;
+    shown.range = true;
+    shown.min = setting.min;
+    shown.max = setting.max;
+    shown.floating = setting.type == UNISHADE_SETTING_SLIDER;
+    shown.floats[0] = setting.value;
+    shown.ints[0] = static_cast<int>(std::lround(setting.value));
+    switch (setting.type)
+    {
+    case UNISHADE_SETTING_TOGGLE: shown.control = Control::Check; break;
+    case UNISHADE_SETTING_CHOICE:
+        shown.control = Control::List;
+        for (const std::string& choice : setting.choices)
+            shown.items += choice + '\0';
+        break;
+    case UNISHADE_SETTING_SLIDER:
+    case UNISHADE_SETTING_INTEGER: shown.control = Control::Slider; break;
+    }
+    return shown;
+}
+
 // Whether every file of an official add-on is in the Addons folder, read once until the launcher reads the disk again.
 bool Whole(const Addons::Official& official)
 {
@@ -1456,6 +1490,9 @@ void DescribeAddons(App& app, launcher::Model& model)
         {
             addon.state = StateOf(installed->state);
             addon.error = installed->error;
+            if (addon.state == launcher::AddonState::On)
+                for (const Addons::Setting& setting : installed->settings)
+                    addon.settings.push_back(SettingOf(setting));
         }
         files.push_back(addon.file);
         list.push_back(std::move(addon));
@@ -1467,13 +1504,16 @@ void DescribeAddons(App& app, launcher::Model& model)
         if (listed[i] || installing(other.file) != launcherState.installs.end())
             continue;
         files.push_back(other.file);
-        list.push_back({ .id = other.file,
-                         .name = other.name,
-                         .description = other.description,
-                         .file = other.file,
-                         .official = other.official,
-                         .state = StateOf(other.state),
-                         .error = other.error });
+        launcher::Addon& addon = list.emplace_back(launcher::Addon{ .id = other.file,
+                                                                    .name = other.name,
+                                                                    .description = other.description,
+                                                                    .file = other.file,
+                                                                    .official = other.official,
+                                                                    .state = StateOf(other.state),
+                                                                    .error = other.error });
+        if (addon.state == launcher::AddonState::On)
+            for (const Addons::Setting& setting : other.settings)
+                addon.settings.push_back(SettingOf(setting));
     }
 }
 

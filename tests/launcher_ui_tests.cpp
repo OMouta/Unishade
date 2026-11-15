@@ -102,6 +102,10 @@ public:
     void CancelInstall(size_t addon) override { calls.push_back("cancel " + std::to_string(addon)); }
     void LoadAddon(size_t addon, bool load) override { calls.push_back((load ? "load " : "leave ") + std::to_string(addon)); }
     void SetAddon(size_t addon, bool on) override { calls.push_back("addon " + std::to_string(addon) + (on ? " on" : " off")); }
+    void SetAddonSetting(size_t addon, size_t setting, const launcher::EffectSetting& value) override
+    {
+        calls.push_back("addon " + std::to_string(addon) + " setting " + std::to_string(setting) + " " + std::to_string(value.ints[0]));
+    }
 };
 
 void Frame(Host& host, const launcher::Model& model, launcher::Place place = launcher::Place::Window)
@@ -360,11 +364,12 @@ bool QuitTests(Host& host)
     ok &= Check(!Find("Don't save"), "the question goes once nothing asks it");
     return ok;
 }
-// An official add-on that is on, one that can be installed, and a file that waits to be allowed.
+// An official add-on that is on with a setting, one that can be installed, and a file that waits to be allowed.
 std::vector<launcher::Addon> Addons()
 {
     using launcher::AddonState;
-    return { { .id = "Depth", .name = "Depth", .file = "Depth.dll", .official = true, .state = AddonState::On },
+    launcher::EffectSetting detail{ .control = launcher::EffectSetting::Control::Check, .floating = false, .label = "Detail", .resettable = false };
+    return { { .id = "Depth", .name = "Depth", .file = "Depth.dll", .official = true, .state = AddonState::On, .settings = { detail } },
              { .id = "DLSS5", .name = "DLSS5", .file = "DLSS5.dll", .official = true, .state = AddonState::Available },
              { .id = "Mine.dll", .name = "Mine", .file = "Mine.dll", .state = AddonState::Pending } };
 }
@@ -400,6 +405,32 @@ bool AddonsTests(Host& host)
     Frame(host, model);
     ok &= Check(Click(host, model, "on"), "a failed add-on keeps its switch");
     ok &= Check(host.calls == std::vector<std::string>{ "cancel 1", "install 1", "addon 0 on" }, "turning a failed add-on on tries it again");
+    return ok;
+}
+
+// The settings of the add-ons that are on show on the page of the game being played, under its effects.
+bool AddonSettingsTests(Host& host)
+{
+    bool ok = true;
+    // Tall enough for the whole page.
+    ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 size = io.DisplaySize;
+    io.DisplaySize.y = 1400;
+    launcher::Model model = EffectsModel();
+    model.addons = Addons();
+    Frame(host, model);
+    Click(host, model, "game");
+    ok &= Check(Count("##value") == 1, "the game's page shows the setting of the add-on that is on");
+    ok &= Check(Click(host, model, "##value"), "the setting can be changed");
+    ok &= Check(host.calls == std::vector<std::string>{ "addon 0 setting 0 1" }, "the change goes to the add-on");
+    (*model.addons)[0].state = launcher::AddonState::Off;
+    Frame(host, model);
+    ok &= Check(Count("##value") == 0, "an add-on that is off shows no settings");
+    model.games[0].running = false;
+    (*model.addons)[0].state = launcher::AddonState::On;
+    Frame(host, model);
+    ok &= Check(Count("##value") == 0, "settings show only while the game is played, since its preset keeps them");
+    io.DisplaySize = size;
     return ok;
 }
 
@@ -505,6 +536,10 @@ int main()
     {
         Host host;
         ok &= AddonsTests(host);
+    }
+    {
+        Host host;
+        ok &= AddonSettingsTests(host);
     }
     {
         Host host;

@@ -88,7 +88,7 @@ struct Effect
     bool failed = false; // could not start on the graphics card
 };
 
-// One setting of an effect, with its value as floats or as ints.
+// One setting of an effect, or of an add-on, with its value as floats or as ints.
 struct EffectSetting
 {
     enum class Control
@@ -264,6 +264,8 @@ struct Addon
     // Why it failed, or why the last install did.
     std::string error;
     float progress = 0; // from 0 to 1, while it installs
+    // While it is on: its settings, which each preset keeps.
+    std::vector<EffectSetting> settings;
 };
 
 // An open window, in the picker.
@@ -393,6 +395,7 @@ public:
     // The answer for a Pending add-on.
     virtual void LoadAddon(size_t /*addon*/, bool /*load*/) {}
     virtual void SetAddon(size_t /*addon*/, bool /*on*/) {}
+    virtual void SetAddonSetting(size_t /*addon*/, size_t /*setting*/, const EffectSetting& /*value*/) {}
     virtual void OpenAddonsFolder() {}
 
 protected:
