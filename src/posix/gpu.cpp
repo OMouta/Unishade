@@ -171,7 +171,7 @@ bool Gpu::Init(bool headless, std::string& error)
     if (HasExtension(deviceAvailable, "VK_KHR_portability_subset"))
         deviceExtensions.push_back("VK_KHR_portability_subset");
     // What lets captured frames stay on the graphics card: IOSurfaces through MoltenVK on macOS, dma-bufs on
-    // Linux. Without them frames are copied through memory.
+    // Linux, Direct3D 11 textures on Windows. Without them frames are copied through memory.
     const auto enableAll = [&](std::initializer_list<const char*> names) {
         for (const char* name : names)
             if (!HasExtension(deviceAvailable, name))
@@ -183,6 +183,8 @@ bool Gpu::Init(bool headless, std::string& error)
     {
 #ifdef __APPLE__
         metalObjects = enableAll({ "VK_EXT_metal_objects" });
+#elif defined(_WIN32)
+        win32Memory = enableAll({ "VK_KHR_external_memory_win32" });
 #else
         dmaBuf = enableAll({ "VK_KHR_external_memory_fd", "VK_EXT_external_memory_dma_buf", "VK_KHR_image_format_list",
                              "VK_EXT_image_drm_format_modifier" });
@@ -232,7 +234,7 @@ bool Gpu::Init(bool headless, std::string& error)
         return false;
     }
 
-    Log(LogLevel::Info, "Frames stay on the graphics card: %s", metalObjects || dmaBuf ? "yes" : "no, they are copied through memory");
+    Log(LogLevel::Info, "Frames stay on the graphics card: %s", metalObjects || dmaBuf || win32Memory ? "yes" : "no, they are copied through memory");
     Log(LogLevel::Info, "Graphics: %s (Vulkan %u.%u.%u)", properties.deviceName, VK_API_VERSION_MAJOR(properties.apiVersion),
         VK_API_VERSION_MINOR(properties.apiVersion), VK_API_VERSION_PATCH(properties.apiVersion));
     return true;

@@ -74,6 +74,7 @@ public:
     bool anisotropy = false;
     bool metalObjects = false; // IOSurfaces can back images (macOS)
     bool dmaBuf = false;       // dma-bufs can be imported as images (Linux)
+    bool win32Memory = false;  // Direct3D 11 textures can be imported as images (Windows)
     bool foreignQueue = false; // VK_EXT_queue_family_foreign, for handing dma-bufs back and forth
     bool lost = false;         // the device was lost, so nothing can draw until Unishade starts again
 

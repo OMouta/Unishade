@@ -1,8 +1,9 @@
 // Windows: windows and processes through the Win32 API, and the game's picture through Windows.Graphics.Capture,
-// copied through memory.
+// copied into Direct3D 11 textures that Vulkan reads as its own images, or through memory where it cannot.
 #include <unknwn.h>
 
 #include "platform.h"
+#include "gpu.h"
 #include "log.h"
 #include "text.h"
 
@@ -12,6 +13,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <tlhelp32.h>
+#include <vulkan/vulkan_win32.h>
 #include <windows.graphics.capture.interop.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
 #include <winrt/Windows.Foundation.h>
@@ -30,6 +32,7 @@
 #include <chrono>
 #include <cstring>
 #include <map>
+#include <stdexcept>
 #include <thread>
 
 namespace wgc = winrt::Windows::Graphics::Capture;
@@ -212,21 +215,39 @@ struct Direct3D
     winrt::com_ptr<ID3D11Device> device;
     winrt::com_ptr<ID3D11DeviceContext> context;
     IDirect3DDevice captureDevice{ nullptr };
+    // On the graphics card Vulkan uses, so its textures can be shared with Vulkan, which reads one as soon as it gets
+    // it. The fence says when the copy into it is done.
+    bool shareable = false;
+    winrt::com_ptr<ID3D11DeviceContext4> fenceContext;
+    winrt::com_ptr<ID3D11Fence> fence;
+    uint64_t fenceValue = 0;
+    winrt::handle fenceEvent;
 };
 Direct3D d3d;
 
-// A texture the processor reads, which frames are copied into. It stays mapped while a frame holds it.
+// A texture that frames are copied into: shared with Vulkan, or one the processor reads for copies through memory.
+// Destroyed once no frame holds it, which the host only lets happen when the graphics card is done with it.
 struct Slot
 {
     winrt::com_ptr<ID3D11Texture2D> texture;
     UINT width = 0;
     UINT height = 0;
+    bool shared = false;
+    HANDLE handle = nullptr; // the shared texture's, until Vulkan imports it
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
     D3D11_MAPPED_SUBRESOURCE mapped{};
 
     ~Slot()
     {
         if (mapped.pData)
             d3d.context->Unmap(texture.get(), 0);
+        if (handle)
+            CloseHandle(handle);
+        if (image)
+            vkDestroyImage(gpu.device, image, nullptr);
+        if (memory)
+            vkFreeMemory(gpu.device, memory, nullptr);
     }
 };
 
@@ -242,6 +263,7 @@ struct Capture
     // The rest is shared with the threads frames arrive on.
     std::mutex mutex;
     std::atomic<bool> running = false;
+    std::atomic<bool> onGpu = false;
     SizeInt32 size{};
     std::vector<std::shared_ptr<Slot>> slots;
     Frame ready;
@@ -267,26 +289,72 @@ bool CreateDevice()
     if (d3d.device && SUCCEEDED(d3d.device->GetDeviceRemovedReason()))
         return true;
     d3d = {};
+    // The graphics card Vulkan runs on, found by its LUID.
+    VkPhysicalDeviceIDProperties id{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES };
+    VkPhysicalDeviceProperties2 properties{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+    properties.pNext = &id;
+    vkGetPhysicalDeviceProperties2(gpu.physicalDevice, &properties);
+    winrt::com_ptr<IDXGIFactory1> factory;
+    winrt::com_ptr<IDXGIAdapter1> adapter;
+    if (id.deviceLUIDValid && SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(factory.put()))))
+        for (UINT i = 0;; ++i)
+        {
+            winrt::com_ptr<IDXGIAdapter1> candidate;
+            if (factory->EnumAdapters1(i, candidate.put()) != S_OK)
+                break;
+            DXGI_ADAPTER_DESC1 description{};
+            if (SUCCEEDED(candidate->GetDesc1(&description)) && !memcmp(&description.AdapterLuid, id.deviceLUID, sizeof(LUID)))
+            {
+                adapter = candidate;
+                break;
+            }
+        }
     winrt::com_ptr<ID3D11Device> device;
     winrt::com_ptr<ID3D11DeviceContext> context;
-    winrt::check_hresult(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0,
-                                           D3D11_SDK_VERSION, device.put(), nullptr, context.put()));
+    winrt::check_hresult(D3D11CreateDevice(adapter.get(), adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr,
+                                           D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, device.put(), nullptr, context.put()));
     // The capture pool uses the device from its own threads.
     device.as<ID3D11Multithread>()->SetMultithreadProtected(TRUE);
     winrt::com_ptr<::IInspectable> inspectable;
     winrt::check_hresult(CreateDirect3D11DeviceFromDXGIDevice(device.as<IDXGIDevice>().get(), inspectable.put()));
     d3d.captureDevice = inspectable.as<IDirect3DDevice>();
+    if (adapter)
+    {
+        const auto device5 = device.try_as<ID3D11Device5>();
+        d3d.fenceContext = context.try_as<ID3D11DeviceContext4>();
+        d3d.fenceEvent.attach(CreateEventW(nullptr, FALSE, FALSE, nullptr));
+        d3d.shareable = device5 && d3d.fenceContext && d3d.fenceEvent &&
+                        SUCCEEDED(device5->CreateFence(0, D3D11_FENCE_FLAG_NONE, IID_PPV_ARGS(d3d.fence.put())));
+    }
     d3d.device = std::move(device);
     d3d.context = std::move(context);
     return true;
 }
 
-// A slot no frame holds, of the size frames are copied at now, made when there is none and room for one. Called with
-// capture.mutex held.
-std::shared_ptr<Slot> FreeSlot(UINT width, UINT height)
+// Whether Vulkan can make an image of a shared Direct3D 11 texture of the captured format, to copy from.
+bool CanImport()
+{
+    VkPhysicalDeviceExternalImageFormatInfo externalInfo{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO };
+    externalInfo.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
+    VkPhysicalDeviceImageFormatInfo2 info{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2 };
+    info.pNext = &externalInfo;
+    info.format = VK_FORMAT_B8G8R8A8_UNORM;
+    info.type = VK_IMAGE_TYPE_2D;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    VkExternalImageFormatProperties external{ VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES };
+    VkImageFormatProperties2 result{ VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2 };
+    result.pNext = &external;
+    return vkGetPhysicalDeviceImageFormatProperties2(gpu.physicalDevice, &info, &result) == VK_SUCCESS &&
+           (external.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT);
+}
+
+// A slot no frame holds, of the size and kind frames are copied into now, made when there is none and room for one.
+// Called with capture.mutex held.
+std::shared_ptr<Slot> FreeSlot(UINT width, UINT height, bool shared)
 {
     std::erase_if(capture.slots, [&](const std::shared_ptr<Slot>& slot) {
-        return slot.use_count() == 1 && (slot->width != width || slot->height != height);
+        return slot.use_count() == 1 && (slot->width != width || slot->height != height || slot->shared != shared);
     });
     for (const std::shared_ptr<Slot>& slot : capture.slots)
         if (slot.use_count() == 1)
@@ -297,6 +365,7 @@ std::shared_ptr<Slot> FreeSlot(UINT width, UINT height)
     auto slot = std::make_shared<Slot>();
     slot->width = width;
     slot->height = height;
+    slot->shared = shared;
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width = width;
     desc.Height = height;
@@ -304,9 +373,21 @@ std::shared_ptr<Slot> FreeSlot(UINT width, UINT height)
     desc.ArraySize = 1;
     desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     desc.SampleDesc = { 1, 0 };
-    desc.Usage = D3D11_USAGE_STAGING;
-    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    if (shared)
+    {
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+        desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+    }
+    else
+    {
+        desc.Usage = D3D11_USAGE_STAGING;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    }
     winrt::check_hresult(d3d.device->CreateTexture2D(&desc, nullptr, slot->texture.put()));
+    if (shared)
+        winrt::check_hresult(slot->texture.as<IDXGIResource1>()->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
+                                                                                    nullptr, &slot->handle));
     capture.slots.push_back(slot);
     return slot;
 }
@@ -339,10 +420,11 @@ void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
         D3D11_TEXTURE2D_DESC desc{};
         texture->GetDesc(&desc);
 
+        const bool shared = capture.onGpu;
         std::shared_ptr<Slot> slot;
         {
             std::lock_guard lock(capture.mutex);
-            slot = FreeSlot(desc.Width, desc.Height);
+            slot = FreeSlot(desc.Width, desc.Height, shared);
         }
         if (!slot)
             return;
@@ -352,13 +434,26 @@ void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
             slot->mapped = {};
         }
         d3d.context->CopyResource(slot->texture.get(), texture.get());
-        // Waits for the copy.
-        winrt::check_hresult(d3d.context->Map(slot->texture.get(), 0, D3D11_MAP_READ, 0, &slot->mapped));
         Frame copied;
         copied.width = desc.Width;
         copied.height = desc.Height;
-        copied.memory = static_cast<const uint8_t*>(slot->mapped.pData);
-        copied.stride = slot->mapped.RowPitch;
+        if (shared)
+        {
+            // Vulkan reads the texture as soon as the host takes the frame, so the copy has to be done by then.
+            const uint64_t value = ++d3d.fenceValue;
+            winrt::check_hresult(d3d.fenceContext->Signal(d3d.fence.get(), value));
+            winrt::check_hresult(d3d.fence->SetEventOnCompletion(value, d3d.fenceEvent.get()));
+            d3d.context->Flush();
+            if (WaitForSingleObject(d3d.fenceEvent.get(), 2000) != WAIT_OBJECT_0)
+                throw std::runtime_error("The graphics card did not finish copying the game's picture.");
+        }
+        else
+        {
+            // Waits for the copy.
+            winrt::check_hresult(d3d.context->Map(slot->texture.get(), 0, D3D11_MAP_READ, 0, &slot->mapped));
+            copied.memory = static_cast<const uint8_t*>(slot->mapped.pData);
+            copied.stride = slot->mapped.RowPitch;
+        }
         copied.hold = std::move(slot);
         {
             std::lock_guard lock(capture.mutex);
@@ -377,6 +472,89 @@ void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
     {
         FailCapture(e.what());
     }
+}
+
+// The slot's texture as a Vulkan image, made the first time.
+VkImage Import(Slot& slot)
+{
+    if (slot.image)
+        return slot.image;
+    VkExternalMemoryImageCreateInfo external{ VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO };
+    external.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
+    VkImageCreateInfo info{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+    info.pNext = &external;
+    info.imageType = VK_IMAGE_TYPE_2D;
+    info.format = VK_FORMAT_B8G8R8A8_UNORM;
+    info.extent = { slot.width, slot.height, 1 };
+    info.mipLevels = 1;
+    info.arrayLayers = 1;
+    info.samples = VK_SAMPLE_COUNT_1_BIT;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    const auto failed = [&]() -> VkImage {
+        vkDestroyImage(gpu.device, image, nullptr);
+        if (memory)
+            vkFreeMemory(gpu.device, memory, nullptr);
+        return VK_NULL_HANDLE;
+    };
+    if (vkCreateImage(gpu.device, &info, nullptr, &image) != VK_SUCCESS)
+        return VK_NULL_HANDLE;
+
+    const auto getHandleProperties =
+        reinterpret_cast<PFN_vkGetMemoryWin32HandlePropertiesKHR>(vkGetDeviceProcAddr(gpu.device, "vkGetMemoryWin32HandlePropertiesKHR"));
+    VkMemoryWin32HandlePropertiesKHR handleProperties{ VK_STRUCTURE_TYPE_MEMORY_WIN32_HANDLE_PROPERTIES_KHR };
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(gpu.device, image, &requirements);
+    uint32_t type = UINT32_MAX;
+    if (getHandleProperties &&
+        getHandleProperties(gpu.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT, slot.handle, &handleProperties) == VK_SUCCESS)
+        type = gpu.FindMemoryType(requirements.memoryTypeBits & handleProperties.memoryTypeBits, 0);
+    VkMemoryDedicatedAllocateInfo dedicated{ VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
+    dedicated.image = image;
+    VkImportMemoryWin32HandleInfoKHR import{ VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR };
+    import.pNext = &dedicated;
+    import.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
+    import.handle = slot.handle;
+    VkMemoryAllocateInfo allocation{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+    allocation.pNext = &import;
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = type;
+    if (type == UINT32_MAX || vkAllocateMemory(gpu.device, &allocation, nullptr, &memory) != VK_SUCCESS ||
+        vkBindImageMemory(gpu.device, image, memory, 0) != VK_SUCCESS)
+        return failed();
+
+    // Takes the image from Direct3D once to move it into the general layout, keeping its contents, then hands it back.
+    // From here on each use takes and returns it in that layout.
+    VkCommandBuffer commands = gpu.BeginCommands();
+    if (!commands)
+        return failed();
+    VkImageMemoryBarrier barrier{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
+    barrier.dstQueueFamilyIndex = gpu.queueFamily;
+    barrier.image = image;
+    barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.srcQueueFamilyIndex = gpu.queueFamily;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
+    vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    if (!gpu.SubmitAndWait(commands))
+    {
+        // Commands that failed to finish may still use the image.
+        vkDeviceWaitIdle(gpu.device);
+        return failed();
+    }
+    // Importing does not take the handle.
+    CloseHandle(slot.handle);
+    slot.handle = nullptr;
+    slot.image = image;
+    slot.memory = memory;
+    return image;
 }
 
 // An icon as a PNG, from its color bitmap, with the mask for icons that have no alpha.
@@ -679,6 +857,7 @@ bool StartCapture(const Window& window, std::string& error)
         const auto interop = winrt::get_activation_factory<wgc::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
         wgc::GraphicsCaptureItem item{ nullptr };
         winrt::check_hresult(interop->CreateForWindow(Handle(window.id), winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(item)));
+        const bool onGpu = d3d.shareable && gpu.win32Memory && CanImport();
         {
             std::lock_guard lock(capture.mutex);
             capture.error.clear();
@@ -686,6 +865,7 @@ bool StartCapture(const Window& window, std::string& error)
             capture.slots.clear();
             capture.serial = 0;
             capture.size = item.Size();
+            capture.onGpu = onGpu;
             capture.running = true;
         }
         capture.pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded(d3d.captureDevice, kCaptureFormat, kCaptureBuffers, capture.size);
@@ -710,7 +890,11 @@ bool StartCapture(const Window& window, std::string& error)
         if (ApiInformation::IsPropertyPresent(kSessionClass, L"MinUpdateInterval"))
             capture.session.MinUpdateInterval(std::chrono::milliseconds(1));
         capture.session.StartCapture();
-        Log(LogLevel::Info, "Capturing %dx%d. Frames are copied through memory.", capture.size.Width, capture.size.Height);
+        Log(LogLevel::Info, "Capturing %dx%d. Frames %s.", capture.size.Width, capture.size.Height,
+            onGpu                  ? "stay on the graphics card, shared from Direct3D 11"
+            : !d3d.shareable       ? "are copied through memory, since Direct3D 11 cannot share them with Vulkan's graphics card"
+            : !gpu.win32Memory     ? "are copied through memory, since Vulkan has no VK_KHR_external_memory_win32"
+                                   : "are copied through memory, since Vulkan cannot import Direct3D 11 textures");
     }
     catch (const winrt::hresult_error& e)
     {
@@ -754,11 +938,25 @@ void SetCaptureIdle(bool idle)
 
 bool TakeFrame(Frame& frame)
 {
-    std::lock_guard lock(capture.mutex);
-    if (capture.ready.serial <= frame.serial || !capture.ready.hold)
+    {
+        std::lock_guard lock(capture.mutex);
+        if (capture.ready.serial <= frame.serial || !capture.ready.hold)
+            return false;
+        frame = std::move(capture.ready);
+        capture.ready = {};
+    }
+    if (frame.memory)
+        return true;
+    frame.image = Import(*static_cast<Slot*>(frame.hold.get()));
+    frame.foreign = true;
+    if (!frame.image)
+    {
+        // Copies through memory from the next frame on.
+        Log(LogLevel::Warning, "Could not use the game's picture on the graphics card. Copying it instead.");
+        capture.onGpu = false;
+        frame = {};
         return false;
-    frame = std::move(capture.ready);
-    capture.ready = {};
+    }
     return true;
 }
 
