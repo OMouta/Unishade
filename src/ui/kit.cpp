@@ -215,12 +215,6 @@ void Text(const std::string& text, ImU32 color, float size, float wrap, bool bol
     ImGui::PopFont();
 }
 
-void Heading(const char* text)
-{
-    ImGui::Dummy(ImVec2(0, S(2)));
-    Text(text, kDim, 12);
-}
-
 void HandOnHover()
 {
     if (ImGui::IsItemHovered())
@@ -326,16 +320,6 @@ void KeyCap(const std::string& key, float size)
     draw->AddText(position + (box - text) * 0.5f, kText, key.c_str());
     ImGui::Dummy(box);
     ImGui::PopFont();
-}
-
-void Spinner(float radius)
-{
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    const ImVec2 center = ImGui::GetCursorScreenPos() + ImVec2(radius, radius);
-    const float start = static_cast<float>(ImGui::GetTime()) * 5.0f;
-    draw->PathArcTo(center, radius - S(2), start, start + 4.2f, 32);
-    draw->PathStroke(kAccent, 0, S(2.5f));
-    ImGui::Dummy(ImVec2(radius * 2, radius * 2));
 }
 
 void ProgressBar(float fraction)
