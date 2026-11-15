@@ -65,7 +65,8 @@ if(BUILD_TESTING)
     add_executable(launcher_ui_tests tests/launcher_ui_tests.cpp src/ui/launcher_ui.cpp src/ui/kit.cpp
         "${IMGUI_DIR}/imgui.cpp" "${IMGUI_DIR}/imgui_draw.cpp" "${IMGUI_DIR}/imgui_tables.cpp" "${IMGUI_DIR}/imgui_widgets.cpp")
     target_include_directories(launcher_ui_tests PRIVATE src "${IMGUI_DIR}")
-    target_compile_definitions(launcher_ui_tests PRIVATE IMGUI_USE_WCHAR32)
+    # Dear ImGui's test engine hooks tell the tests where each control is.
+    target_compile_definitions(launcher_ui_tests PRIVATE IMGUI_USE_WCHAR32 IMGUI_ENABLE_TEST_ENGINE)
     if(WIN32)
         target_compile_definitions(launcher_ui_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     endif()

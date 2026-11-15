@@ -1534,6 +1534,15 @@ void Open(const std::string& target)
     Spawn("open", { target });
 }
 
+bool MoveToTrash(const std::string& path)
+{
+    @autoreleasepool
+    {
+        NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
+        return [[NSFileManager defaultManager] trashItemAtURL:url resultingItemURL:nil error:nil];
+    }
+}
+
 std::string UiFont(bool bold)
 {
     if (bold)

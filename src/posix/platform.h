@@ -212,6 +212,8 @@ bool WaylandDesktop();
 
 // Opens a folder or a web page with the system's default program.
 void Open(const std::string& target);
+// Moves a file to the Recycle Bin on Windows, or to the Trash. Returns false when it stays where it is.
+bool MoveToTrash(const std::string& path);
 
 // The DRM device the display server draws with, as the major and minor numbers of its primary or render node, so
 // the Vulkan device can be the same GPU. False when unknown, as on macOS.

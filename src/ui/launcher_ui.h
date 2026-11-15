@@ -67,6 +67,15 @@ struct Preset
     std::string id;
     std::string name;
     std::string folder; // empty for the game's own folder, or the name of the folder it is in
+    // The effects use it now, so it is not renamed, moved or deleted.
+    bool loaded = false;
+};
+
+// A folder presets can move to, by the host's own name for it.
+struct Folder
+{
+    std::string id;
+    std::string name;
 };
 
 // A game's performance settings, or the defaults. Only on Windows.
@@ -101,6 +110,10 @@ struct Game
     bool running = false;
     std::vector<Preset> presets; // its own folder's first
     std::string preset;          // the id of the preset it starts with, or empty
+    // While it is being played: the preset has changes that are not saved, with auto-save off, and uses effects that
+    // are not installed.
+    bool changed = false;
+    std::vector<std::string> missing;
     std::optional<Performance> performance;
 };
 
@@ -166,6 +179,11 @@ struct Model
     std::vector<Card> cards;
     std::vector<Game> games;
     std::optional<Removed> removed;
+    // Offers to make, copy, rename, move and delete presets on a game's page, which can move to these folders.
+    bool editPresets = false;
+    std::vector<Folder> folders;
+    // Why the last name given for a preset was not taken.
+    std::string presetProblem;
     std::vector<Notice> notices; // oldest first
     std::vector<std::string> links;
     Settings settings;
@@ -210,6 +228,16 @@ public:
     virtual void UndoRemove() = 0;
     virtual void UsePreset(size_t game, std::string_view preset) = 0;
     virtual void OpenPresetsFolder(size_t game) = 0;
+    // Where the model offers to edit presets. New ones and copies go to the game's own folder, and the game uses them.
+    // Each returns false when the name is not taken, with the reason in the next model.
+    virtual bool NewPreset(size_t /*game*/, std::string_view /*name*/) { return false; }
+    virtual bool CopyPreset(size_t /*game*/, std::string_view /*preset*/, std::string_view /*name*/) { return false; }
+    virtual bool RenamePreset(std::string_view /*preset*/, std::string_view /*name*/) { return false; }
+    virtual void MovePreset(std::string_view /*preset*/, std::string_view /*folder*/) {}
+    virtual void DeletePreset(std::string_view /*preset*/) {}
+    // The changes to the preset of the game being played, with auto-save off.
+    virtual void SaveChanges() {}
+    virtual void DiscardChanges() {}
     // For a game, or the defaults without one.
     virtual void SetPerformance(std::optional<size_t> game, PerformanceSetting setting, int value) = 0;
 

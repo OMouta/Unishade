@@ -35,6 +35,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <tuple>
 #include <utility>
 
 // assets/Unishade.png, which the build puts into the program.
@@ -1589,6 +1590,10 @@ struct LauncherState
     size_t removedIndex = 0;
     double removedAt = 0;
     std::string renameProblem;
+    std::string presetProblem;
+    // The effects the preset uses that are not installed, and what they were looked for with.
+    std::vector<std::string> missing;
+    std::tuple<fs::path, size_t, bool, bool> missingChecked;
     int recording = -1; // the shortcut waiting for its keys
     std::string shortcutError;
     // Screen recording was asked for, so a restart can make it count.
@@ -1757,6 +1762,58 @@ std::string RenameGame(App& app, size_t index, std::string name)
     return {};
 }
 
+// Whether the game at an index of the launcher's list is the one being played.
+bool Playing(App& app, size_t game)
+{
+    return game < app.autoGames.size() && !app.game.empty() && !strcasecmp(FolderName(app.autoGames[game].name).c_str(), app.game.c_str());
+}
+
+// The game is played with the preset from now on: at once for the game being played, and otherwise when it starts.
+void UseGamePreset(App& app, size_t game, const fs::path& path)
+{
+    RefreshLauncher();
+    if (!Playing(app, game))
+        SetGamePreset(FolderName(app.autoGames[game].name), path);
+    // The launcher is not over the game, so what goes wrong is also reported here.
+    else if (!app.SwitchPreset(path, app.settings.autoSavePresets, false))
+        Report(LogLevel::Warning, "Save or discard the changes to %s to switch to %s.", app.runtime.PresetPath().stem().string().c_str(),
+               path.stem().string().c_str());
+}
+
+// Points the games that use a preset at where it went, or at nothing once it is gone.
+void FollowPreset(App& app, const fs::path& from, const fs::path& to)
+{
+    for (const AutoGame& saved : app.autoGames)
+        if (const std::string folder = FolderName(saved.name); !folder.empty() && GamePreset(folder) == from)
+            SetGamePreset(folder, to);
+    RefreshLauncher();
+}
+
+// Where a preset of that name goes in the game's own folder, which is made, or empty when there is one already.
+fs::path NewGamePreset(App& app, size_t game, const std::string& name)
+{
+    const fs::path folder = GameFolder(FolderName(app.autoGames[game].name));
+    const fs::path path = folder / (name + ".ini");
+    std::error_code error;
+    if (fs::exists(path, error))
+    {
+        launcherState.presetProblem = "A preset with that name already exists.";
+        return {};
+    }
+    fs::create_directories(folder, error);
+    return path;
+}
+
+// A preset name as typed, without spaces around it, or why it cannot be used.
+bool PresetName(std::string_view typed, std::string& name, std::string& problem)
+{
+    name = std::string(typed);
+    name.erase(0, name.find_first_not_of(' '));
+    name.erase(name.find_last_not_of(' ') + 1);
+    problem = PresetNameProblem(name);
+    return problem.empty();
+}
+
 // Downloads effects and presets, over what is installed. Effects load again once it finishes, which goes back to how
 // the preset was saved, so unsaved changes have to be saved or discarded first.
 void DownloadEffects(App& app)
@@ -1901,17 +1958,107 @@ public:
 
     void UsePreset(size_t game, std::string_view preset) override
     {
-        if (game >= app.autoGames.size())
-            return;
-        const std::string folder = FolderName(app.autoGames[game].name);
-        const fs::path path{ std::string(preset) };
+        if (game < app.autoGames.size())
+            UseGamePreset(app, game, fs::path(std::string(preset)));
+    }
+
+    bool NewPreset(size_t game, std::string_view typed) override
+    {
+        std::string name;
+        if (game >= app.autoGames.size() || !PresetName(typed, name, launcherState.presetProblem))
+            return false;
         RefreshLauncher();
-        if (app.game.empty() || strcasecmp(app.game.c_str(), folder.c_str()))
-            SetGamePreset(folder, path);
-        // The launcher is not over the game, so what goes wrong is also reported here.
-        else if (!app.SwitchPreset(path, false, false))
-            Report(LogLevel::Warning, "Save or discard the changes to %s in the menu to switch to %s.", app.runtime.PresetPath().stem().string().c_str(),
-                   path.stem().string().c_str());
+        if (Playing(app, game))
+            return app.NewPreset(name, false, launcherState.presetProblem);
+        const fs::path path = NewGamePreset(app, game, name);
+        if (path.empty())
+            return false;
+        if (!WriteFile(path, "Techniques=\n"))
+        {
+            launcherState.presetProblem = "Could not write the preset.";
+            return false;
+        }
+        UseGamePreset(app, game, path);
+        return true;
+    }
+
+    // Copies go to the game's own folder, and the game uses them.
+    bool CopyPreset(size_t game, std::string_view preset, std::string_view typed) override
+    {
+        std::string name;
+        if (game >= app.autoGames.size() || !PresetName(typed, name, launcherState.presetProblem))
+            return false;
+        RefreshLauncher();
+        const fs::path source{ std::string(preset) };
+        // The preset on screen is copied as it is, unsaved changes included.
+        if (Playing(app, game) && source == app.runtime.PresetPath())
+            return app.NewPreset(name, true, launcherState.presetProblem);
+        const fs::path path = NewGamePreset(app, game, name);
+        if (path.empty())
+            return false;
+        std::error_code error;
+        if (!fs::copy_file(source, path, error))
+        {
+            launcherState.presetProblem = "Could not write the preset.";
+            return false;
+        }
+        UseGamePreset(app, game, path);
+        return true;
+    }
+
+    bool RenamePreset(std::string_view preset, std::string_view typed) override
+    {
+        std::string name;
+        if (!PresetName(typed, name, launcherState.presetProblem))
+            return false;
+        const fs::path source{ std::string(preset) };
+        const fs::path path = source.parent_path() / (name + ".ini");
+        std::error_code error;
+        if (path == source)
+            return true;
+        // A name that only changes case is the same file on Windows and macOS.
+        if (fs::exists(path, error) && strcasecmp(path.filename().string().c_str(), source.filename().string().c_str()))
+        {
+            launcherState.presetProblem = "A preset with that name already exists.";
+            return false;
+        }
+        fs::rename(source, path, error);
+        if (error)
+        {
+            launcherState.presetProblem = "Could not rename the preset.";
+            return false;
+        }
+        FollowPreset(app, source, path);
+        return true;
+    }
+
+    void MovePreset(std::string_view preset, std::string_view folder) override
+    {
+        const fs::path source{ std::string(preset) };
+        std::string error;
+        if (!app.MovePreset(source, fs::path(std::string(folder)), error))
+            Report(LogLevel::Warning, "%s", error.c_str());
+        else
+            FollowPreset(app, source, fs::path(std::string(folder)) / source.filename());
+    }
+
+    void DeletePreset(std::string_view preset) override
+    {
+        const fs::path path{ std::string(preset) };
+        if (!platform::MoveToTrash(path.string()))
+            Report(LogLevel::Warning, "Could not delete %s.", path.stem().string().c_str());
+        else
+            FollowPreset(app, path, fs::path());
+    }
+
+    void SaveChanges() override
+    {
+        app.runtime.SavePreset();
+    }
+
+    void DiscardChanges() override
+    {
+        app.SwitchPreset(app.runtime.PresetPath(), false, true);
     }
 
     void OpenPresetsFolder(size_t game) override
@@ -2074,6 +2221,28 @@ void DescribeCards(App& app, launcher::Model& model)
              { [&app] { DownloadEffects(app); } });
 }
 
+// The effect files the preset uses that are not installed, once every effect has loaded. Looked for again when the
+// preset, its changes or the effects change, since that compares every effect's name.
+std::vector<std::string> MissingEffects(App& app)
+{
+    std::vector<std::string>& files = launcherState.missing;
+    const std::tuple<fs::path, size_t, bool, bool> now{ app.runtime.PresetPath(), app.runtime.Effects().size(), app.runtime.Loading(), app.runtime.Dirty() };
+    if (now == launcherState.missingChecked)
+        return files;
+    launcherState.missingChecked = now;
+    files.clear();
+    if (app.runtime.Loading())
+        return files;
+    for (const std::string& key : app.runtime.MissingTechniques())
+    {
+        const size_t at = key.find('@');
+        std::string file = at == std::string::npos ? key : key.substr(at + 1);
+        if (std::find(files.begin(), files.end(), file) == files.end())
+            files.push_back(std::move(file));
+    }
+    return files;
+}
+
 launcher::Model DescribeLauncher(App& app)
 {
     launcher::Model model;
@@ -2117,7 +2286,7 @@ launcher::Model DescribeLauncher(App& app)
             const bool playing = !folder.empty() && !strcasecmp(app.game.c_str(), folder.c_str());
             const fs::path inUse = playing ? app.runtime.PresetPath() : folder.empty() ? fs::path() : GamePreset(folder);
             const auto add = [&](const fs::path& preset, const std::string& from) {
-                game.presets.push_back({ preset.string(), preset.stem().string(), from });
+                game.presets.push_back({ preset.string(), preset.stem().string(), from, preset == app.runtime.PresetPath() });
                 if (preset == inUse)
                     game.preset = preset.string();
             };
@@ -2133,6 +2302,18 @@ launcher::Model DescribeLauncher(App& app)
     }
     // Lent to the model, and given back once it is drawn.
     model.games = std::move(games);
+    for (size_t i = 0; i < model.games.size(); ++i)
+    {
+        const bool playing = Playing(app, i);
+        model.games[i].changed = playing && app.runtime.Dirty() && !app.settings.autoSavePresets;
+        model.games[i].missing = playing ? MissingEffects(app) : std::vector<std::string>();
+    }
+    model.editPresets = true;
+    model.folders.push_back({ PresetsDirectory().string(), "All games" });
+    for (const AutoGame& saved : app.autoGames)
+        if (const std::string folder = FolderName(saved.name); !folder.empty())
+            model.folders.push_back({ CachedGameFolder(folder).string(), saved.name });
+    model.presetProblem = launcherState.presetProblem;
     if (launcherState.removed && glfwGetTime() - launcherState.removedAt > kUndoSeconds)
         launcherState.removed.reset();
     if (launcherState.removed)

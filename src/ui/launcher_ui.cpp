@@ -50,6 +50,14 @@ enum class SettingsPage
     Shortcuts,
 };
 
+// What the preset name dialog does, in the order of its titles.
+enum class PresetAction
+{
+    New,
+    Copy,
+    Rename,
+};
+
 struct State
 {
     PageKind page = PageKind::Home;
@@ -71,6 +79,21 @@ struct State
     bool focusRate = false;
 
     bool confirmReset = false;
+
+    // The dialog that names a preset, for the game whose page shows.
+    PresetAction presetAction = PresetAction::New;
+    std::string presetTarget; // the preset copied or renamed
+    size_t presetGame = 0;
+    char presetName[128] = {};
+    bool openPresetName = false;
+    bool presetFailed = false; // shows the model's presetProblem until the name changes
+    bool focusPresetName = false;
+    // A preset to switch to once the changes to the one in use are saved or discarded.
+    std::string pendingPreset;
+    size_t pendingGame = 0;
+    bool openUnsaved = false;
+    std::string deleting; // the preset the delete dialog asks about
+    bool openDelete = false;
 };
 State state;
 
@@ -905,9 +928,106 @@ void GameHero(const Model& model, Host& host, size_t index, const Page& page, fl
     y += std::max(icon, textY + S(22) - y) + S(40);
 }
 
-void PresetsSection(const Game& game, Host& host, size_t index, const Page& page, float& y)
+// Links on the right of a section's heading at y, the last one rightmost. Returns the index of the one clicked, or -1.
+int HeadingLinks(const Page& page, float y, std::initializer_list<const char*> links)
 {
-    if (SectionHeading(page, y, "PRESETS", "Open folder"))
+    int clicked = -1;
+    float x = page.right;
+    for (int i = static_cast<int>(links.size()) - 1; i >= 0; --i)
+    {
+        const char* link = links.begin()[i];
+        x -= Measure(link, kBody).x;
+        if (PlacedLink(link, page.At(x, y), S(20)))
+            clicked = i;
+        x -= S(20);
+    }
+    return clicked;
+}
+
+// Three dots, which open a menu.
+bool DotsButton(const char* id, ImVec2 min, float size, bool bright)
+{
+    ImGui::SetCursorScreenPos(min);
+    const bool clicked = ImGui::InvisibleButton(id, ImVec2(size, size), ImGuiButtonFlags_EnableNav);
+    const bool hovered = ImGui::IsItemHovered();
+    HandOnHover();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    if (hovered)
+        draw->AddRectFilled(min, min + ImVec2(size, size), kBorder, S(6));
+    for (int i = -1; i <= 1; ++i)
+        draw->AddCircleFilled(min + ImVec2(size / 2 + static_cast<float>(i) * S(5), size / 2), S(1.6f), hovered || bright ? kText : kDim);
+    return clicked;
+}
+
+void OpenPresetName(PresetAction action, size_t game, const std::string& target, const std::string& name)
+{
+    state.presetAction = action;
+    state.presetGame = game;
+    state.presetTarget = target;
+    state.presetFailed = false;
+    std::snprintf(state.presetName, sizeof(state.presetName), "%s", name.c_str());
+    state.openPresetName = true;
+}
+
+// The menu of a preset's row.
+void PresetMenu(const Model& model, Host& host, size_t index, const Preset& preset)
+{
+    const Game& game = model.games[index];
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(6), S(6)));
+    if (ImGui::BeginPopup("actions"))
+    {
+        PushSize(kBody);
+        if (ImGui::MenuItem("Duplicate"))
+            OpenPresetName(PresetAction::Copy, index, preset.id, preset.name + " copy");
+        if (ImGui::MenuItem("Rename", nullptr, false, !preset.loaded))
+            OpenPresetName(PresetAction::Rename, index, preset.id, preset.name);
+        // To every folder but its own.
+        const std::string& current = preset.folder.empty() ? game.name : preset.folder;
+        if (ImGui::BeginMenu("Move to", !preset.loaded))
+        {
+            for (const Folder& folder : model.folders)
+                if (folder.name != current && ImGui::MenuItem(folder.name.c_str()))
+                    host.MovePreset(preset.id, folder.id);
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Delete", nullptr, false, !preset.loaded))
+        {
+            state.deleting = preset.id;
+            state.openDelete = true;
+        }
+        ImGui::PopFont();
+        if (preset.loaded)
+        {
+            ImGui::Separator();
+            Text("Switch to another preset to rename,\nmove or delete this one.", kDim, kNote, -1.0f);
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar();
+}
+
+// Switches the game to a preset, asking first about the changes to the one in use.
+void UsePreset(const Game& game, Host& host, size_t index, const std::string& preset)
+{
+    if (!game.changed)
+    {
+        host.UsePreset(index, preset);
+        return;
+    }
+    state.pendingPreset = preset;
+    state.pendingGame = index;
+    state.openUnsaved = true;
+}
+
+void PresetsSection(const Model& model, Host& host, size_t index, const Page& page, float& y)
+{
+    const Game& game = model.games[index];
+    const float headingY = y;
+    SectionHeading(page, y, "PRESETS");
+    const int link = model.editPresets ? HeadingLinks(page, headingY, { "New preset", "Open folder" }) : HeadingLinks(page, headingY, { "Open folder" });
+    if (link == 0 && model.editPresets)
+        OpenPresetName(PresetAction::New, index, {}, "New preset");
+    else if (link >= 0)
         host.OpenPresetsFolder(index);
     const float top = y;
     BeginCard(page);
@@ -915,10 +1035,11 @@ void PresetsSection(const Game& game, Host& host, size_t index, const Page& page
     {
         y += S(18);
         y += Paragraph(page.draw, page.At(page.left + S(20), y), page.origin.x + page.right - S(20),
-                       "No presets yet. Make one with New preset in the menu while the game runs.", kDim, kBody);
+                       model.editPresets ? "No presets yet." : "No presets yet. Make one with New preset in the menu while the game runs.", kDim, kBody);
         y += S(18);
     }
     const float rowHeight = S(46);
+    const float dots = S(28);
     std::string folder = game.presets.empty() ? std::string() : game.presets.front().folder;
     for (size_t i = 0; i < game.presets.size(); ++i)
     {
@@ -937,29 +1058,72 @@ void PresetsSection(const Game& game, Host& host, size_t index, const Page& page
         const ImVec2 min = page.At(page.left + S(6), y);
         const ImVec2 size(page.right - page.left - S(12), rowHeight);
         ImGui::SetCursorScreenPos(min);
+        ImGui::SetNextItemAllowOverlap();
         if (ImGui::InvisibleButton("preset", size, ImGuiButtonFlags_EnableNav) && !used)
-            host.UsePreset(index, preset.id);
+            UsePreset(game, host, index, preset.id);
         const bool hovered = ImGui::IsItemHovered();
         if (!used)
             HandOnHover();
         if (hovered && !used)
             page.draw->AddRectFilled(min, min + size, kCardHover, S(8));
-        Line(page.draw, min.x + S(14), min.x + size.x - S(110), min.y + rowHeight / 2, preset.name, kText, kBody, used);
+        // The menu's three dots on the right, and what the row is to its left.
+        float right = min.x + size.x - S(12);
+        if (model.editPresets)
+        {
+            const ImVec2 dotsMin(right - dots, min.y + (rowHeight - dots) / 2);
+            if (DotsButton("dots", dotsMin, dots, hovered))
+                ImGui::OpenPopup("actions");
+            PresetMenu(model, host, index, preset);
+            right = dotsMin.x - S(8);
+        }
+        const float nameRight = right - S(90);
         if (used)
         {
             const float width = Measure("In use", kNote).x + S(18);
-            Pill(page.draw, min + ImVec2(size.x - S(12) - width, rowHeight / 2 - S(11)), "In use", kAccentHover);
+            Pill(page.draw, ImVec2(right - width, min.y + rowHeight / 2 - S(11)), "In use", kAccentHover);
         }
-        else if (hovered)
+        else if (hovered && !ImGui::IsPopupOpen("actions"))
         {
             const float width = Measure("Use", kBody).x;
-            Line(page.draw, min.x + size.x - S(16) - width, min.x + size.x, min.y + rowHeight / 2, "Use", kAccentHover, kBody, true);
+            Line(page.draw, right - S(4) - width, right, min.y + rowHeight / 2, "Use", kAccentHover, kBody, true);
         }
+        const float nameWidth = std::min(Measure(preset.name, kBody, used).x, nameRight - min.x - S(14) - (used && game.changed ? S(14) : 0));
+        Line(page.draw, min.x + S(14), min.x + S(14) + nameWidth, min.y + rowHeight / 2, preset.name, kText, kBody, used);
+        if (used && game.changed)
+            page.draw->AddCircleFilled(ImVec2(min.x + S(14) + nameWidth + S(9), min.y + rowHeight / 2 + S(1)), S(3), kWarning);
         ImGui::PopID();
         y += rowHeight;
     }
     if (!game.presets.empty())
         y += S(6);
+    const float pad = S(20);
+    if (!game.missing.empty())
+    {
+        std::string names;
+        for (const std::string& effect : game.missing)
+            names += (names.empty() ? "" : ", ") + effect;
+        RowSeparator(page, y);
+        y += S(14);
+        y += Paragraph(page.draw, page.At(page.left + pad, y), page.origin.x + page.right - pad, "Uses effects that are not installed: " + names + ".",
+                       kWarning, kNote);
+        y += S(14);
+    }
+    // Changes waiting to be saved, with auto-save off.
+    if (game.changed)
+    {
+        RowSeparator(page, y);
+        const float height = S(56);
+        const float middle = y + height / 2;
+        const float saveWidth = ButtonWidth("Save", true);
+        const float saveLeft = page.right - pad - saveWidth;
+        const float discardLeft = saveLeft - S(16) - Measure("Discard", kBody).x;
+        Line(page.draw, page.origin.x + page.left + pad, page.origin.x + discardLeft - S(12), page.origin.y + middle, "Changes are not saved.", kDim, kBody);
+        if (PlacedLink("Discard", page.At(discardLeft, middle - S(10)), S(20)))
+            host.DiscardChanges();
+        if (PlacedButton("Save##changes", page.At(saveLeft, middle - S(16)), ImVec2(saveWidth, S(32)), true))
+            host.SaveChanges();
+        y += height;
+    }
     EndCard(page, top, y);
     y += S(28);
 }
@@ -968,7 +1132,7 @@ void GamePage(const Model& model, Host& host, size_t index, const Page& page, fl
 {
     const Game& game = model.games[index];
     GameHero(model, host, index, page, y, windowLeft, windowWidth);
-    PresetsSection(game, host, index, page, y);
+    PresetsSection(model, host, index, page, y);
     if (game.performance)
     {
         SectionHeading(page, y, "PERFORMANCE");
@@ -1294,6 +1458,96 @@ void ResetDialog(Host& host)
     EndDialog();
 }
 
+std::string PresetName(const Model& model, const std::string& id)
+{
+    for (const Game& game : model.games)
+        for (const Preset& preset : game.presets)
+            if (preset.id == id)
+                return preset.name;
+    return {};
+}
+
+void PresetNameDialog(const Model& model, Host& host)
+{
+    if (!BeginDialog("##presetname", state.openPresetName, 400))
+        return;
+    const char* titles[] = { "New preset", "Duplicate preset", "Rename preset" };
+    const char* actions[] = { "Create", "Duplicate", "Rename" };
+    const int action = static_cast<int>(state.presetAction);
+    DialogText(titles[action], state.presetAction == PresetAction::New ? "Starts with every effect off." : "");
+    if (ImGui::IsWindowAppearing() || std::exchange(state.focusPresetName, false))
+        ImGui::SetKeyboardFocusHere();
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    const bool enter = ImGui::InputText("##name", state.presetName, sizeof(state.presetName), ImGuiInputTextFlags_EnterReturnsTrue);
+    if (ImGui::IsItemEdited())
+        state.presetFailed = false;
+    if (state.presetFailed && !model.presetProblem.empty())
+        Text(model.presetProblem, kError, kNote);
+    const int clicked = DialogButtons({ "Cancel", actions[action] });
+    if (clicked == 1 || enter)
+    {
+        bool done = false;
+        switch (state.presetAction)
+        {
+        case PresetAction::New: done = host.NewPreset(state.presetGame, state.presetName); break;
+        case PresetAction::Copy: done = host.CopyPreset(state.presetGame, state.presetTarget, state.presetName); break;
+        case PresetAction::Rename: done = host.RenamePreset(state.presetTarget, state.presetName); break;
+        }
+        if (done)
+            ImGui::CloseCurrentPopup();
+        else
+        {
+            state.presetFailed = true;
+            state.focusPresetName = true;
+        }
+    }
+    if (clicked == 0 || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        ImGui::CloseCurrentPopup();
+    EndDialog();
+}
+
+// Asks what to do with the changes to the preset in use before switching. The switch waits for the answer.
+void UnsavedDialog(const Model& model, Host& host)
+{
+    if (!BeginDialog("##unsaved", state.openUnsaved, 420))
+        return;
+    std::string name;
+    if (state.pendingGame < model.games.size())
+        name = PresetName(model, model.games[state.pendingGame].preset);
+    DialogText("Save your changes to " + name + "?", "Discarding goes back to how the preset was last saved.");
+    const int clicked = DialogButtons({ "Discard", "Cancel", "Save" });
+    if (clicked == 0)
+        host.DiscardChanges();
+    else if (clicked == 2)
+        host.SaveChanges();
+    if (clicked == 0 || clicked == 2)
+        host.UsePreset(state.pendingGame, state.pendingPreset);
+    if (clicked >= 0 || ImGui::IsKeyPressed(ImGuiKey_Escape))
+    {
+        state.pendingPreset.clear();
+        ImGui::CloseCurrentPopup();
+    }
+    EndDialog();
+}
+
+void DeleteDialog(const Model& model, Host& host)
+{
+    if (!BeginDialog("##delete", state.openDelete, 380))
+        return;
+#ifdef _WIN32
+    constexpr char kTrash[] = "It moves to the Recycle Bin.";
+#else
+    constexpr char kTrash[] = "It moves to the Trash.";
+#endif
+    DialogText("Delete " + PresetName(model, state.deleting) + "?", kTrash);
+    const int clicked = DialogButtons({ "Cancel", "Delete" });
+    if (clicked == 1)
+        host.DeletePreset(state.deleting);
+    if (clicked >= 0 || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        ImGui::CloseCurrentPopup();
+    EndDialog();
+}
+
 // Follows the model: a game added since the last frame shows its page, and a page whose game is gone goes Home.
 void Follow(const Model& model)
 {
@@ -1370,6 +1624,9 @@ void Draw(const Model& model, Host& host, float windowScale)
     Rainbow(ImGui::GetForegroundDrawList(), ImVec2(0, 0), ImVec2(io.DisplaySize.x, S(kStrip)));
     PickerDialog(model, host);
     ResetDialog(host);
+    PresetNameDialog(model, host);
+    UnsavedDialog(model, host);
+    DeleteDialog(model, host);
     ImGui::End();
     ImGui::PopFont();
 }

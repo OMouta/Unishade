@@ -46,8 +46,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <cerrno>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <set>
@@ -1880,6 +1885,64 @@ void Open(const std::string& target)
     pid_t pid;
     if (posix_spawnp(&pid, "xdg-open", nullptr, nullptr, const_cast<char* const*>(argv), environ) == 0)
         std::thread([pid] { waitpid(pid, nullptr, 0); }).detach();
+}
+
+// The home trash of the freedesktop.org trash specification, which file managers show. Presets are in the data folder
+// under the home folder, so the file only moves within its file system.
+bool MoveToTrash(const std::string& path)
+{
+    namespace fs = std::filesystem;
+    const char* dataHome = getenv("XDG_DATA_HOME");
+    const char* home = getenv("HOME");
+    const fs::path trash = dataHome && *dataHome ? fs::path(dataHome) / "Trash" : home && *home ? fs::path(home) / ".local/share/Trash" : fs::path();
+    std::error_code error;
+    const fs::path source = fs::absolute(path, error);
+    if (trash.empty() || error)
+        return false;
+    for (const char* folder : { "files", "info" })
+        if (fs::create_directories(trash / folder, error); error)
+            return false;
+    // A name not taken in the trash, and its info file made first and only if new, as the specification asks.
+    for (int copy = 1; copy < 1000; ++copy)
+    {
+        const std::string name = copy == 1 ? source.filename().string() : source.stem().string() + " " + std::to_string(copy) + source.extension().string();
+        const fs::path info = trash / "info" / (name + ".trashinfo");
+        if (fs::exists(trash / "files" / name, error))
+            continue;
+        const int file = open(info.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        if (file < 0)
+        {
+            if (errno == EEXIST)
+                continue;
+            return false;
+        }
+        // The path with every byte outside the unreserved characters and slashes written as %XX.
+        std::string encoded;
+        for (const unsigned char c : source.string())
+        {
+            if (std::isalnum(c) || std::strchr("-._~/", c))
+                encoded += static_cast<char>(c);
+            else
+            {
+                char hex[4];
+                std::snprintf(hex, sizeof(hex), "%%%02X", c);
+                encoded += hex;
+            }
+        }
+        char date[32];
+        const time_t now = time(nullptr);
+        tm local{};
+        localtime_r(&now, &local);
+        strftime(date, sizeof(date), "%Y-%m-%dT%H:%M:%S", &local);
+        const std::string text = "[Trash Info]\nPath=" + encoded + "\nDeletionDate=" + date + "\n";
+        const bool written = write(file, text.data(), text.size()) == static_cast<ssize_t>(text.size());
+        close(file);
+        if (written && rename(source.c_str(), (trash / "files" / name).c_str()) == 0)
+            return true;
+        unlink(info.c_str());
+        return false;
+    }
+    return false;
 }
 
 std::string UiFont(bool bold)

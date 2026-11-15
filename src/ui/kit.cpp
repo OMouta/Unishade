@@ -444,9 +444,10 @@ void EndDialog()
 
 void DialogText(const std::string& title, const std::string& detail)
 {
-    Text(title, kText, 16.5f);
+    Text(title, kText, kSemibold, 0.0f, true);
     if (!detail.empty())
-        Text(detail, kDim, 13.5f);
+        Text(detail, kDim, kBody);
+    ImGui::Dummy(ImVec2(0, S(2)));
 }
 
 int DialogButtons(std::initializer_list<const char*> labels)

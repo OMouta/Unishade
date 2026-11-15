@@ -1257,6 +1257,23 @@ void Open(const std::string& target)
     InSingleThreadedApartment([&] { ShellExecuteW(nullptr, L"open", wide.c_str(), nullptr, nullptr, SW_SHOWNORMAL); });
 }
 
+bool MoveToTrash(const std::string& path)
+{
+    // The list of files ends with an empty one.
+    const std::wstring files = Wide(path) + L'\0';
+    int result = 1;
+    InSingleThreadedApartment([&] {
+        SHFILEOPSTRUCTW operation{};
+        operation.wFunc = FO_DELETE;
+        operation.pFrom = files.c_str();
+        operation.fFlags = FOF_ALLOWUNDO | FOF_NO_UI;
+        result = SHFileOperationW(&operation);
+        if (operation.fAnyOperationsAborted)
+            result = 1;
+    });
+    return result == 0;
+}
+
 bool DisplayDrmDevice(int64_t&, int64_t&)
 {
     return false;
