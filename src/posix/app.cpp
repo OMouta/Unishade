@@ -119,12 +119,13 @@ bool App::Init(std::string& error)
     platform::AddTrayIcon({ .open = [this] { ShowLauncher(); },
                             .effectsShown = [this] { return captureEnabled; },
                             .toggleEffects = [this] { ToggleOverlay(); },
-                            .quit = [this] { glfwSetWindowShouldClose(launcher.window, GLFW_TRUE); } });
+                            .quit = [this] { Quit(); } });
     glfwSetWindowCloseCallback(launcher.window, [](GLFWwindow* window) {
-        if (!platform::TrayIconShown())
-            return;
         glfwSetWindowShouldClose(window, GLFW_FALSE);
-        glfwHideWindow(window);
+        if (platform::TrayIconShown())
+            glfwHideWindow(window);
+        else
+            app.Quit();
     });
     platform::SetSessionEndCallback([this] { EndSession(); });
 
@@ -228,6 +229,18 @@ void App::Run()
         if (launcherShown && Now() - lastLauncherFrame >= (launcherActive ? 1.0 / 60 : 0.25))
             RenderLauncher();
     }
+}
+
+void App::Quit()
+{
+    // With auto-save off, the launcher asks first, since unsaved changes are lost otherwise.
+    if (runtime.Dirty() && !settings.autoSavePresets)
+    {
+        quitAsked = true;
+        ShowLauncher();
+    }
+    else
+        glfwSetWindowShouldClose(launcher.window, GLFW_TRUE);
 }
 
 void App::ShowLauncher()

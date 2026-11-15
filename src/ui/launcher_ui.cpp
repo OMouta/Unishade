@@ -2270,6 +2270,31 @@ void UnsavedDialog(const Model& model, Host& host)
     EndDialog();
 }
 
+// Unishade quits once the changes to the preset in use are saved or dropped.
+void QuitDialog(const Model& model, Host& host)
+{
+    if (place != Place::Window)
+        return;
+    bool open = !model.quitting.empty() && !ImGui::IsPopupOpen("##quit");
+    if (!BeginDialog("##quit", open, 420))
+        return;
+    if (model.quitting.empty())
+    {
+        ImGui::CloseCurrentPopup();
+        EndDialog();
+        return;
+    }
+    DialogText("Save the changes to " + model.quitting + " before quitting?", "Without saving, they are lost.");
+    const int clicked = DialogButtons({ "Don't save", "Cancel", "Save" });
+    if (clicked == 0 || clicked == 2)
+        host.Quit(clicked == 2);
+    else if (clicked == 1 || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        host.KeepRunning();
+    if (clicked >= 0 || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        ImGui::CloseCurrentPopup();
+    EndDialog();
+}
+
 void DeleteDialog(const Model& model, Host& host)
 {
     if (!BeginDialog("##delete", state->openDelete, 380))
@@ -2419,6 +2444,7 @@ void Draw(const Model& model, Host& host, float windowScale, Place where)
     PresetNameDialog(model, host);
     UnsavedDialog(model, host);
     DeleteDialog(model, host);
+    QuitDialog(model, host);
     ResetEffectDialog(model, host);
     ImGui::End();
     ImGui::PopFont();

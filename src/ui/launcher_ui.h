@@ -268,6 +268,8 @@ struct Model
     std::optional<Effects> effects;
     // Over the game: the shortcut that opens and closes the menu.
     std::string menuKey;
+    // The preset whose unsaved changes the launcher asks about before Unishade quits, or empty.
+    std::string quitting;
     std::vector<Notice> notices; // oldest first
     std::vector<std::string> links;
     Settings settings;
@@ -340,6 +342,9 @@ public:
     virtual void TakeScreenshot(bool /*beforeAfter*/) {}
     virtual void OpenScreenshots() {}
     virtual void CloseMenu() {}
+    // The answer to the question about unsaved changes before quitting.
+    virtual void Quit(bool /*save*/) {}
+    virtual void KeepRunning() {}
     // For a game, or the defaults without one.
     virtual void SetPerformance(std::optional<size_t> game, PerformanceSetting setting, int value) = 0;
 

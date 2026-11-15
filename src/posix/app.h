@@ -57,6 +57,8 @@ public:
 
     // Shows the launcher again after it was closed into the notification area or minimized, in front.
     void ShowLauncher();
+    // Quits once the launcher asked about unsaved changes, if there are any. Signals quit without asking.
+    void Quit();
 
     // For the launcher and the menu.
     void OpenMenu();
@@ -104,6 +106,8 @@ public:
     std::string game;
     // Folders opened or closed by hand, by path.
     std::map<std::string, bool> folderOpen;
+    // The launcher asks whether to save unsaved changes before quitting.
+    bool quitAsked = false;
     bool captureEnabled = true;
     bool menuOpen = false;
     bool effectsEnabled = true;

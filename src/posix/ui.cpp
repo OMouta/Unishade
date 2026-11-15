@@ -985,6 +985,19 @@ public:
         app.CloseMenu();
     }
 
+    void Quit(bool save) override
+    {
+        if (save)
+            app.runtime.SavePreset();
+        app.quitAsked = false;
+        glfwSetWindowShouldClose(app.launcher.window, GLFW_TRUE);
+    }
+
+    void KeepRunning() override
+    {
+        app.quitAsked = false;
+    }
+
     void SaveChanges() override
     {
         app.runtime.SavePreset();
@@ -1348,6 +1361,8 @@ launcher::Model DescribeLauncher(App& app)
         model.picker = std::move(picker);
     }
     model.renameProblem = launcherState.renameProblem;
+    if (app.quitAsked && app.runtime.Dirty())
+        model.quitting = app.runtime.PresetPath().stem().string();
     return model;
 }
 // The interface's scale for the window's monitor. On X11 it is the same on every monitor.

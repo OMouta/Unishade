@@ -76,6 +76,8 @@ public:
     void SetEffect(size_t effect, bool on) override { calls.push_back("effect " + std::to_string(effect) + (on ? " on" : " off")); }
     void MoveEffect(size_t from, size_t to) override { calls.push_back("move " + std::to_string(from) + " " + std::to_string(to)); }
     void CloseMenu() override { calls.push_back("close"); }
+    void Quit(bool save) override { calls.push_back(save ? "quit saving" : "quit"); }
+    void KeepRunning() override { calls.push_back("keep running"); }
 
     void SetSwitch(launcher::Switch, bool) override {}
     void PressCard(size_t, size_t) override {}
@@ -320,6 +322,27 @@ bool PanelTests(Host& host)
     ok &= Check(host.calls == std::vector<std::string>{ "close" }, "Escape goes back to the game");
     return ok;
 }
+// Quitting with unsaved changes waits for the answer to whether to save them.
+bool QuitTests(Host& host)
+{
+    bool ok = true;
+    launcher::Model model = PlayedGame(true);
+    model.quitting = "A";
+    Frame(host, model);
+    Frame(host, model);
+    ok &= Check(Click(host, model, "Save"), "quitting asks about unsaved changes");
+    ok &= Check(host.calls == std::vector<std::string>{ "quit saving" }, "Save saves them and quits");
+    host.calls.clear();
+    Frame(host, model);
+    Frame(host, model);
+    ok &= Check(Click(host, model, "Cancel"), "the question can be cancelled");
+    ok &= Check(host.calls == std::vector<std::string>{ "keep running" }, "Cancel keeps Unishade running");
+    model.quitting.clear();
+    Frame(host, model);
+    Frame(host, model);
+    ok &= Check(!Find("Don't save"), "the question goes once nothing asks it");
+    return ok;
+}
 } // namespace
 
 int main()
@@ -355,6 +378,10 @@ int main()
     {
         Host host;
         ok &= PanelTests(host);
+    }
+    {
+        Host host;
+        ok &= QuitTests(host);
     }
 
     kit::ForgetContext(context);
