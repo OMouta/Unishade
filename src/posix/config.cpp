@@ -320,6 +320,9 @@ Settings LoadSettings()
         ParseHotkey(shortcut.fallback, hotkey);
         if (!ini.Get("INPUT", shortcut.name, value))
             ini.Set("INPUT", shortcut.name, shortcut.fallback);
+        // Every shortcut but the menu's can be left unassigned.
+        else if (value.empty() && shortcut.member != &InputHotkeys::input)
+            hotkey = {};
         else if (!ParseHotkey(value, hotkey))
         {
             Report(LogLevel::Warning, "%s=%s in Unishade.ini is not a valid shortcut, so %s is used.", shortcut.name, value.c_str(), shortcut.fallback);

@@ -749,9 +749,10 @@ std::string App::HotkeyText(int id) const
     return shortcut ? FormatHotkey(settings.hotkeys.*shortcut->member) : std::string();
 }
 
+// A shortcut left unassigned has nothing to register.
 bool App::RegisterShortcut(const Shortcut& shortcut, const Hotkey& hotkey)
 {
-    return platform::RegisterHotkey(shortcut.id, hotkey);
+    return hotkey.key == ImGuiKey_None || platform::RegisterHotkey(shortcut.id, hotkey);
 }
 
 void App::OnHotkey(int id, bool pressed)
@@ -822,7 +823,7 @@ bool App::ChangeHotkeys(const InputHotkeys& hotkeys, std::string& error)
 {
     for (const Shortcut& a : kShortcuts)
         for (const Shortcut& b : kShortcuts)
-            if (&a < &b && hotkeys.*a.member == hotkeys.*b.member)
+            if (&a < &b && (hotkeys.*a.member).key != ImGuiKey_None && hotkeys.*a.member == hotkeys.*b.member)
             {
                 error = std::string(a.label) + " and " + Lowercase(b.label) + " cannot share " + FormatHotkey(hotkeys.*a.member) + ".";
                 return false;

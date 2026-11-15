@@ -1024,8 +1024,16 @@ public:
         }
     }
 
-    // Shortcuts here always have keys, since two without would count as sharing them.
-    void ClearShortcut(size_t) override {}
+    void ClearShortcut(size_t shortcut) override
+    {
+        StopShortcut(app);
+        if (shortcut >= std::size(kShortcuts) || kShortcuts[shortcut].member == &InputHotkeys::input)
+            return;
+        InputHotkeys hotkeys = app.settings.hotkeys;
+        hotkeys.*kShortcuts[shortcut].member = {};
+        launcherState.shortcutError.clear();
+        app.ChangeHotkeys(hotkeys, launcherState.shortcutError);
+    }
 
     void ResetShortcuts() override
     {
@@ -1078,7 +1086,8 @@ launcher::Status DescribeStatus(App& app)
     {
         status.tone = launcher::Tone::Off;
         status.title = "Effects off";
-        status.detail = "Turn them back on below, or press " + app.HotkeyText(kOverlayToggleHotkey) + ".";
+        const std::string key = app.HotkeyText(kOverlayToggleHotkey);
+        status.detail = key.empty() ? "Turn them back on below." : "Turn them back on below, or press " + key + ".";
     }
     else if (app.active)
     {
@@ -1321,7 +1330,8 @@ launcher::Model DescribeLauncher(App& app)
     model.settings.skipTitleBar = app.settings.skipTitleBar;
 #endif
     for (size_t i = 0; i < std::size(kShortcuts); ++i)
-        model.settings.shortcuts.push_back({ kShortcuts[i].label, kShortcutDescriptions[i], FormatHotkey(app.settings.hotkeys.*kShortcuts[i].member), true });
+        model.settings.shortcuts.push_back({ kShortcuts[i].label, kShortcutDescriptions[i], FormatHotkey(app.settings.hotkeys.*kShortcuts[i].member),
+                                             kShortcuts[i].member == &InputHotkeys::input });
     model.settings.recording = launcherState.recording;
     model.settings.shortcutError = launcherState.shortcutError;
 
