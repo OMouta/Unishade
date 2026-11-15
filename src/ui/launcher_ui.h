@@ -242,6 +242,30 @@ struct Discord
     Level level = Level::Info;
 };
 
+enum class AddonState
+{
+    Available,  // official, and not installed or with files missing
+    Installing, // progress says how far it is
+    Pending,    // not official, and the user has not said whether to load it
+    On,
+    Off,
+    Failed, // error says why
+};
+
+// An add-on in the Addons folder, or an official one that can be installed.
+struct Addon
+{
+    std::string id; // the host's own name for it, which stays the same while it installs
+    std::string name;
+    std::string description;
+    std::string file; // as it is named in the Addons folder
+    bool official = false;
+    AddonState state = AddonState::Off;
+    // Why it failed, or why the last install did.
+    std::string error;
+    float progress = 0; // from 0 to 1, while it installs
+};
+
 // An open window, in the picker.
 struct Window
 {
@@ -278,6 +302,8 @@ struct Model
     std::vector<std::string> links;
     Settings settings;
     std::optional<Discord> discord;
+    // The Add-ons page shows, where the host has add-ons. Official ones first.
+    std::optional<std::vector<Addon>> addons;
     std::optional<Picker> picker;
     // Why the last name given to RenameGame was not taken.
     std::string renameProblem;
@@ -360,6 +386,14 @@ public:
     // Only where Settings offers it.
     virtual void DownloadEffects() {}
     virtual void ReloadEffects() {}
+
+    // Add-ons, by their place in Model::addons.
+    virtual void InstallAddon(size_t /*addon*/) {}
+    virtual void CancelInstall(size_t /*addon*/) {}
+    // The answer for a Pending add-on.
+    virtual void LoadAddon(size_t /*addon*/, bool /*load*/) {}
+    virtual void SetAddon(size_t /*addon*/, bool /*on*/) {}
+    virtual void OpenAddonsFolder() {}
 
 protected:
     ~Host() = default;

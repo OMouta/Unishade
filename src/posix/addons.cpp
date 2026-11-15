@@ -65,12 +65,17 @@ std::vector<Addons::Official> ReadOfficialList(const std::string& text)
             continue;
         if (line.front() == '[' && line.back() == ']')
         {
-            list.push_back({ line.substr(1, line.size() - 2), {} });
+            list.push_back({ line.substr(1, line.size() - 2), {}, {} });
             continue;
         }
         const size_t equals = line.find('=');
         if (list.empty() || equals == std::string::npos)
             continue;
+        if (Trim(line.substr(0, equals)) == "Description")
+        {
+            list.back().description = Trim(line.substr(equals + 1));
+            continue;
+        }
         std::istringstream value(line.substr(equals + 1));
         Addons::Official::File file{ Trim(line.substr(0, equals)) };
         value >> file.sha256 >> file.url;
@@ -607,8 +612,7 @@ void Addons::Scan()
         if (known->state == State::Pending || known->state == State::Disabled)
             known->state = !known->official && Answer(file) < 0 ? State::Pending : State::Disabled;
         if (added && known->state == State::Pending)
-            Report(LogLevel::Info, "%s in the Addons folder is not an official add-on. Unishade loads it once you allow it in Settings, Add-ons.",
-                   file.c_str());
+            Report(LogLevel::Info, "%s in the Addons folder isn't an official add-on. It loads once you allow it on the Add-ons page.", file.c_str());
     }
     changed = true;
 }
@@ -657,6 +661,23 @@ void Addons::SetEnabled(const std::string& file, bool enabled)
     if (addon->state == State::Failed || addon->state == State::Pending)
         addon->state = State::Disabled;
     SetAnswer(file, enabled);
+}
+
+void Addons::Pause(const std::string& file)
+{
+    paused.insert(file);
+    changed = true;
+}
+
+void Addons::Resume(const std::string& file)
+{
+    paused.erase(file);
+    Scan();
+}
+
+bool Addons::Loaded(const std::string& file) const
+{
+    return std::any_of(addons.begin(), addons.end(), [&](const Addon& addon) { return addon.file == file && addon.library->module; });
 }
 
 void Addons::SetSetting(const std::string& file, size_t index, float value)
@@ -808,7 +829,7 @@ void Addons::Update()
     for (Addon& addon : addons)
     {
         const int answer = Answer(addon.file);
-        const bool wanted = addon.official ? answer != 0 : answer == 1;
+        const bool wanted = !paused.count(addon.file) && (addon.official ? answer != 0 : answer == 1);
         if (addon.library->stopping || (!wanted && addon.library->module))
         {
             if (gpu.device)

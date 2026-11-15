@@ -53,6 +53,7 @@ enum class PageKind
     Game,
     Settings,
     Discord,
+    Addons,
 };
 
 enum class SettingsPage
@@ -173,6 +174,18 @@ void SettingsIcon(ImDrawList* draw, ImVec2 center, ImU32 color)
         draw->AddLine(ImVec2(center.x - S(7), y), ImVec2(center.x + S(7), y), color, t);
         draw->AddCircleFilled(ImVec2(center.x + knobs[i], y), S(2.4f), color);
     }
+}
+
+void AddonsIcon(ImDrawList* draw, ImVec2 center, ImU32 color)
+{
+    // Three blocks, and a fourth turned and set apart.
+    const float t = S(1.5f);
+    const ImVec2 corner = center - ImVec2(S(7), S(7));
+    for (const ImVec2 block : { ImVec2(0, 0), ImVec2(0, 8), ImVec2(8, 8) })
+        draw->AddRect(corner + ImVec2(S(block.x), S(block.y)), corner + ImVec2(S(block.x + 6), S(block.y + 6)), color, S(0.5f), 0, t);
+    const ImVec2 middle = corner + ImVec2(S(11), S(3));
+    const ImVec2 diamond[] = { middle + ImVec2(0, -S(3.6f)), middle + ImVec2(S(3.6f), 0), middle + ImVec2(0, S(3.6f)), middle + ImVec2(-S(3.6f), 0) };
+    draw->AddPolyline(diamond, 4, color, ImDrawFlags_Closed, t);
 }
 
 void DiscordIcon(ImDrawList* draw, ImVec2 center, ImU32 color)
@@ -484,7 +497,7 @@ void ShowPage(PageKind page, const std::string& game = {})
     state->rateFor.reset();
 }
 
-// The pages at the bottom of the sidebar, for every game. An Add-ons page would go here.
+// The pages at the bottom of the sidebar, for every game.
 struct BottomPage
 {
     PageKind page;
@@ -495,7 +508,10 @@ struct BottomPage
 
 std::vector<BottomPage> BottomPages(const Model& model)
 {
-    std::vector<BottomPage> pages{ { PageKind::Settings, "settings", "Settings", SettingsIcon } };
+    std::vector<BottomPage> pages;
+    if (model.addons)
+        pages.push_back({ PageKind::Addons, "addons", "Add-ons", AddonsIcon });
+    pages.push_back({ PageKind::Settings, "settings", "Settings", SettingsIcon });
     if (model.discord)
         pages.push_back({ PageKind::Discord, "discord", "Discord", DiscordIcon });
     return pages;
@@ -2103,6 +2119,136 @@ void DiscordPage(const Model& model, Host& host, const Page& page, float& y)
     y += S(24);
 }
 
+// Add-ons
+
+// An add-on's row: what it is, and its switch or what it waits for. Buttons go beside the text when there is room, as
+// on cards, and under it otherwise.
+void AddonRow(Host& host, const Addon& addon, size_t index, const Page& page, float& y)
+{
+    ImGui::PushID(addon.id.c_str());
+    const float pad = S(20);
+    std::string title = addon.name;
+    std::string description = addon.description;
+    std::vector<std::pair<const char*, bool>> buttons; // the label, and whether it is the primary one
+    switch (addon.state)
+    {
+    case AddonState::Available: buttons = { { addon.error.empty() ? "Install" : "Try again", false } }; break;
+    case AddonState::Installing: buttons = { { "Cancel", false } }; break;
+    case AddonState::Pending:
+        title = addon.file;
+        description = "This isn't an official Unishade add-on. Add-ons run with the same access as Unishade.";
+        buttons = { { "Don't load", false }, { "Load", true } };
+        break;
+    case AddonState::On:
+    case AddonState::Off:
+    case AddonState::Failed: break;
+    }
+    const bool hasSwitch = buttons.empty();
+    const ImVec2 switchSize(S(40), S(22));
+    float controlsWidth = hasSwitch ? switchSize.x : -S(8);
+    for (const auto& [label, primary] : buttons)
+        controlsWidth += ButtonWidth(label, primary) + S(8);
+    const bool side = hasSwitch || page.right - page.left - controlsWidth > S(420);
+    const float textRight = page.right - pad - (side ? controlsWidth + S(20) : 0);
+
+    const float textTop = y + S(16);
+    float bottom = textTop;
+    if (addon.official || addon.state == AddonState::Pending)
+        bottom += SettingText(page, page.left + pad, textRight, textTop, title, description);
+    else
+    {
+        // Its file after its name, as effects show theirs.
+        const float left = page.origin.x + page.left + pad;
+        const float lineHeight = Measure(title, kBody).y;
+        const float nameWidth = std::min(Measure(title, kBody).x, page.origin.x + textRight - left);
+        const float middle = page.origin.y + textTop + lineHeight / 2;
+        Line(page.draw, left, left + nameWidth, middle, title, kText, kBody);
+        Line(page.draw, left + nameWidth + S(8), page.origin.x + textRight, middle + S(1), addon.file, kDim, kNote);
+        bottom += lineHeight;
+        if (!description.empty())
+            bottom += S(3) + Paragraph(page.draw, page.At(page.left + pad, bottom + S(3)), page.origin.x + textRight, description, kDim, kNote);
+    }
+    if (!addon.error.empty() && addon.state != AddonState::Installing)
+        bottom += S(6) + Paragraph(page.draw, page.At(page.left + pad, bottom + S(6)), page.origin.x + textRight, addon.error, kError, kNote);
+    if (addon.state == AddonState::Installing)
+    {
+        const ImVec2 bar = page.At(page.left + pad, bottom + S(12));
+        const float width = textRight - page.left - pad;
+        page.draw->AddRectFilled(bar, bar + ImVec2(width, S(4)), kBorder, S(2));
+        page.draw->AddRectFilled(bar, bar + ImVec2(width * std::clamp(addon.progress, 0.0f, 1.0f), S(4)), kAccent, S(2));
+        bottom += S(16);
+    }
+
+    const float controlsHeight = hasSwitch ? switchSize.y : S(32);
+    const float height = side ? std::max(bottom - textTop, controlsHeight) + S(32) : bottom - y + S(14) + controlsHeight + S(18);
+    const float controlsTop = side ? y + (height - controlsHeight) / 2 : bottom + S(14);
+    float x = side ? page.right - pad - controlsWidth : page.left + pad;
+    if (hasSwitch)
+    {
+        ImGui::SetCursorScreenPos(page.At(x, controlsTop));
+        const bool on = addon.state == AddonState::On;
+        if (kit::Switch("on", on, switchSize))
+            host.SetAddon(index, !on);
+        if (addon.state == AddonState::Failed)
+            Tooltip("Turn on to try again");
+    }
+    for (size_t i = 0; i < buttons.size(); ++i)
+    {
+        const auto& [label, primary] = buttons[i];
+        const float width = ButtonWidth(label, primary);
+        if (PlacedButton(label, page.At(x, controlsTop), ImVec2(width, S(32)), primary))
+        {
+            if (addon.state == AddonState::Available)
+                host.InstallAddon(index);
+            else if (addon.state == AddonState::Installing)
+                host.CancelInstall(index);
+            else
+                host.LoadAddon(index, i == 1);
+        }
+        x += width + S(8);
+    }
+    y += height;
+    ImGui::PopID();
+}
+
+// Official add-ons, then the other files in the Addons folder.
+void AddonsPage(const Model& model, Host& host, const Page& page, float& y)
+{
+    const std::vector<Addon>& addons = *model.addons;
+    if (PlacedLink("Open folder", page.At(page.right - Measure("Open folder", kBody).x, y + S(6)), S(20)))
+        host.OpenAddonsFolder();
+    PageTitle(page, y, "Add-ons");
+    if (addons.empty())
+    {
+        const float top = y;
+        BeginCard(page);
+        y += S(18);
+        y += Paragraph(page.draw, page.At(page.left + S(20), y), page.origin.x + page.right - S(20), "No add-ons yet.", kDim, kBody);
+        y += S(18);
+        EndCard(page, top, y);
+        return;
+    }
+    for (const bool official : { true, false })
+    {
+        if (std::none_of(addons.begin(), addons.end(), [&](const Addon& addon) { return addon.official == official; }))
+            continue;
+        SectionHeading(page, y, official ? "OFFICIAL" : "OTHER ADD-ONS");
+        const float top = y;
+        BeginCard(page);
+        bool first = true;
+        for (size_t i = 0; i < addons.size(); ++i)
+        {
+            if (addons[i].official != official)
+                continue;
+            if (!std::exchange(first, false))
+                RowSeparator(page, y);
+            AddonRow(host, addons[i], i, page, y);
+        }
+        EndCard(page, top, y);
+        y += S(24);
+    }
+}
+
 // Dialogs
 
 void PickerDialog(const Model& model, Host& host)
@@ -2367,7 +2513,7 @@ void Follow(const Model& model)
     const auto exists = [&](const std::string& id) { return std::any_of(model.games.begin(), model.games.end(), [&](const Game& game) { return game.id == id; }); };
     if (state->page == PageKind::Game && !exists(state->game))
         ShowPage(PageKind::Home);
-    if (state->page == PageKind::Discord && !model.discord)
+    if ((state->page == PageKind::Discord && !model.discord) || (state->page == PageKind::Addons && !model.addons))
         ShowPage(PageKind::Home);
     if (!state->renaming.empty() && !exists(state->renaming))
         state->renaming.clear();
@@ -2442,6 +2588,7 @@ void Draw(const Model& model, Host& host, float windowScale, Place where)
         }
         case PageKind::Settings: SettingsPageView(model, host, page, y); break;
         case PageKind::Discord: DiscordPage(model, host, page, y); break;
+        case PageKind::Addons: AddonsPage(model, host, page, y); break;
         }
         ImGui::SetCursorScreenPos(page.At(0, y + S(24)));
         ImGui::Dummy(ImVec2(1, 1));

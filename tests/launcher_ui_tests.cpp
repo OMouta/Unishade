@@ -97,6 +97,11 @@ public:
     void RecordShortcut(int) override {}
     void ClearShortcut(size_t) override {}
     void ResetShortcuts() override {}
+
+    void InstallAddon(size_t addon) override { calls.push_back("install " + std::to_string(addon)); }
+    void CancelInstall(size_t addon) override { calls.push_back("cancel " + std::to_string(addon)); }
+    void LoadAddon(size_t addon, bool load) override { calls.push_back((load ? "load " : "leave ") + std::to_string(addon)); }
+    void SetAddon(size_t addon, bool on) override { calls.push_back("addon " + std::to_string(addon) + (on ? " on" : " off")); }
 };
 
 void Frame(Host& host, const launcher::Model& model, launcher::Place place = launcher::Place::Window)
@@ -355,6 +360,49 @@ bool QuitTests(Host& host)
     ok &= Check(!Find("Don't save"), "the question goes once nothing asks it");
     return ok;
 }
+// An official add-on that is on, one that can be installed, and a file that waits to be allowed.
+std::vector<launcher::Addon> Addons()
+{
+    using launcher::AddonState;
+    return { { .id = "Depth", .name = "Depth", .file = "Depth.dll", .official = true, .state = AddonState::On },
+             { .id = "DLSS5", .name = "DLSS5", .file = "DLSS5.dll", .official = true, .state = AddonState::Available },
+             { .id = "Mine.dll", .name = "Mine", .file = "Mine.dll", .state = AddonState::Pending } };
+}
+
+// The Add-ons page installs official add-ons, asks about files that are not official, and turns add-ons on and off.
+bool AddonsTests(Host& host)
+{
+    bool ok = true;
+    launcher::Model model;
+    Frame(host, model);
+    ok &= Check(!Find("addons"), "without add-ons there is no Add-ons page");
+    model.addons = Addons();
+    Frame(host, model);
+    ok &= Check(Click(host, model, "addons"), "the sidebar has the Add-ons page");
+    ok &= Check(Click(host, model, "Install"), "an official add-on that is not installed offers Install");
+    ok &= Check(Click(host, model, "Load"), "a file that is not official asks whether to load it");
+    ok &= Check(Click(host, model, "Don't load"), "it can be left unloaded");
+    ok &= Check(Click(host, model, "on"), "an add-on that is installed has a switch");
+    ok &= Check(host.calls == std::vector<std::string>{ "install 1", "load 2", "leave 2", "addon 0 off" }, "each control acts on its own add-on");
+
+    host.calls.clear();
+    (*model.addons)[1].state = launcher::AddonState::Installing;
+    (*model.addons)[1].progress = 0.5f;
+    Frame(host, model);
+    ok &= Check(!Find("Install"), "an add-on that installs cannot be installed again");
+    ok &= Check(Click(host, model, "Cancel"), "an install can be cancelled");
+    (*model.addons)[1].state = launcher::AddonState::Available;
+    (*model.addons)[1].error = "The download does not match its checksum.";
+    Frame(host, model);
+    ok &= Check(Click(host, model, "Try again"), "a failed install can be tried again");
+    (*model.addons)[0].state = launcher::AddonState::Failed;
+    (*model.addons)[0].error = "It did not start.";
+    Frame(host, model);
+    ok &= Check(Click(host, model, "on"), "a failed add-on keeps its switch");
+    ok &= Check(host.calls == std::vector<std::string>{ "cancel 1", "install 1", "addon 0 on" }, "turning a failed add-on on tries it again");
+    return ok;
+}
+
 // Every page, in both places, with an effect's settings open, has controls Dear ImGui can tell apart.
 bool IdTests(Host& host)
 {
@@ -363,6 +411,7 @@ bool IdTests(Host& host)
     model.settings.performance = launcher::Performance{};
     model.settings.shortcuts = { { "Open the menu", "", "Home", true }, { "Screenshot", "", "F9" } };
     model.games[0].performance = launcher::Performance{};
+    model.addons = Addons();
     using Control = launcher::EffectSetting::Control;
     host.settings = { .tooltip = "Does things.",
                       .settings = { { .control = Control::Slider, .label = "Amount", .category = "Look", .range = true, .max = 1 },
@@ -408,6 +457,8 @@ bool IdTests(Host& host)
             press(page);
             check(page);
         }
+        press("addons");
+        check("Add-ons");
     }
     return ok;
 }
@@ -450,6 +501,10 @@ int main()
     {
         Host host;
         ok &= QuitTests(host);
+    }
+    {
+        Host host;
+        ok &= AddonsTests(host);
     }
     {
         Host host;

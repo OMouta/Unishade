@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,7 @@ public:
             std::string url;
         };
         std::string name;
+        std::string description;
         std::vector<File> files; // the first is the add-on itself
     };
 
@@ -81,6 +83,12 @@ public:
     void Approve(const std::string& file, bool load);
     // Turning a failed add-on on tries it again.
     void SetEnabled(const std::string& file, bool enabled);
+    // Stops an add-on and lets go of its library until Resume, so its files can be installed again, from the next
+    // Update on. Loaded says when it has.
+    void Pause(const std::string& file);
+    // Reads the Addons folder again, and starts the add-on if it is on.
+    void Resume(const std::string& file);
+    bool Loaded(const std::string& file) const;
     // Kept in the current preset.
     void SetSetting(const std::string& file, size_t setting, float value);
     // Starts and stops add-ons as the calls above asked, and takes settings from a preset that loaded. Call once per
@@ -115,6 +123,7 @@ private:
     fx::Runtime* runtime = nullptr;
     std::vector<Addon> addons;
     std::vector<Official> official;
+    std::set<std::string> paused;
     std::unique_ptr<Exchange> exchange;
     uint64_t presetGeneration = 0;
     bool changed = false; // an answer changed since the last Update
