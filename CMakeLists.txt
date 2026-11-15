@@ -73,9 +73,9 @@ if(BUILD_TESTING)
 endif()
 
 # macOS and Linux have their own host in src/posix. ReShade itself only runs on Windows, so it uses ReShade's
-# effect compiler with Vulkan instead.
+# effect compiler with Vulkan instead. Windows builds it too, beside the ReShade host it is replacing.
+include(src/posix/posix.cmake)
 if(NOT WIN32)
-    include(src/posix/posix.cmake)
     return()
 endif()
 

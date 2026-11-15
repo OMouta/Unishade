@@ -5,6 +5,8 @@
 #         Needs the Vulkan loader and headers and the X11 development packages GLFW builds against.
 # macOS:  brew install molten-vk vulkan-headers, then the same commands. The build is Unishade.app, with
 #         MoltenVK copied inside so it runs without Homebrew.
+# Windows: the same commands with MSVC. Vulkan's headers are downloaded and the loader comes with the graphics
+#         driver, so no Vulkan SDK is needed. The build is vulkan/Unishade.exe, beside the ReShade host's.
 
 if(APPLE)
     # Objective-C first: the language enabled first owns the .m extension, and GLFW's .m files are not C++. The oldest
@@ -67,25 +69,35 @@ endfunction()
 # ReShade's compiler is built with MSVC, so a few of its lines change for other systems. Effects written on Windows
 # include files as ".\Folder\File.fxh". Outside Windows backslashes are not separators, so the preprocessor's path
 # helper turns them into slashes.
-patch_source("${RESHADEFX_DIR}" effect_preprocessor.cpp
-    "\t#define u8path(p) path(p)\n"
-    "\tstatic std::string posix_path(std::string p) { for (char &c : p) if (c == '\\\\') c = '/'; return p; }\n\t#define u8path(p) path(posix_path(p))\n")
-# malloc.h is Windows' and glibc's home of alloca, alloca.h everyone's.
-patch_source("${RESHADEFX_DIR}" effect_symbol_table.cpp "#include <malloc.h> // alloca" "#include <alloca.h> // alloca")
-# Apple's C++ library has no std::from_chars for floats before macOS 15's.
-patch_source("${RESHADEFX_DIR}" effect_lexer.cpp
-    "#include <charconv> // std::from_chars" "#include <charconv> // std::from_chars\n#include <cstdlib> // std::strtof\n#include <string>"
-    "std::from_chars(begin, end, tok.literal_as_float);" "tok.literal_as_float = std::strtof(std::string(begin, end).c_str(), nullptr);")
+if(WIN32)
+    set(RESHADEFX_PATCHED "${RESHADEFX_DIR}")
+else()
+    patch_source("${RESHADEFX_DIR}" effect_preprocessor.cpp
+        "\t#define u8path(p) path(p)\n"
+        "\tstatic std::string posix_path(std::string p) { for (char &c : p) if (c == '\\\\') c = '/'; return p; }\n\t#define u8path(p) path(posix_path(p))\n")
+    # malloc.h is Windows' and glibc's home of alloca, alloca.h everyone's.
+    patch_source("${RESHADEFX_DIR}" effect_symbol_table.cpp "#include <malloc.h> // alloca" "#include <alloca.h> // alloca")
+    # Apple's C++ library has no std::from_chars for floats before macOS 15's.
+    patch_source("${RESHADEFX_DIR}" effect_lexer.cpp
+        "#include <charconv> // std::from_chars" "#include <charconv> // std::from_chars\n#include <cstdlib> // std::strtof\n#include <string>"
+        "std::from_chars(begin, end, tok.literal_as_float);" "tok.literal_as_float = std::strtof(std::string(begin, end).c_str(), nullptr);")
+    set(RESHADEFX_PATCHED "${RESHADEFX_DIR}/patched")
+endif()
 
 add_library(reshadefx STATIC
     "${RESHADEFX_DIR}/effect_codegen_spirv.cpp"
     "${RESHADEFX_DIR}/effect_expression.cpp"
-    "${RESHADEFX_DIR}/patched/effect_lexer.cpp"
+    "${RESHADEFX_PATCHED}/effect_lexer.cpp"
     "${RESHADEFX_DIR}/effect_parser_exp.cpp"
     "${RESHADEFX_DIR}/effect_parser_stmt.cpp"
-    "${RESHADEFX_DIR}/patched/effect_preprocessor.cpp"
-    "${RESHADEFX_DIR}/patched/effect_symbol_table.cpp")
+    "${RESHADEFX_PATCHED}/effect_preprocessor.cpp"
+    "${RESHADEFX_PATCHED}/effect_symbol_table.cpp")
 target_include_directories(reshadefx PUBLIC "${RESHADEFX_DIR}" PRIVATE "${RESHADEFX_DIR}/spirv")
+# On Windows the preprocessor takes the UTF-8 strings of paths from u8string, which returns char8_t from C++20 on.
+# ReShade builds it as C++17.
+if(WIN32)
+    set_target_properties(reshadefx PROPERTIES CXX_STANDARD 17)
+endif()
 # Third-party code: its warnings are not ours to fix.
 target_compile_options(reshadefx PRIVATE -w)
 # Compiled effects are cached for the compiler that made them, so a hash of its files names it.
@@ -156,6 +168,48 @@ if(APPLE)
     add_library(unishade_vulkan INTERFACE)
     target_include_directories(unishade_vulkan INTERFACE "${VULKAN_INCLUDE_DIR}")
     target_link_libraries(unishade_vulkan INTERFACE "${MOLTENVK_LIBRARY}")
+elseif(WIN32)
+    # Every graphics driver installs the loader, vulkan-1.dll. Linking it takes an import library, which is made from
+    # the loader's own list of exports, so the build needs no Vulkan SDK.
+    set(VULKAN_DIR "${CMAKE_BINARY_DIR}/vulkan-headers")
+    set(VULKAN_URL "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v1.4.366/include")
+    fetch_file("${VULKAN_URL}/vulkan/vulkan.h" ace769f4cd4c69a846c1778be95bfcd326038c8adc7630584ba33bcadd2f70a5 "${VULKAN_DIR}/include/vulkan/vulkan.h")
+    fetch_file("${VULKAN_URL}/vulkan/vk_platform.h" a2cd9085c66776845d2524c3b0e73ccf4827ba046aa6f676c4b8ddbed47d6552 "${VULKAN_DIR}/include/vulkan/vk_platform.h")
+    fetch_file("${VULKAN_URL}/vulkan/vulkan_core.h" 272ced8df5a2b2218aa8d5461ab3ba9c04bd562088630070c2dac928b0ddd6c9 "${VULKAN_DIR}/include/vulkan/vulkan_core.h")
+    fetch_file("${VULKAN_URL}/vulkan/vulkan_win32.h" 68ffd3b0481ea8be18b5d183634d97924617ac23f8c465095ef40e1de300d272 "${VULKAN_DIR}/include/vulkan/vulkan_win32.h")
+    foreach(video
+            vulkan_video_codecs_common.h:3fc937e75411bf82fd8dfaa721b07b2bb53307c891a347cc010d4747ce28f971
+            vulkan_video_codec_h264std.h:072e863dd05e8151b9e0f5b18a4cb52acbe618079b4ace71e3b60cce1ec9ccbc
+            vulkan_video_codec_h264std_decode.h:e401c6aea14f2e5d33cc8215d6a6725a9a6659e266a4f0b371c91d2a4cbde505
+            vulkan_video_codec_h264std_encode.h:30ef5fc7be25aec0fbebde8c4908d631690f2063d33c10ccea9edaa2ed0d728a
+            vulkan_video_codec_h265std.h:ba1668e412d3483d945fc3707e3b25b30c0c43ffd347d9b8b536a1cc622000a8
+            vulkan_video_codec_h265std_decode.h:2da3a4c697f9b0b75a11181880e082ab13553ed5d915782c841e01be4793dfb0
+            vulkan_video_codec_h265std_encode.h:bbc4a232434a2268c3689a676a488a13bf1912bfa4ff9aeb3a54077905316bd1
+            vulkan_video_codec_av1std.h:83bc45ed585e664ccd57f112ad0eaf2a83c12276bf5a30081ae9e742b8ffeb6c
+            vulkan_video_codec_av1std_decode.h:e37184b12c11fe5c4990133040158c0e5ecdbafc52285880276cddee6aecb8d5
+            vulkan_video_codec_av1std_encode.h:c0388defe123f7e5fc02908d6ba868f58479a323da31d8e825b5fe2ac0523acb
+            vulkan_video_codec_vp9std.h:1c33ed11eda1225ba52250221378930129b9c78c4aecc91bb368fa3d00f9cf36
+            vulkan_video_codec_vp9std_decode.h:37d5b7847a9dda12480ea6b27dfedb4c509eb61b91090b5b119a12bbb5c5b190)
+        string(REPLACE ":" ";" video "${video}")
+        list(GET video 0 name)
+        list(GET video 1 hash)
+        fetch_file("${VULKAN_URL}/vk_video/${name}" ${hash} "${VULKAN_DIR}/include/vk_video/${name}")
+    endforeach()
+    fetch_file("https://raw.githubusercontent.com/KhronosGroup/Vulkan-Loader/v1.4.366/loader/vulkan-1.def"
+        9ba339b7f5ee2df28487698a6840ecf095fac58b415c2c89ad9f161e9d316378 "${VULKAN_DIR}/vulkan-1.def")
+    set(VULKAN_LIBRARY "${VULKAN_DIR}/${CMAKE_CXX_COMPILER_ARCHITECTURE_ID}/vulkan-1.lib")
+    if(NOT EXISTS "${VULKAN_LIBRARY}")
+        get_filename_component(library_dir "${VULKAN_LIBRARY}" DIRECTORY)
+        file(MAKE_DIRECTORY "${library_dir}")
+        execute_process(COMMAND "${CMAKE_AR}" /nologo "/def:${VULKAN_DIR}/vulkan-1.def" "/out:${VULKAN_LIBRARY}" "/machine:${CMAKE_CXX_COMPILER_ARCHITECTURE_ID}"
+            RESULT_VARIABLE result OUTPUT_QUIET)
+        if(NOT result EQUAL 0)
+            message(FATAL_ERROR "Could not make vulkan-1.lib from the loader's exports.")
+        endif()
+    endif()
+    add_library(unishade_vulkan INTERFACE)
+    target_include_directories(unishade_vulkan INTERFACE "${VULKAN_DIR}/include")
+    target_link_libraries(unishade_vulkan INTERFACE "${VULKAN_LIBRARY}")
 else()
     find_package(Vulkan REQUIRED)
     find_package(X11 REQUIRED)
@@ -211,14 +265,23 @@ set(POSIX_SOURCES
     "${POSIX_DIR}/../ui/launcher_ui.cpp")
 if(APPLE)
     list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_macos.mm")
+elseif(WIN32)
+    # Effects download through the ReShade host's WinHTTP code.
+    list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_win32.cpp" "${POSIX_DIR}/../net.cpp")
 else()
     list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_x11.cpp")
+endif()
+if(MSVC)
+    # Names that shadow others are fine, as with GCC and Clang at -Wall -Wextra.
+    set(HOST_COMPILE_OPTIONS /W4 /wd4458 /wd4459 /bigobj)
+else()
+    set(HOST_COMPILE_OPTIONS -Wall -Wextra -Wno-missing-field-initializers)
 endif()
 
 add_library(unishade_core STATIC ${POSIX_SOURCES})
 target_include_directories(unishade_core PUBLIC "${POSIX_DIR}" "${CMAKE_CURRENT_LIST_DIR}/..")
 target_compile_definitions(unishade_core PUBLIC UNISHADE_VERSION="${PROJECT_VERSION}")
-target_compile_options(unishade_core PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+target_compile_options(unishade_core PRIVATE ${HOST_COMPILE_OPTIONS})
 set_source_files_properties("${POSIX_DIR}/effects.cpp" PROPERTIES COMPILE_DEFINITIONS UNISHADE_COMPILER_ID="${RESHADEFX_ID}")
 target_link_libraries(unishade_core PUBLIC reshadefx posix_libraries Threads::Threads)
 if(APPLE)
@@ -226,6 +289,11 @@ if(APPLE)
     target_link_libraries(unishade_core PUBLIC "-framework AppKit" "-framework Carbon" "-framework CoreGraphics"
         "-framework CoreMedia" "-framework CoreVideo" "-framework QuartzCore" "-framework ScreenCaptureKit" "-framework Metal"
         "-framework IOSurface" "-framework IOKit")
+elseif(WIN32)
+    # The standard and POSIX C functions MSVC warns about are used as on the other systems.
+    target_compile_definitions(unishade_core PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
+    target_compile_definitions(unishade_core PRIVATE UNISHADE_USER_AGENT="Unishade/${PROJECT_VERSION}")
+    target_link_libraries(unishade_core PUBLIC d3d11 dxgi dwmapi windowsapp winhttp bcrypt)
 else()
     target_link_libraries(unishade_core PUBLIC X11::X11 X11::Xcomposite X11::Xext)
     # XRes tells which process owns a window even for sandboxed programs such as Flatpak apps. It is loaded at
@@ -275,6 +343,13 @@ if(APPLE)
         COMMAND "${CMAKE_COMMAND}" -DAPP=$<TARGET_BUNDLE_DIR:Unishade> -DEXE=$<TARGET_FILE:Unishade> -DMOLTENVK=${MOLTENVK_LIBRARY}
                 -P "${POSIX_DIR}/bundle_macos.cmake"
         VERBATIM)
+elseif(WIN32)
+    # Unishade.exe like the ReShade host, so in a folder of its own until it replaces it. The manifest makes UTF-8 the
+    # program's code page, which the narrow file and path functions then use, as they do on the other systems.
+    add_executable(UnishadeVulkan WIN32 "${POSIX_DIR}/main.cpp" "${POSIX_DIR}/Unishade.manifest")
+    set_target_properties(UnishadeVulkan PROPERTIES OUTPUT_NAME Unishade RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/vulkan$<0:>")
+    # A program without a console window that still starts at main.
+    target_link_options(UnishadeVulkan PRIVATE /ENTRY:mainCRTStartup)
 else()
     add_executable(unishade "${POSIX_DIR}/main.cpp")
     set_target_properties(unishade PROPERTIES OUTPUT_NAME unishade)
@@ -285,12 +360,17 @@ endif()
 if(APPLE)
     target_link_libraries(Unishade PRIVATE unishade_core)
     target_compile_options(Unishade PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+elseif(WIN32)
+    target_link_libraries(UnishadeVulkan PRIVATE unishade_core)
+    target_compile_options(UnishadeVulkan PRIVATE ${HOST_COMPILE_OPTIONS})
 else()
     target_link_libraries(unishade PRIVATE unishade_core)
     target_compile_options(unishade PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
 endif()
 
-if(BUILD_TESTING)
+# Windows builds its own copies of the shared tests in the top-level CMakeLists.txt. This host's own tests are not
+# built there yet.
+if(BUILD_TESTING AND NOT WIN32)
     add_executable(ini_text_tests "${CMAKE_SOURCE_DIR}/tests/ini_text_tests.cpp")
     # GNU mode defines unix as a macro, which the test uses as a name.
     set_target_properties(ini_text_tests PROPERTIES CXX_EXTENSIONS OFF)
