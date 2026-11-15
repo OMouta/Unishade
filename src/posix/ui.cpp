@@ -487,6 +487,19 @@ std::string RenameGame(App& app, size_t index, std::string name)
     return {};
 }
 
+// Once a removed game can no longer be put back, its own performance settings go, unless a game with its name was
+// added since.
+void ForgetRemoved(App& app)
+{
+    if (!launcherState.removed)
+        return;
+    const std::string key = FolderName(launcherState.removed->name);
+    if (std::none_of(app.autoGames.begin(), app.autoGames.end(),
+                     [&](const AutoGame& game) { return !strcasecmp(FolderName(game.name).c_str(), key.c_str()); }))
+        RemovePerformance(key);
+    launcherState.removed.reset();
+}
+
 // The launcher lists a window picked for now after the saved games, when it is not one of them.
 bool Picked(App& app, size_t game)
 {
@@ -801,6 +814,7 @@ public:
     {
         if (game >= app.autoGames.size())
             return;
+        ForgetRemoved(app);
         launcherState.removed = app.autoGames[game];
         launcherState.removedIndex = game;
         launcherState.removedAt = glfwGetTime();
@@ -1362,7 +1376,7 @@ launcher::Model DescribeLauncher(App& app)
     if (app.active)
         model.effects = DescribeEffects(app);
     if (launcherState.removed && glfwGetTime() - launcherState.removedAt > kUndoSeconds)
-        launcherState.removed.reset();
+        ForgetRemoved(app);
     if (launcherState.removed)
         model.removed = launcher::Removed{ launcherState.removedIndex, launcherState.removed->name };
 

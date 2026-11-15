@@ -478,3 +478,18 @@ void RenamePerformance(const std::string& from, const std::string& to)
     if (ini.Changed() && !WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
 }
+
+void RemovePerformance(const std::string& game)
+{
+    // Empty is [PERFORMANCE] itself.
+    if (game.empty())
+        return;
+    const fs::path path = DataDirectory() / "Unishade.ini";
+    IniText ini(ReadFile(path));
+    std::string value;
+    for (const char* key : kPerformanceKeys)
+        if (ini.Get(PerformanceSection(game), key, value) && !value.empty())
+            ini.Set(PerformanceSection(game), key, "");
+    if (ini.Changed() && !WriteFile(path, ini.Text()))
+        Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
+}

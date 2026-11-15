@@ -87,6 +87,8 @@ int EffectResolution(const std::string& game);
 void SetEffectResolution(const std::string& game, int percent);
 // Moves a game's own performance settings to its new name, leaving the old one without.
 void RenamePerformance(const std::string& from, const std::string& to);
+// Forgets a removed game's own performance settings.
+void RemovePerformance(const std::string& game);
 
 // The preset last used in a saved game, from Unishade.ini. Empty when the game has none yet.
 fs::path GamePreset(const std::string& game);
