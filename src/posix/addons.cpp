@@ -830,20 +830,36 @@ void Addons::Install(const Official& addon, const std::atomic<bool>& cancel,
                      const std::function<void(size_t file, uint64_t received, uint64_t total)>& progress)
 {
 #ifdef _WIN32
-    for (size_t i = 0; i < addon.files.size(); ++i)
+    // Each file downloads under another name, and they take their places once all of them are whole and checked, so a
+    // failed install leaves what was there.
+    std::vector<fs::path> parts;
+    try
     {
-        const Official::File& file = addon.files[i];
-        const fs::path path = AddonsDirectory() / fs::path(file.path);
-        fs::create_directories(path.parent_path());
-        // Under another name until it is whole and checked, so a broken file is never taken for the add-on.
-        fs::path part = path;
-        part += ".part";
-        Download(Wide(file.url), part, file.sha256, kAddonLimit, cancel, [&](uint64_t received, uint64_t total) {
-            if (progress)
-                progress(i, received, total);
-        });
-        fs::rename(part, path);
-        Log(LogLevel::Info, "Installed %s from %s.", file.path.c_str(), file.url.c_str());
+        for (size_t i = 0; i < addon.files.size(); ++i)
+        {
+            const Official::File& file = addon.files[i];
+            const fs::path path = AddonsDirectory() / fs::path(file.path);
+            fs::create_directories(path.parent_path());
+            fs::path part = path;
+            part += ".part";
+            Download(Wide(file.url), part, file.sha256, kAddonLimit, cancel, [&](uint64_t received, uint64_t total) {
+                if (progress)
+                    progress(i, received, total);
+            });
+            parts.push_back(part);
+        }
+        for (size_t i = 0; i < addon.files.size(); ++i)
+        {
+            fs::rename(parts[i], AddonsDirectory() / fs::path(addon.files[i].path));
+            Log(LogLevel::Info, "Installed %s from %s.", addon.files[i].path.c_str(), addon.files[i].url.c_str());
+        }
+    }
+    catch (...)
+    {
+        std::error_code ignored;
+        for (const fs::path& part : parts)
+            fs::remove(part, ignored);
+        throw;
     }
 #else
     (void)cancel;
