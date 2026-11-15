@@ -78,6 +78,8 @@ public:
     void CloseMenu() override { calls.push_back("close"); }
     void Quit(bool save) override { calls.push_back(save ? "quit saving" : "quit"); }
     void KeepRunning() override { calls.push_back("keep running"); }
+    const launcher::EffectSettings* DescribeSettings(size_t) override { return &settings; }
+    launcher::EffectSettings settings;
 
     void SetSwitch(launcher::Switch, bool) override {}
     void PressCard(size_t, size_t) override {}
@@ -117,6 +119,16 @@ void Frame(Host& host)
 size_t Count(const char* label)
 {
     return static_cast<size_t>(std::count_if(items.begin(), items.end(), [&](const Item& item) { return item.label == label; }));
+}
+
+// A control of the last frame that shares its ID with another, which Dear ImGui cannot tell apart.
+std::optional<std::string> SharedId()
+{
+    for (size_t i = 0; i < items.size(); ++i)
+        for (size_t j = i + 1; j < items.size(); ++j)
+            if (items[i].id && items[i].id == items[j].id && items[i].rect.Min.x != items[j].rect.Min.x)
+                return items[i].label.empty() ? "an unlabelled control" : items[i].label;
+    return std::nullopt;
 }
 
 // The place of the nth control with a label in the last frame.
@@ -343,6 +355,62 @@ bool QuitTests(Host& host)
     ok &= Check(!Find("Don't save"), "the question goes once nothing asks it");
     return ok;
 }
+// Every page, in both places, with an effect's settings open, has controls Dear ImGui can tell apart.
+bool IdTests(Host& host)
+{
+    bool ok = true;
+    launcher::Model model = EffectsModel();
+    model.settings.performance = launcher::Performance{};
+    model.settings.shortcuts = { { "Open the menu", "", "Home", true }, { "Screenshot", "", "F9" } };
+    model.games[0].performance = launcher::Performance{};
+    using Control = launcher::EffectSetting::Control;
+    host.settings = { .tooltip = "Does things.",
+                      .settings = { { .control = Control::Slider, .label = "Amount", .category = "Look", .range = true, .max = 1 },
+                                    { .control = Control::Check, .floating = false, .label = "On", .category = "Look" },
+                                    { .control = Control::Drag, .count = 2, .label = "Focus" } },
+                      .definitions = { { "QUALITY", "", "1" } } };
+    for (const launcher::Place place : { launcher::Place::Window, launcher::Place::Game })
+    {
+        launcher::Reset(place);
+        const auto frame = [&] { Frame(host, model, place); };
+        frame();
+        frame();
+        const auto check = [&](const char* page) {
+            if (const std::optional<std::string> shared = SharedId())
+            {
+                std::printf("Failed: %s shares its ID on %s %s\n", shared->c_str(), page, place == launcher::Place::Game ? "over the game" : "in the window");
+                ok = false;
+            }
+        };
+        ImGuiIO& io = ImGui::GetIO();
+        const auto press = [&](const char* label) {
+            if (const std::optional<ImVec2> at = Find(label))
+            {
+                io.AddMousePosEvent(at->x, at->y);
+                frame();
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+                frame();
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+                frame();
+                frame();
+            }
+        };
+        press("game");
+        press("effect");
+        frame();
+        check("the game's page");
+        press("home");
+        check("Home");
+        press("settings");
+        check("Settings");
+        for (const char* page : { "Performance", "Shortcuts" })
+        {
+            press(page);
+            check(page);
+        }
+    }
+    return ok;
+}
 } // namespace
 
 int main()
@@ -382,6 +450,10 @@ int main()
     {
         Host host;
         ok &= QuitTests(host);
+    }
+    {
+        Host host;
+        ok &= IdTests(host);
     }
 
     kit::ForgetContext(context);

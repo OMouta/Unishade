@@ -1770,7 +1770,7 @@ void EffectsSection(const Model& model, Host& host, size_t index, const Page& pa
     SectionHeading(page, y, "EFFECTS");
     // All of them on and off.
     ImGui::SetCursorScreenPos(page.At(page.right - S(40), headingY - S(1)));
-    if (kit::Switch("all", effects.on, ImVec2(S(40), S(22))))
+    if (kit::Switch("every", effects.on, ImVec2(S(40), S(22))))
         host.SetSwitch(Switch::Effects, !effects.on);
     Tooltip(effects.on ? "Turn all effects off" : "Turn effects back on");
     SearchBox(page, y, "##search", "Search effects", state->search, sizeof(state->search));
