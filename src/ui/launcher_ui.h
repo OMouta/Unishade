@@ -108,6 +108,10 @@ struct EffectSetting
     std::string category;
     std::string text;  // shown above it
     std::string items; // a List's choices, each ending in '\0'
+    std::string units; // after the value
+    int spacing = 0;   // lines of space above it
+    bool categoryClosed = false; // its category starts closed
+    bool resettable = true;
     bool range = false;
     float min = 0;
     float max = 0;

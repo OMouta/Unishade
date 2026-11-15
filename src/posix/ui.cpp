@@ -660,6 +660,10 @@ const launcher::EffectSettings* SettingsOf(App& app, size_t index)
                                          .category = uniform.category,
                                          .text = uniform.text,
                                          .items = uniform.items,
+                                         .units = uniform.units,
+                                         .spacing = uniform.spacing,
+                                         .categoryClosed = uniform.categoryClosed,
+                                         .resettable = !uniform.noReset,
                                          .range = uniform.min > std::numeric_limits<float>::lowest() && uniform.max < std::numeric_limits<float>::max(),
                                          .min = uniform.min,
                                          .max = uniform.max,
@@ -941,7 +945,7 @@ public:
         }
         else if (fx::Effect* target = EffectOf(effect))
             for (const fx::Uniform& uniform : target->uniforms)
-                if (uniform.source.empty())
+                if (uniform.source.empty() && !uniform.noReset)
                     app.runtime.ResetValue(*target, uniform);
         app.runtime.SetDirty();
     }

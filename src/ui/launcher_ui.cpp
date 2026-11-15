@@ -1472,7 +1472,11 @@ bool SettingsHeading(const char* label, bool openFirst)
     HandOnHover();
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->AddRectFilled(min, min + size, hovered ? kCardHover : kCard, S(6));
-    Line(draw, min.x + S(10), min.x + size.x - S(30), min.y + size.y / 2, label, kText, kNote, true);
+    // Effects put line breaks around names for the space they leave in ReShade's menu.
+    std::string text = label;
+    text.erase(0, text.find_first_not_of(" \r\n\t"));
+    text.erase(text.find_last_not_of(" \r\n\t") + 1);
+    Line(draw, min.x + S(10), min.x + size.x - S(30), min.y + size.y / 2, text, kText, kNote, true);
     Chevron(draw, ImVec2(min.x + size.x - S(14), min.y + size.y / 2), open, hovered || open ? kText : kDim);
     return open;
 }
@@ -1504,6 +1508,8 @@ bool ListControl(const char* id, int& value, const std::string& items)
 // One setting's label and control. Returns true when its value changed, in value.
 bool SettingRow(Host& host, size_t effect, size_t index, const EffectSetting& setting, EffectSetting& value)
 {
+    if (setting.spacing > 0)
+        ImGui::Dummy(ImVec2(0, ImGui::GetTextLineHeight() * static_cast<float>(setting.spacing)));
     if (!setting.text.empty())
         Text(setting.text, kDim, kNote);
     ImGui::PushID(static_cast<int>(index));
@@ -1534,7 +1540,10 @@ bool SettingRow(Host& host, size_t effect, size_t index, const EffectSetting& se
     const int low = static_cast<int>(setting.min), high = static_cast<int>(setting.max);
     const void* min = !setting.range ? nullptr : setting.floating ? static_cast<const void*>(&setting.min) : &low;
     const void* max = !setting.range ? nullptr : setting.floating ? static_cast<const void*>(&setting.max) : &high;
-    const char* format = setting.floating ? "%.3f" : "%d";
+    // The units follow the number, with any % in them doubled for the format.
+    std::string format = setting.floating ? "%.3f" : "%d";
+    for (const char c : setting.units)
+        format += c == '%' ? std::string("%%") : std::string(1, c);
     bool changed = false;
     switch (setting.control)
     {
@@ -1554,16 +1563,16 @@ bool SettingRow(Host& host, size_t effect, size_t index, const EffectSetting& se
         changed = setting.count == 3 ? ImGui::ColorEdit3("##value", floats) : ImGui::ColorEdit4("##value", floats, ImGuiColorEditFlags_AlphaBar);
         break;
     case EffectSetting::Control::Slider:
-        changed = ImGui::SliderScalarN("##value", type, values, setting.count, min, max, format);
+        changed = ImGui::SliderScalarN("##value", type, values, setting.count, min, max, format.c_str());
         break;
     case EffectSetting::Control::Input:
-        changed = ImGui::InputScalarN("##value", type, values, setting.count);
+        changed = ImGui::InputScalarN("##value", type, values, setting.count, nullptr, nullptr, format.c_str());
         break;
     case EffectSetting::Control::Drag:
-        changed = ImGui::DragScalarN("##value", type, values, setting.count, setting.step, min, max, format);
+        changed = ImGui::DragScalarN("##value", type, values, setting.count, setting.step, min, max, format.c_str());
         break;
     }
-    if (ImGui::BeginPopupContextItem("reset"))
+    if (setting.resettable && ImGui::BeginPopupContextItem("reset"))
     {
         if (ImGui::MenuItem("Reset to default"))
             host.ResetSettings(effect, index);
@@ -1632,22 +1641,24 @@ void SettingsArea(Host& host, const Effect& effect, size_t index, const Page& pa
     PushSize(kNote);
     if (!settings->tooltip.empty())
         Text(settings->tooltip, kDim, kNote);
-    // Grouped by category in the order they first appear, as in ReShade.
-    std::vector<const std::string*> categories;
+    // Grouped by category in the order they first appear, as in ReShade, each open unless its first setting asks
+    // otherwise.
+    std::vector<const EffectSetting*> categories;
     for (const EffectSetting& setting : settings->settings)
-        if (std::none_of(categories.begin(), categories.end(), [&](const std::string* category) { return *category == setting.category; }))
-            categories.push_back(&setting.category);
+        if (std::none_of(categories.begin(), categories.end(), [&](const EffectSetting* first) { return first->category == setting.category; }))
+            categories.push_back(&setting);
     if (categories.empty() && settings->definitions.empty())
         Text("This effect has no settings.", kDim, kNote);
     std::optional<size_t> active, hovered;
-    for (const std::string* category : categories)
+    for (const EffectSetting* first : categories)
     {
-        if (!category->empty() && !SettingsHeading(category->c_str(), true))
+        const std::string& category = first->category;
+        if (!category.empty() && !SettingsHeading(category.c_str(), !first->categoryClosed))
             continue;
         for (size_t i = 0; i < settings->settings.size(); ++i)
         {
             const EffectSetting& setting = settings->settings[i];
-            if (setting.category != *category)
+            if (setting.category != category)
                 continue;
             EffectSetting value;
             if (SettingRow(host, index, i, setting, value))
