@@ -1406,8 +1406,13 @@ void FocusOverlay(GLFWwindow* window)
 }
 
 // The overlay's place above the game is kept by ShowOverlay, and X11 windows have square corners.
-void MatchOverlay(GLFWwindow*, WindowId)
+void MatchOverlay(GLFWwindow*, WindowId, bool)
 {
+}
+
+bool OverlayCanStayBehind()
+{
+    return false;
 }
 
 void ReturnFocus(GLFWwindow*, const Window& game)

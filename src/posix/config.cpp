@@ -342,6 +342,7 @@ Settings LoadSettings()
 
     settings.autoSavePresets = !ini.Get("HOST", "AutoSavePresets", value) || value != "0";
     settings.skipTitleBar = !ini.Get("HOST", "SkipTitleBar", value) || value != "0";
+    settings.keepEffectsVisible = !ini.Get("HOST", "KeepEffectsVisible", value) || value != "0";
 
     if ((ini.Changed() || !existed) && !WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
@@ -361,6 +362,9 @@ bool SaveSettings(const Settings& settings)
     ini.Set("HOST", "AutoSavePresets", settings.autoSavePresets ? "1" : "0");
 #ifdef __APPLE__
     ini.Set("HOST", "SkipTitleBar", settings.skipTitleBar ? "1" : "0");
+#endif
+#ifdef _WIN32
+    ini.Set("HOST", "KeepEffectsVisible", settings.keepEffectsVisible ? "1" : "0");
 #endif
     if (WriteFile(path, ini.Text()))
         return true;

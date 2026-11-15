@@ -54,6 +54,8 @@ struct Settings
     bool autoSavePresets = true;
     // macOS only: effects leave out the title bar of a game in a window. platform.h says how it is told apart.
     bool skipTitleBar = true;
+    // Effects stay over the game while another window is in front of it, where platform::OverlayCanStayBehind.
+    bool keepEffectsVisible = true;
     fs::path preset;
     // Searched recursively, like ReShade's paths ending in \**.
     std::vector<fs::path> effectPaths;

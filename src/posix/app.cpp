@@ -479,21 +479,23 @@ void App::UpdateOverlay()
 {
     platform::Rect bounds;
     const bool sized = frame.width != failedWidth || frame.height != failedHeight;
-    const bool visible = captureEnabled && active && HasFrame() && sized && (menuOpen || inFront) && platform::WindowBounds(active->id, bounds) &&
+    // A game behind another window keeps its effects when the user asked for that.
+    const bool behind = !menuOpen && !inFront && settings.keepEffectsVisible && platform::OverlayCanStayBehind();
+    const bool visible = captureEnabled && active && HasFrame() && sized && (menuOpen || inFront || behind) && platform::WindowBounds(active->id, bounds) &&
                          !GameCovered();
     platform::SetCaptureIdle(!visible);
     if (!visible)
     {
         if (overlayVisible)
         {
-            Log(LogLevel::Info, "Overlay hidden: capture=%d, frame=%d, sized=%d, in_front=%d, menu=%d, covered=%d.",
-                captureEnabled, HasFrame(), sized, inFront, menuOpen, gameCovered);
+            Log(LogLevel::Info, "Overlay hidden: capture=%d, frame=%d, sized=%d, in_front=%d, menu=%d, keep_visible=%d, covered=%d.",
+                captureEnabled, HasFrame(), sized, inFront, menuOpen, settings.keepEffectsVisible, gameCovered);
             platform::ShowOverlay(overlay.window, false);
         }
         overlayVisible = false;
         return;
     }
-    platform::MatchOverlay(overlay.window, active->id);
+    platform::MatchOverlay(overlay.window, active->id, behind);
     if (!overlayVisible || !(bounds == overlayBounds))
     {
         Log(LogLevel::Info, "Overlay placed: bounds=%d,%d %dx%d, frame=%ux%u.", bounds.x, bounds.y, bounds.width, bounds.height, frame.width, frame.height);

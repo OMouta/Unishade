@@ -124,8 +124,12 @@ void SetupOverlayWindow(GLFWwindow* window);
 void ShowOverlay(GLFWwindow* window, bool visible);
 // Fits the overlay to the game's window beyond its bounds: on macOS its level, just above the game's, and its rounded
 // corners. Call before the overlay first shows and on every pass while it shows, since the game's layer can change.
-// Does nothing on X11.
-void MatchOverlay(GLFWwindow* window, WindowId game);
+// behind keeps it right above the game, below the windows in front of the game, and is only given where
+// OverlayCanStayBehind. Does nothing on X11.
+void MatchOverlay(GLFWwindow* window, WindowId game, bool behind);
+// Whether the overlay can stay over the game while another window is in front of it, so effects stay visible. Only on
+// Windows.
+bool OverlayCanStayBehind();
 // Gives the overlay keyboard focus while the menu is open.
 void FocusOverlay(GLFWwindow* window);
 // Gives keyboard focus back to the game, such as when the menu closes. On macOS the game stays the active program

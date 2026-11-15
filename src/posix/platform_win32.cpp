@@ -963,26 +963,59 @@ void SetupOverlayWindow(GLFWwindow* window)
     SetWindowPos(overlay, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 }
 
+// In the place MatchOverlay gave it.
 void ShowOverlay(GLFWwindow* window, bool visible)
 {
     const HWND overlay = glfwGetWin32Window(window);
     if (visible)
-        SetWindowPos(overlay, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        SetWindowPos(overlay, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     else
         ShowWindow(overlay, SW_HIDE);
 }
 
-// A game can be topmost too, as borderless ones often are, and Windows raises the window it activates to the top of
-// its group, above the overlay.
-void MatchOverlay(GLFWwindow* window, WindowId game)
+bool IsTopmost(HWND window)
 {
+    return (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+}
+
+// Above every window, or right above the game so that whatever covers the game also covers its effects. A game can
+// be topmost too, as borderless ones often are, and Windows raises the window it activates to the top of its group,
+// above the overlay.
+void MatchOverlay(GLFWwindow* window, WindowId gameId, bool behind)
+{
+    constexpr UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
     const HWND overlay = glfwGetWin32Window(window);
+    const HWND game = Handle(gameId);
+    if (behind)
+    {
+        if (GetWindow(game, GW_HWNDPREV) == overlay)
+            return;
+        // Topmost windows stay above all others, so the overlay first joins the game's group. HWND_NOTOPMOST leaves
+        // the topmost group and does nothing out of it.
+        const bool topmost = IsTopmost(game);
+        SetWindowPos(overlay, topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+        // Without a window of its own group above it, the game is the first of its group.
+        const HWND above = GetWindow(game, GW_HWNDPREV);
+        if (above != overlay)
+            SetWindowPos(overlay, above && IsTopmost(above) == topmost ? above : HWND_TOP, 0, 0, 0, 0, flags);
+        return;
+    }
+    if (!IsTopmost(overlay))
+    {
+        SetWindowPos(overlay, HWND_TOPMOST, 0, 0, 0, 0, flags);
+        return;
+    }
     for (HWND above = GetWindow(overlay, GW_HWNDPREV); above; above = GetWindow(above, GW_HWNDPREV))
-        if (above == Handle(game))
+        if (above == game)
         {
-            SetWindowPos(overlay, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            SetWindowPos(overlay, HWND_TOPMOST, 0, 0, 0, 0, flags);
             return;
         }
+}
+
+bool OverlayCanStayBehind()
+{
+    return true;
 }
 
 void FocusOverlay(GLFWwindow* window)

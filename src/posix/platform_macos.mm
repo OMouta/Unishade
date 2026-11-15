@@ -1035,7 +1035,7 @@ void ShowOverlay(GLFWwindow* window, bool visible)
         [overlay orderOut:nil];
 }
 
-void MatchOverlay(GLFWwindow* window, WindowId game)
+void MatchOverlay(GLFWwindow* window, WindowId game, bool)
 {
     @autoreleasepool
     {
@@ -1080,6 +1080,11 @@ void MatchOverlay(GLFWwindow* window, WindowId game)
             content.masksToBounds = radius > 0;
         }
     }
+}
+
+bool OverlayCanStayBehind()
+{
+    return false;
 }
 
 void FocusOverlay(GLFWwindow* window)

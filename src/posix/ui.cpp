@@ -1803,6 +1803,12 @@ public:
                 app.runtime.SavePreset();
             SaveSettings(app.settings);
         }
+        else if (which == launcher::Switch::KeepEffectsVisible)
+        {
+            app.settings.keepEffectsVisible = on;
+            SaveSettings(app.settings);
+            Log(LogLevel::Info, "Settings: keep_effects_visible=%d.", on);
+        }
     }
 
     void PressCard(size_t card, size_t button) override
@@ -2152,6 +2158,8 @@ launcher::Model DescribeLauncher(App& app)
     link("Docs", [] { platform::Open("https://unishade.me/docs/"); });
 
     model.settings.autoSavePresets = app.settings.autoSavePresets;
+    if (platform::OverlayCanStayBehind())
+        model.settings.keepEffectsVisible = app.settings.keepEffectsVisible;
     for (size_t i = 0; i < std::size(kShortcuts); ++i)
         model.settings.shortcuts.push_back({ kShortcuts[i].label, kShortcutDescriptions[i], FormatHotkey(app.settings.hotkeys.*kShortcuts[i].member), true });
     model.settings.recording = launcherState.recording;
