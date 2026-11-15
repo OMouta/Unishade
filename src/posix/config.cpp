@@ -17,7 +17,10 @@
 #include <unistd.h>
 #endif
 
+#include <algorithm>
 #include <cerrno>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -343,6 +346,8 @@ Settings LoadSettings()
     settings.autoSavePresets = !ini.Get("HOST", "AutoSavePresets", value) || value != "0";
     settings.skipTitleBar = !ini.Get("HOST", "SkipTitleBar", value) || value != "0";
     settings.keepEffectsVisible = !ini.Get("HOST", "KeepEffectsVisible", value) || value != "0";
+    if (ini.Get("HOST", "MenuScale", value))
+        settings.menuScale = std::clamp(std::round(std::strtof(value.c_str(), nullptr) * 4) / 4, kSmallestMenuScale, kLargestMenuScale);
 
     if ((ini.Changed() || !existed) && !WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
@@ -360,6 +365,9 @@ bool SaveSettings(const Settings& settings)
     ini.Set("GENERAL", "PresetPath", Relative(settings.preset));
     ini.Set("GENERAL", "PreprocessorDefinitions", FormatDefinitions(settings.definitions));
     ini.Set("HOST", "AutoSavePresets", settings.autoSavePresets ? "1" : "0");
+    char scale[16];
+    std::snprintf(scale, sizeof(scale), "%.2f", settings.menuScale);
+    ini.Set("HOST", "MenuScale", scale);
 #ifdef __APPLE__
     ini.Set("HOST", "SkipTitleBar", settings.skipTitleBar ? "1" : "0");
 #endif

@@ -1007,7 +1007,11 @@ public:
     }
 
     void SetPerformance(std::optional<size_t>, launcher::PerformanceSetting, int) override {}
-    void StepMenuSize(int) override {}
+    void StepMenuSize(int step) override
+    {
+        app.settings.menuScale = std::clamp(app.settings.menuScale + 0.25f * static_cast<float>(step), kSmallestMenuScale, kLargestMenuScale);
+        SaveSettings(app.settings);
+    }
 
     void RecordShortcut(int shortcut) override
     {
@@ -1309,6 +1313,9 @@ launcher::Model DescribeLauncher(App& app)
     model.settings.autoSavePresets = app.settings.autoSavePresets;
     if (platform::OverlayCanStayBehind())
         model.settings.keepEffectsVisible = app.settings.keepEffectsVisible;
+    model.settings.menuSize = static_cast<int>(std::lround(app.settings.menuScale * 100));
+    model.settings.canShrinkMenu = app.settings.menuScale > kSmallestMenuScale + 0.01f;
+    model.settings.canGrowMenu = app.settings.menuScale < kLargestMenuScale - 0.01f;
     model.settings.reloadEffects = true;
 #ifdef __APPLE__
     model.settings.skipTitleBar = app.settings.skipTitleBar;
@@ -1535,7 +1542,7 @@ void DrawOverlay(App& app)
         app.toastUntil = 0;
     // The menu follows the size of the game's window, as on Windows, counted in the monitor's own units.
     const ImVec2 display = ImGui::GetIO().DisplaySize;
-    const float menuScale = menu_layout::Scale(display.x / app.overlay.scale, display.y / app.overlay.scale) * app.overlay.scale;
+    const float menuScale = menu_layout::Scale(display.x / app.overlay.scale, display.y / app.overlay.scale, app.settings.menuScale) * app.overlay.scale;
     if (menuScale <= 0)
         return;
     if (app.menuOpen)

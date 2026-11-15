@@ -48,6 +48,9 @@ private:
     std::string error;
 };
 
+constexpr float kSmallestMenuScale = 0.75f;
+constexpr float kLargestMenuScale = 2;
+
 struct Settings
 {
     InputHotkeys hotkeys;
@@ -56,6 +59,8 @@ struct Settings
     bool skipTitleBar = true;
     // Effects stay over the game while another window is in front of it, where platform::OverlayCanStayBehind.
     bool keepEffectsVisible = true;
+    // The menu's size on top of the one that follows the game's window, in quarter steps.
+    float menuScale = 1;
     fs::path preset;
     // Searched recursively, like ReShade's paths ending in \**.
     std::vector<fs::path> effectPaths;
