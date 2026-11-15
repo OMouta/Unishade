@@ -102,13 +102,8 @@ set(RESHADE_IMGUI_INCLUDE "${CMAKE_BINARY_DIR}/reshade-imgui")
 fetch_file("https://raw.githubusercontent.com/ocornut/imgui/v1.92.5-docking/imgui.h" 07562842049eaca4e47c3fcdcc9d8eafd442695b9856d6f6639e92e1bb6c737e "${RESHADE_IMGUI_INCLUDE}/imgui.h")
 fetch_file("https://raw.githubusercontent.com/ocornut/imgui/v1.92.5-docking/imconfig.h" 6e5687893594ebfaf8569280cfea83d025904a8a4e23bec073086f6c5bc8f7fb "${RESHADE_IMGUI_INCLUDE}/imconfig.h")
 
-# AMD's FSR 1 upscales effects that run below the game's resolution. The host embeds the headers and compiles the
-# shader when it first upscales.
-set(FSR_DIR "${CMAKE_BINARY_DIR}/fsr")
-set(FSR_URL "https://raw.githubusercontent.com/GPUOpen-Effects/FidelityFX-FSR/v1.0.2/ffx-fsr")
-fetch_file("${FSR_URL}/ffx_a.h" f60e2722fcd13989523b9164d776ab382b3692791767f3bf8bb19967f763f3fb "${FSR_DIR}/ffx_a.h")
-fetch_file("${FSR_URL}/ffx_fsr1.h" 93c3922362ea7fc99cbcc698ca30c98de4f8c246d1fbb0b09e015ddef38ce3a5 "${FSR_DIR}/ffx_fsr1.h")
-
+# The host embeds AMD's FSR 1 headers, which src/posix/posix.cmake downloads, and compiles the shader when it first
+# upscales.
 add_executable(Unishade WIN32
     src/Unishade.rc
     src/main.cpp

@@ -2,6 +2,10 @@
 #include "log.h"
 #include "theme.h"
 #include "ui.h"
+#ifdef _WIN32
+#include "discord.h"
+#include "upscale.h"
+#endif
 
 #include <GLFW/glfw3.h>
 #include <stb_image_write.h>
@@ -44,6 +48,9 @@ bool App::Init(std::string& error)
         FormatDefinitions(settings.definitions).c_str());
 #ifdef __APPLE__
     Log(LogLevel::Info, "Settings: skip_title_bar=%d.", settings.skipTitleBar);
+#endif
+#ifdef _WIN32
+    Log(LogLevel::Info, "Settings: discord_presence=%d.", settings.discordPresence);
 #endif
     for (const fs::path& path : settings.effectPaths)
         Log(LogLevel::Info, "Effect search path: %s.", path.string().c_str());
@@ -151,6 +158,9 @@ void App::Run()
         TakeScreenshots();
 
         UpdateTarget();
+#ifdef _WIN32
+        UpdateDiscord();
+#endif
         // Once per pass, since on X11 each asks the X server.
         const bool overlayFocused = glfwGetWindowAttrib(overlay.window, GLFW_FOCUSED);
         inFront = active && (platform::ProcessInFront(active->pid) || overlayFocused);
@@ -234,6 +244,9 @@ void App::Shutdown()
         ui->window = nullptr;
     }
     runtime.Shutdown();
+#ifdef _WIN32
+    ReleaseUpscaler();
+#endif
     platform::Shutdown();
     gpu.Shutdown();
 }
@@ -272,6 +285,11 @@ void App::StartCapture(const platform::Window& window)
     if (!retrying)
         Log(LogLevel::Info, "Capturing %s", window.title.c_str());
     FollowGame();
+#ifdef _WIN32
+    effectResolution = EffectResolution(game);
+    platform::SetFrameScale(effectResolution);
+    Log(LogLevel::Info, "Effect resolution: %d%%.", effectResolution);
+#endif
     if (!startHintShown)
     {
         ShowToast("opens the Unishade menu", 6, HotkeyText(kEditModeHotkey));
@@ -554,13 +572,21 @@ void App::RenderOverlay()
     runtime.Render(surface.commands, Source(), effectsEnabled && !comparing && !compareButton);
     FullBarrier(surface.commands);
     const GpuImage& output = runtime.Output();
-    VkImageBlit blit{};
-    blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-    blit.srcOffsets[1] = { int(output.width), int(output.height), 1 };
-    blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-    blit.dstOffsets[1] = { int(surface.extent.width), int(surface.extent.height), 1 };
-    vkCmdBlitImage(surface.commands, output.image, VK_IMAGE_LAYOUT_GENERAL, surface.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
-                   VK_FILTER_LINEAR);
+#ifdef _WIN32
+    const bool upscaled = Upscale(surface.commands, effectResolution, output, surface.image, surface.extent);
+#else
+    const bool upscaled = false;
+#endif
+    if (!upscaled)
+    {
+        VkImageBlit blit{};
+        blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blit.srcOffsets[1] = { int(output.width), int(output.height), 1 };
+        blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blit.dstOffsets[1] = { int(surface.extent.width), int(surface.extent.height), 1 };
+        vkCmdBlitImage(surface.commands, output.image, VK_IMAGE_LAYOUT_GENERAL, surface.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                       VK_FILTER_LINEAR);
+    }
 
     BeginUi(overlay);
     DrawOverlay(*this);
@@ -1178,6 +1204,16 @@ void App::TakeScreenshots()
         screenshot = screenshots.erase(screenshot);
     }
 }
+
+#ifdef _WIN32
+void App::SetEffectResolution(int percent)
+{
+    ::SetEffectResolution(game, percent);
+    effectResolution = EffectResolution(game);
+    platform::SetFrameScale(effectResolution);
+    Log(LogLevel::Info, "Settings: effect_resolution=%d%% for %s.", effectResolution, game.empty() ? "every game" : game.c_str());
+}
+#endif
 
 bool App::EffectsInstalled()
 {

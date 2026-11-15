@@ -54,6 +54,8 @@ struct Settings
     bool autoSavePresets = true;
     // macOS only: effects leave out the title bar of a game in a window. platform.h says how it is told apart.
     bool skipTitleBar = true;
+    // Windows only: Discord shows the game Unishade runs on. discord.h says what it shows.
+    bool discordPresence = true;
     fs::path preset;
     // Searched recursively, like ReShade's paths ending in \**.
     std::vector<fs::path> effectPaths;
@@ -70,6 +72,13 @@ bool SaveSettings(const Settings& settings);
 // The preset last used in a saved game, from Unishade.ini. Empty when the game has none yet.
 fs::path GamePreset(const std::string& game);
 void SetGamePreset(const std::string& game, const fs::path& preset);
+
+// The percentage of the game's picture effects run at, kept as on the ReShade host: in [PERFORMANCE.<game>] of
+// Unishade.ini for a saved game with its own, otherwise in [PERFORMANCE], which an empty game reads and sets.
+int EffectResolution(const std::string& game);
+void SetEffectResolution(const std::string& game, int percent);
+// Moves a game's own settings to its new name.
+void RenamePerformance(const std::string& from, const std::string& to);
 
 // "A=1,B" as ReShade writes preprocessor definitions, and back.
 std::vector<std::pair<std::string, std::string>> ParseDefinitions(const std::string& text);
