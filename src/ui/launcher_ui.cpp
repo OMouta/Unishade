@@ -922,7 +922,7 @@ void GameHero(const Model& model, Host& host, size_t index, const Page& page, fl
     {
         const float nameWidth = std::min(Measure(game.name, kHeroTitle, true).x, textRight - textLeft - S(40));
         Line(page.draw, page.origin.x + textLeft, page.origin.x + textLeft + nameWidth, page.origin.y + textY + S(18), game.name, kText, kHeroTitle, true);
-        if (IconButton("rename", page.At(textLeft + nameWidth + S(10), textY + S(4)), S(28), PencilIcon, "Rename"))
+        if (!game.picked && IconButton("rename", page.At(textLeft + nameWidth + S(10), textY + S(4)), S(28), PencilIcon, "Rename"))
         {
             state.renaming = game.id;
             state.renameFailed = false;
@@ -940,12 +940,15 @@ void GameHero(const Model& model, Host& host, size_t index, const Page& page, fl
     const std::string detail = game.running ? model.status.detail : game.enabled ? "Effects start when you open it." : "Unishade skips it while it's off.";
     Line(page.draw, pillMin.x + pillWidth + S(12), page.origin.x + textRight, pillMin.y + S(11), detail, kDim, kBody);
 
-    ImGui::SetCursorScreenPos(page.At(page.right - controlsWidth, y + S(10)));
-    if (kit::Switch("enabled", game.enabled, ImVec2(S(40), S(22))))
-        host.SetGameEnabled(index, !game.enabled);
-    Tooltip(game.enabled ? "Turn off" : "Turn on");
-    if (IconButton("remove", page.At(page.right - S(32), y + S(5)), S(32), CrossIcon, "Remove from list", true))
-        host.RemoveGame(index);
+    if (!game.picked)
+    {
+        ImGui::SetCursorScreenPos(page.At(page.right - controlsWidth, y + S(10)));
+        if (kit::Switch("enabled", game.enabled, ImVec2(S(40), S(22))))
+            host.SetGameEnabled(index, !game.enabled);
+        Tooltip(game.enabled ? "Turn off" : "Turn on");
+        if (IconButton("remove", page.At(page.right - S(32), y + S(5)), S(32), CrossIcon, "Remove from list", true))
+            host.RemoveGame(index);
+    }
 
     y += std::max(icon, textY + S(22) - y) + S(40);
 }

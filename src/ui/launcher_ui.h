@@ -183,6 +183,7 @@ struct Game
     std::string picture; // or empty for the name's first letter
     bool enabled = true;
     bool running = false;
+    bool picked = false; // a window picked for now rather than a saved game, so it cannot be renamed, turned off or removed
     std::vector<Preset> presets; // its own folder's first
     std::string preset;          // the id of the preset it starts with, or empty
     // While it is being played: the preset has changes that are not saved, with auto-save off, and uses effects that

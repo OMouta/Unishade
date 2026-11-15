@@ -1773,10 +1773,28 @@ std::string RenameGame(App& app, size_t index, std::string name)
     return {};
 }
 
+// The launcher lists a window picked for now after the saved games, when it is not one of them.
+bool Picked(App& app, size_t game)
+{
+    return game == app.autoGames.size() && app.active && app.game.empty();
+}
+
+bool Listed(App& app, size_t game)
+{
+    return game < app.autoGames.size() || Picked(app, game);
+}
+
 // Whether the game at an index of the launcher's list is the one being played.
 bool Playing(App& app, size_t game)
 {
-    return game < app.autoGames.size() && !app.game.empty() && !strcasecmp(FolderName(app.autoGames[game].name).c_str(), app.game.c_str());
+    return Picked(app, game) ||
+           (game < app.autoGames.size() && !app.game.empty() && !strcasecmp(FolderName(app.autoGames[game].name).c_str(), app.game.c_str()));
+}
+
+// The folder of a game's own presets, or the presets folder itself for a window picked for now.
+fs::path FolderOf(App& app, size_t game)
+{
+    return game < app.autoGames.size() ? GameFolder(FolderName(app.autoGames[game].name)) : PresetsDirectory();
 }
 
 // The game is played with the preset from now on: at once for the game being played, and otherwise when it starts.
@@ -1803,7 +1821,7 @@ void FollowPreset(App& app, const fs::path& from, const fs::path& to)
 // Where a preset of that name goes in the game's own folder, which is made, or empty when there is one already.
 fs::path NewGamePreset(App& app, size_t game, const std::string& name)
 {
-    const fs::path folder = GameFolder(FolderName(app.autoGames[game].name));
+    const fs::path folder = FolderOf(app, game);
     const fs::path path = folder / (name + ".ini");
     std::error_code error;
     if (fs::exists(path, error))
@@ -2077,14 +2095,14 @@ public:
 
     void UsePreset(size_t game, std::string_view preset) override
     {
-        if (game < app.autoGames.size())
+        if (Listed(app, game))
             UseGamePreset(app, game, fs::path(std::string(preset)));
     }
 
     bool NewPreset(size_t game, std::string_view typed) override
     {
         std::string name;
-        if (game >= app.autoGames.size() || !PresetName(typed, name, launcherState.presetProblem))
+        if (!Listed(app, game) || !PresetName(typed, name, launcherState.presetProblem))
             return false;
         RefreshLauncher();
         if (Playing(app, game))
@@ -2105,7 +2123,7 @@ public:
     bool CopyPreset(size_t game, std::string_view preset, std::string_view typed) override
     {
         std::string name;
-        if (game >= app.autoGames.size() || !PresetName(typed, name, launcherState.presetProblem))
+        if (!Listed(app, game) || !PresetName(typed, name, launcherState.presetProblem))
             return false;
         RefreshLauncher();
         const fs::path source{ std::string(preset) };
@@ -2232,9 +2250,9 @@ public:
 
     void OpenPresetsFolder(size_t game) override
     {
-        if (game >= app.autoGames.size())
+        if (!Listed(app, game))
             return;
-        const fs::path folder = GameFolder(FolderName(app.autoGames[game].name));
+        const fs::path folder = FolderOf(app, game);
         std::error_code error;
         fs::create_directories(folder, error);
         platform::Open(folder.string());
@@ -2486,6 +2504,18 @@ launcher::Model DescribeLauncher(App& app)
     }
     // Lent to the model, and given back once it is drawn.
     model.games = std::move(games);
+    if (Picked(app, app.autoGames.size()))
+    {
+        // Its own presets are the ones for all games.
+        launcher::Game picked{ .id = "picked", .name = app.active->title, .executable = fs::path(app.activeExecutable).filename().string(), .running = true, .picked = true };
+        const fs::path& inUse = app.runtime.PresetPath();
+        for (const fs::path& preset : PresetsOf(PresetsDirectory()))
+            picked.presets.push_back({ preset.string(), preset.stem().string(), "All games", preset == inUse });
+        if (inUse.parent_path() != PresetsDirectory())
+            picked.presets.push_back({ inUse.string(), inUse.stem().string(), inUse.parent_path().filename().string(), true });
+        picked.preset = inUse.string();
+        model.games.push_back(std::move(picked));
+    }
     for (size_t i = 0; i < model.games.size(); ++i)
     {
         const bool playing = Playing(app, i);
@@ -2708,6 +2738,8 @@ void EndUi(UiWindow& ui)
 // What the model was lent, once it is drawn.
 void GiveBack(launcher::Model& model)
 {
+    if (!model.games.empty() && model.games.back().picked)
+        model.games.pop_back();
     launcherState.games = std::move(model.games);
     if (model.effects)
     {
