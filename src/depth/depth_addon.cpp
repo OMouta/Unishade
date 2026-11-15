@@ -41,6 +41,10 @@ constexpr UINT kRowBytes = 16 * D3D12_TEXTURE_DATA_PITCH_ALIGNMENT;
 // The longest side of the picture depth is estimated from, for each choice of Detail, in the multiples of 14 Depth
 // Anything V2 expects.
 constexpr int kSizes[] = { 924, 518, 392, 266 };
+// The shortest the other side may be: 16 of the model's patches, which Medium gives a 16:9 frame. With fewer than 14,
+// as Low gave one, the model returns a blur that does not follow the picture, and with fewer than 16 the farthest
+// things stop short of the far plane. A smaller picture is stretched to it.
+constexpr int kShortestSide = 224;
 constexpr auto kStatisticsInterval = std::chrono::seconds(30);
 
 // Preprocess turns the frame into the model's input. Peak, Smooth and Upsample turn its output into DEPTH.
@@ -596,7 +600,7 @@ void Depth::Resize(const D3D11_TEXTURE2D_DESC& frame, int longest)
     const bool landscape = frame.Width >= frame.Height;
     const float ratio = landscape ? static_cast<float>(frame.Height) / frame.Width : static_cast<float>(frame.Width) / frame.Height;
     size = longest;
-    const int shortSide = std::max(14, static_cast<int>(std::lround(size * ratio / 14)) * 14);
+    const int shortSide = std::max(kShortestSide, static_cast<int>(std::lround(size * ratio / 14)) * 14);
     width = landscape ? size : shortSide;
     height = landscape ? shortSide : size;
     sourceWidth = frame.Width;
