@@ -70,6 +70,7 @@ bool App::Init(std::string& error)
         return false;
     }
     runtime.LoadPreset(settings.preset);
+    addons.Init(runtime);
 
     glfwDefaultWindowHints();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -149,6 +150,7 @@ void App::Run()
             }
         }
         TakeScreenshots();
+        addons.Update();
 
         UpdateTarget();
         // Once per pass, since on X11 each asks the X server.
@@ -225,6 +227,7 @@ void App::Shutdown()
     setup.Cancel();
     if (gpu.device)
         vkDeviceWaitIdle(gpu.device);
+    addons.Shutdown();
     for (UiWindow* ui : { &overlay, &launcher })
     {
         ShutdownUi(*ui);
@@ -551,7 +554,12 @@ void App::RenderOverlay()
     const bool screenshot = screenshotRequested;
     UpdateInput();
 
-    runtime.Render(surface.commands, Source(), effectsEnabled && !comparing && !compareButton);
+    // Add-ons work on the picture before effects, and not while effects are off, so comparing shows the game's own.
+    const bool effects = effectsEnabled && !comparing && !compareButton;
+    if (effects && addons.Frame(surface, Source(), frame.serial))
+        runtime.RenderEffects(surface.commands, effects);
+    else
+        runtime.Render(surface.commands, Source(), effects);
     FullBarrier(surface.commands);
     const GpuImage& output = runtime.Output();
     VkImageBlit blit{};

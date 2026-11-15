@@ -1,0 +1,121 @@
+#pragma once
+
+#include "effects.h"
+
+#include <addons/unishade_addon.h>
+
+#include <atomic>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+class Surface;
+
+// Add-ons, built against src/addons/unishade_addon.h, from the Addons folder in the data folder. One whose SHA-256 is
+// on the official list, src/addons/official.ini, loads without asking. Any other waits until the user says once
+// whether to load it, which Unishade.ini keeps for its path, so a rebuilt file loads without asking again.
+class Addons
+{
+    struct Library;
+    struct Exchange;
+
+public:
+    enum class State
+    {
+        Pending, // not official, and the user has not said whether to load it
+        Enabled,
+        Disabled,
+        Failed, // error says why
+    };
+
+    struct Setting
+    {
+        std::string key;
+        std::string label;
+        std::string tooltip;
+        UnishadeSettingType type = UNISHADE_SETTING_TOGGLE;
+        float min = 0;
+        float max = 1;
+        float defaultValue = 0;
+        std::vector<std::string> choices;
+        float value = 0; // in the current preset
+    };
+
+    struct Addon
+    {
+        std::string file; // its path in the Addons folder, which Unishade.ini remembers
+        std::string name; // its own once it loaded, before that the official list's or the file's
+        std::string description;
+        bool official = false;
+        State state = State::Pending;
+        std::string error;
+        std::vector<Setting> settings; // once it loaded
+        std::shared_ptr<Library> library;
+    };
+
+    // An add-on on the official list.
+    struct Official
+    {
+        struct File
+        {
+            std::string path; // in the Addons folder
+            std::string sha256;
+            std::string url;
+        };
+        std::string name;
+        std::vector<File> files; // the first is the add-on itself
+    };
+
+    Addons();
+    ~Addons();
+    void Init(fx::Runtime& runtime);
+    // Stops every add-on. The graphics card must be idle.
+    void Shutdown();
+
+    // Reads the Addons folder again, for files added, removed or replaced.
+    void Scan();
+    const std::vector<Addon>& List() const { return addons; }
+    // The answer for a Pending add-on: load it or not. Either way it is kept.
+    void Approve(const std::string& file, bool load);
+    // Turning a failed add-on on tries it again.
+    void SetEnabled(const std::string& file, bool enabled);
+    // Kept in the current preset.
+    void SetSetting(const std::string& file, size_t setting, float value);
+    // Starts and stops add-ons as the calls above asked, and takes settings from a preset that loaded. Call once per
+    // pass of the main loop, outside drawing, since stopping one prepares the effects again.
+    void Update();
+
+    // The official add-ons for this system.
+    const std::vector<Official>& OfficialList() const { return official; }
+    // Downloads an official add-on's files into the Addons folder and checks each one's SHA-256, replacing what is
+    // there. Stop the add-on before installing it again. Blocks, so call it from a thread of its own. Throws
+    // std::runtime_error with a message to show, or on Windows net.h's Cancelled once cancel is set. progress gets the
+    // file's index and its bytes so far.
+    static void Install(const Official& addon, const std::atomic<bool>& cancel,
+                        const std::function<void(size_t file, uint64_t received, uint64_t total)>& progress = {});
+
+    // Has the add-ons that work on frames work on this one, in the overlay's frame being recorded, before effects.
+    // Copies the picture in itself, so the caller goes on with RenderEffects. Returns false, having done nothing, when
+    // no add-on works on frames, and the caller renders as usual.
+    bool Frame(Surface& surface, const fx::Runtime::Source& source, uint64_t picture);
+
+private:
+    void Load(Addon& addon);
+    void Start(Addon& addon);
+    void Stop(Addon& addon, bool unload);
+    void Fail(Addon& addon, const std::string& error);
+    void ReadSettings(Addon& addon);
+    // What Unishade.ini says about a file: 1 to load it, 0 not to, -1 nothing yet.
+    int Answer(const std::string& file) const;
+    void SetAnswer(const std::string& file, bool load);
+    Addon* Find(const std::string& file);
+
+    fx::Runtime* runtime = nullptr;
+    std::vector<Addon> addons;
+    std::vector<Official> official;
+    std::unique_ptr<Exchange> exchange;
+    uint64_t presetGeneration = 0;
+    bool changed = false; // an answer changed since the last Update
+};

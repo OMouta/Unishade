@@ -248,9 +248,23 @@ file(CONFIGURE OUTPUT "${LOGO_SOURCE}" CONTENT
     "extern const unsigned char kLogoPng[];\nextern const unsigned kLogoPngSize;\nconst unsigned char kLogoPng[] = {${logo_bytes}};\nconst unsigned kLogoPngSize = sizeof(kLogoPng);\n"
     @ONLY)
 
+# The official add-on list goes into the program too, with the SHA-256 of the add-ons this build makes, so they are
+# official to the Unishade built with them. Each one goes in OFFICIAL_ADDONS_BINARIES as its file name, =, and the
+# file, separated by |, and its target in OFFICIAL_ADDONS_TARGETS.
+set(OFFICIAL_ADDONS_SOURCE "${CMAKE_BINARY_DIR}/official_addons.cpp")
+set(OFFICIAL_ADDONS_BINARIES "")
+set(OFFICIAL_ADDONS_TARGETS "")
+add_custom_command(OUTPUT "${OFFICIAL_ADDONS_SOURCE}"
+    COMMAND "${CMAKE_COMMAND}" "-DLIST=${CMAKE_SOURCE_DIR}/src/addons/official.ini" "-DOUTPUT=${OFFICIAL_ADDONS_SOURCE}"
+            "-DVERSION=${PROJECT_VERSION}" "-DBINARIES=${OFFICIAL_ADDONS_BINARIES}" -P "${CMAKE_SOURCE_DIR}/src/addons/official.cmake"
+    DEPENDS "${CMAKE_SOURCE_DIR}/src/addons/official.ini" "${CMAKE_SOURCE_DIR}/src/addons/official.cmake" ${OFFICIAL_ADDONS_TARGETS}
+    VERBATIM)
+
 # Everything but main, so tests can link it.
 set(POSIX_SOURCES
     "${LOGO_SOURCE}"
+    "${OFFICIAL_ADDONS_SOURCE}"
+    "${POSIX_DIR}/addons.cpp"
     "${POSIX_DIR}/app.cpp"
     "${POSIX_DIR}/config.cpp"
     "${POSIX_DIR}/effects.cpp"
