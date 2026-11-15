@@ -1599,6 +1599,9 @@ void DrawOverlay(App& app)
         Host host(app);
         launcher::Model model = DescribeLauncher(app);
         model.menuKey = app.HotkeyText(kEditModeHotkey);
+        // How to open the menu says nothing in it.
+        if (app.active)
+            model.status.detail.clear();
         launcherState.overGame = true;
         launcher::Draw(model, host, menuScale, launcher::Place::Game);
         launcherState.overGame = false;
