@@ -204,6 +204,33 @@ set_target_properties(installer PROPERTIES
     OUTPUT_NAME "Unishade-Setup-${PROJECT_VERSION}"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/installer$<0:>")
 
+# DLSS5 calls NVIDIA's nvngx_dlssnr.dll directly. Built on request, with a program that runs an image through it:
+# cmake --build build --config Release --target dlss5_check
+set(NGX_INCLUDE "${CMAKE_BINARY_DIR}/ngx")
+set(NGX_URL "https://raw.githubusercontent.com/NVIDIA/DLSS/v310.9.16/include")
+fetch_file("${NGX_URL}/nvsdk_ngx_defs.h" ea23f33497cd274860d1c25a97644fce807dcb0037c594547203343103fad03e "${NGX_INCLUDE}/nvsdk_ngx_defs.h")
+fetch_file("${NGX_URL}/nvsdk_ngx_params.h" 943bc8cc5cdae03b6303016fbad3183636f2335ae27a2d18776798c3b4efabbc "${NGX_INCLUDE}/nvsdk_ngx_params.h")
+
+# Its path has to contain nvngx.dll. See src/dlss5/dlss5.cpp.
+add_library(Unishade_nvngx SHARED EXCLUDE_FROM_ALL src/dlss5/dlss5.cpp)
+target_include_directories(Unishade_nvngx PRIVATE "${NGX_INCLUDE}")
+target_compile_definitions(Unishade_nvngx PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_DLSS5_EXPORTS)
+target_compile_definitions(Unishade_nvngx PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
+target_compile_options(Unishade_nvngx PRIVATE /W4 /permissive- /EHsc)
+target_link_libraries(Unishade_nvngx PRIVATE d3d12 dxgi windowsapp)
+
+set(STB_DIR "${CMAKE_BINARY_DIR}/stb")
+set(STB_URL "https://raw.githubusercontent.com/nothings/stb/f58f558c120e9b32c217290b80bad1a0729fbb2c")
+fetch_file("${STB_URL}/stb_image.h" 594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3 "${STB_DIR}/stb_image.h")
+fetch_file("${STB_URL}/stb_image_write.h" cbd5f0ad7a9cf4468affb36354a1d2338034f2c12473cf1a8e32053cb6914a05 "${STB_DIR}/stb_image_write.h")
+
+add_executable(dlss5_check EXCLUDE_FROM_ALL src/dlss5/check.cpp)
+target_include_directories(dlss5_check PRIVATE "${STB_DIR}")
+target_compile_definitions(dlss5_check PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(dlss5_check PRIVATE /W4 /permissive- /EHsc)
+target_link_libraries(dlss5_check PRIVATE d3d12 windowsapp)
+add_dependencies(dlss5_check Unishade_nvngx)
+
 if(BUILD_TESTING)
     add_executable(log_tests tests/log_tests.cpp src/log.cpp)
     target_compile_definitions(log_tests PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_VERSION="${PROJECT_VERSION}")
