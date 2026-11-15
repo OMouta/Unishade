@@ -75,6 +75,7 @@ public:
     bool metalObjects = false; // IOSurfaces can back images (macOS)
     bool dmaBuf = false;       // dma-bufs can be imported as images (Linux)
     bool win32Memory = false;  // Direct3D 11 textures can be imported as images (Windows)
+    bool win32Fences = false;  // timeline semaphores, which Direct3D fences can be imported as (Windows)
     bool foreignQueue = false; // VK_EXT_queue_family_foreign, for handing dma-bufs back and forth
     bool lost = false;         // the device was lost, so nothing can draw until Unishade starts again
 
@@ -111,6 +112,13 @@ public:
     bool BeginFrame(bool wait = true);
     // Starts the render pass Dear ImGui draws in, keeping what was copied into the image.
     void BeginRenderPass();
+    // Has the frame's commands wait for a timeline semaphore to reach a value, such as add-ons' work on their own
+    // device. For this frame only.
+    void WaitFor(VkSemaphore timeline, uint64_t value)
+    {
+        waitTimeline = timeline;
+        waitValue = value;
+    }
     void EndFrame();
 
     VkCommandBuffer commands = VK_NULL_HANDLE;
@@ -140,6 +148,8 @@ private:
     std::vector<VkFramebuffer> framebuffers;
     std::vector<VkSemaphore> renderDone; // per image, since presenting holds it until the image returns
     VkSemaphore acquired = VK_NULL_HANDLE;
+    VkSemaphore waitTimeline = VK_NULL_HANDLE;
+    uint64_t waitValue = 0;
     VkFence fence = VK_NULL_HANDLE;
     uint32_t index = 0;
     bool needsRecreate = false;

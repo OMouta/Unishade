@@ -185,6 +185,13 @@ bool Gpu::Init(bool headless, std::string& error)
         metalObjects = enableAll({ "VK_EXT_metal_objects" });
 #elif defined(_WIN32)
         win32Memory = enableAll({ "VK_KHR_external_memory_win32" });
+        // Add-ons work on frames with Direct3D. Vulkan waits for their fence and sets it on the graphics card.
+        VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timelineSupport{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR };
+        VkPhysicalDeviceFeatures2 support{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+        support.pNext = &timelineSupport;
+        if (HasExtension(deviceAvailable, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME))
+            vkGetPhysicalDeviceFeatures2(physicalDevice, &support);
+        win32Fences = timelineSupport.timelineSemaphore && enableAll({ VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME, "VK_KHR_external_semaphore_win32" });
 #else
         dmaBuf = enableAll({ "VK_KHR_external_memory_fd", "VK_EXT_external_memory_dma_buf", "VK_KHR_image_format_list",
                              "VK_EXT_image_drm_format_modifier" });
@@ -212,7 +219,10 @@ bool Gpu::Init(bool headless, std::string& error)
     queueInfo.queueFamilyIndex = queueFamily;
     queueInfo.queueCount = 1;
     queueInfo.pQueuePriorities = &priority;
+    VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timeline{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR };
+    timeline.timelineSemaphore = VK_TRUE;
     VkDeviceCreateInfo deviceInfo{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+    deviceInfo.pNext = win32Fences ? &timeline : nullptr;
     deviceInfo.queueCreateInfoCount = 1;
     deviceInfo.pQueueCreateInfos = &queueInfo;
     deviceInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
@@ -872,11 +882,19 @@ void Surface::EndFrame()
     vkCmdEndRenderPass(commands);
     const VkResult ended = vkEndCommandBuffer(commands);
 
-    const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    const VkSemaphore waits[] = { acquired, waitTimeline };
+    const VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
+    const uint64_t waitValues[] = { 0, waitValue };
+    VkTimelineSemaphoreSubmitInfoKHR timeline{ VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR };
+    timeline.waitSemaphoreValueCount = 2;
+    timeline.pWaitSemaphoreValues = waitValues;
     VkSubmitInfo submit{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
-    submit.waitSemaphoreCount = 1;
-    submit.pWaitSemaphores = &acquired;
-    submit.pWaitDstStageMask = &waitStage;
+    submit.pNext = waitTimeline ? &timeline : nullptr;
+    submit.waitSemaphoreCount = waitTimeline ? 2 : 1;
+    submit.pWaitSemaphores = waits;
+    submit.pWaitDstStageMask = waitStages;
+    waitTimeline = VK_NULL_HANDLE;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &commands;
     submit.signalSemaphoreCount = 1;

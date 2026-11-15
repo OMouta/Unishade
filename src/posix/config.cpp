@@ -330,8 +330,12 @@ Settings LoadSettings()
     if (!ini.Get("GENERAL", "TextureSearchPaths", value))
         ini.Set("GENERAL", "TextureSearchPaths", value = "reshade-shaders/Textures");
     settings.texturePaths = ParsePaths(value);
-    if (ini.Get("GENERAL", "PreprocessorDefinitions", value))
-        settings.definitions = ParseDefinitions(value);
+    // ReShade's own, without which ReShade.fxh takes depth as reversed.
+    if (!ini.Get("GENERAL", "PreprocessorDefinitions", value))
+        ini.Set("GENERAL", "PreprocessorDefinitions",
+                value = "RESHADE_DEPTH_LINEARIZATION_FAR_PLANE=1000.0,RESHADE_DEPTH_INPUT_IS_UPSIDE_DOWN=0,RESHADE_DEPTH_INPUT_IS_REVERSED=0,"
+                        "RESHADE_DEPTH_INPUT_IS_LOGARITHMIC=0");
+    settings.definitions = ParseDefinitions(value);
 
     if (!ini.Get("GENERAL", "PresetPath", value) || value.empty())
     {

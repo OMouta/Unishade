@@ -168,11 +168,11 @@ int main()
           "uniform float2 Wheel < source = \"mousewheel\"; min = -1.0; max = 1.0; >;\n"
           "uniform float2 Swing < source = \"pingpong\"; min = 1.0; max = 3.0; step = float2(0.5, 2.0); smoothing = 0.25; >;\n"
           "uniform int Open < source = \"ui_open\"; >;\n"
-          "uniform bool Depth < source = \"bufready_depth\"; >;\n"
+          "uniform bool Unknown < source = \"freepie\"; >;\n"
           "uniform float Plain = 1.0;\n"
           "float4 Vertex(uint id : SV_VertexID) : SV_Position { return 0; }\n"
           "float4 Pixel(float4 position : SV_Position) : SV_Target\n"
-          "{ return Timer + Space + Click + Noise + Wheel.x + Swing.x + Open + Depth + Plain; }\n"
+          "{ return Timer + Space + Click + Noise + Wheel.x + Swing.x + Open + Unknown + Plain; }\n"
           "technique Sources { pass { VertexShader = Vertex; PixelShader = Pixel; } }\n");
     fx::Effect sources;
     ok &= Check(fx::CompileEffect(sources, directory / "Shaders" / "Sources.fx", {}, options) && sources.uniforms.size() == 9,
