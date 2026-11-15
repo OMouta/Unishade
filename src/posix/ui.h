@@ -2,7 +2,7 @@
 
 #include "app.h"
 
-// Dear ImGui for the launcher and the menu, which look like the ones on Windows.
+// Dear ImGui for the launcher, in its window and over the game.
 bool InitUi(UiWindow& ui, std::string& error);
 void ShutdownUi(UiWindow& ui);
 // Gives the window the logo as its icon. macOS shows the app's icon instead.
@@ -14,7 +14,7 @@ void BeginUi(UiWindow& ui);
 void EndUi(UiWindow& ui);
 
 void DrawLauncher(App& app);
-// The menu when it is open, and short messages at the bottom of the game when it is not.
+// The launcher as the menu when it is open, and short messages at the bottom of the game.
 void DrawOverlay(App& app);
 // Ends what only lasts while the menu is open, such as recording a shortcut.
 void ResetMenu(App& app);
