@@ -111,9 +111,9 @@ void InSingleThreadedApartment(Work work)
     }).join();
 }
 
-// Shortcuts, the notification area icon and the end of the session arrive at a hidden window of the main thread, which
-// GLFW's message loop hands them to. Not a message-only window, since Windows sends TaskbarCreated and the end of the
-// session only to top-level windows.
+// Shortcuts, the notification area icon, Setup's request to quit and the end of the session arrive at a hidden window
+// of the main thread, which GLFW's message loop hands them to. Not a message-only window, since Windows sends
+// TaskbarCreated and the end of the session only to top-level windows.
 HWND messageWindow = nullptr;
 HotkeyCallback hotkeyCallback;
 // Windows only says that a shortcut was pressed, so one held down ends when its key is up again.
@@ -224,6 +224,11 @@ LRESULT CALLBACK MessageProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
         case NIN_KEYSELECT: tray.open(); break;
         case WM_CONTEXTMENU: TrayMenu(static_cast<short>(LOWORD(wParam)), static_cast<short>(HIWORD(wParam))); break;
         }
+        return 0;
+    // Setup asks Unishade to quit before it replaces or removes it, as the notification area's Quit does.
+    case WM_CLOSE:
+        if (tray.quit)
+            tray.quit();
         return 0;
     case WM_QUERYENDSESSION:
         return TRUE;
@@ -1025,6 +1030,7 @@ bool Init(std::string& error)
     WNDCLASSW windowClass{};
     windowClass.lpfnWndProc = MessageProc;
     windowClass.hInstance = GetModuleHandleW(nullptr);
+    // Setup finds a running Unishade by this name.
     windowClass.lpszClassName = L"UnishadeMessages";
     RegisterClassW(&windowClass);
     messageWindow =

@@ -41,11 +41,15 @@ constexpr uintmax_t kMaxListSize = 4 << 20; // the lists and presets
 constexpr uintmax_t kMaxPackageSize = 512 << 20;
 
 #ifdef _WIN32
-// Through WinHTTP, as Setup downloads. Only https.
-void Download(const std::string& url, const fs::path& path, const std::atomic<bool>& cancel, uintmax_t limit, bool = false)
+// Through WinHTTP, as Setup downloads. Only https, except for the sources given on the command line, which tests can
+// point at local files with file:/// URLs.
+void Download(const std::string& url, const fs::path& path, const std::atomic<bool>& cancel, uintmax_t limit, bool fromCommandLine = false)
 {
     fs::create_directories(path.parent_path());
-    ::Download(Wide(url), path, {}, limit, cancel);
+    if (fromCommandLine && url.rfind("file:///", 0) == 0)
+        fs::copy_file(fs::path(url.substr(8)), path, fs::copy_options::overwrite_existing);
+    else
+        ::Download(Wide(url), path, {}, limit, cancel);
 }
 
 // The temporary folder is the user's own on Windows.
