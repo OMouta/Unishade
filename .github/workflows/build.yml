@@ -60,16 +60,43 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
-      # Setup embeds Unishade.exe and UnishadeUi.dll, so they're signed before Setup is built, and Setup after.
+      # Unishade.exe holds the SHA-256 of the add-ons built with it, which its Add-ons page checks the downloads from the
+      # release against, and Setup embeds Unishade.exe. So the add-ons are signed first, then Unishade.exe is built again
+      # with their new SHA-256 and signed, and Setup is built and signed last.
+      - name: Upload the add-ons for signing
+        id: unsigned-addons
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unsigned-addons
+          path: |
+            build/Release/Depth.dll
+            build/Release/Unishade_nvngx.dll
+          if-no-files-found: error
+      - name: Sign the add-ons
+        if: github.event_name == 'workflow_dispatch'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT }}
+          signing-policy-slug: ${{ inputs.release && 'release-signing' || 'test-signing' }}
+          artifact-configuration-slug: addons
+          github-artifact-id: ${{ steps.unsigned-addons.outputs.artifact-id }}
+          parameters: |
+            version: ${{ toJSON(steps.version.outputs.version) }}
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: build/Release
+      - name: Build the program with the signed add-ons
+        if: github.event_name == 'workflow_dispatch'
+        run: cmake --build build --config Release --target Unishade
       - name: Upload the program for signing
         id: unsigned-program
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: unsigned-program
-          path: |
-            build/Release/Unishade.exe
-            build/Release/UnishadeUi.dll
+          path: build/Release/Unishade.exe
           if-no-files-found: error
       - name: Sign the program
         if: github.event_name == 'workflow_dispatch'
@@ -88,12 +115,13 @@ jobs:
           output-artifact-directory: build/Release
       - name: Build installer
         run: cmake --build build --config Release --target installer
-      # Building Setup must not have relinked them, or Setup would embed unsigned copies.
+      # Building the program and Setup must not have relinked the signed files, or the release would have unsigned
+      # copies.
       - name: Check Setup embedded the signed program
         if: github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
-          foreach ($file in 'build/Release/Unishade.exe', 'build/Release/UnishadeUi.dll') {
+          foreach ($file in 'build/Release/Unishade.exe', 'build/Release/Depth.dll', 'build/Release/Unishade_nvngx.dll') {
             if (-not (Get-AuthenticodeSignature $file).SignerCertificate) { throw "$file isn't signed anymore." }
           }
       - name: Upload Setup for signing
@@ -119,8 +147,8 @@ jobs:
           wait-for-completion-timeout-in-seconds: 3600
           output-artifact-directory: build/installer
       # Installs into fresh folders under build/installer-tests with --portable, so nothing is registered on the runner.
-      # It downloads ReShade and every effect package, and the presets from this commit, so a pull request that changes
-      # a preset is tested with it.
+      # Unishade downloads every effect package, and the presets from this commit, so a pull request that changes a
+      # preset is tested with it.
       - name: Test installer
         timeout-minutes: 40
         shell: pwsh
@@ -139,7 +167,8 @@ jobs:
           name: Unishade-windows-x64
           path: |
             build/Release/Unishade.exe
-            build/Release/UnishadeUi.dll
+            build/Release/Depth.dll
+            build/Release/Unishade_nvngx.dll
             build/installer/Unishade-Setup-*.exe
             LICENSE
           if-no-files-found: error
@@ -281,8 +310,9 @@ jobs:
           RELEASE_TAG: v${{ needs.build.outputs.version }}
         run: |
           mkdir upload
-          cp release/build/Release/Unishade.exe release/build/Release/UnishadeUi.dll "release/build/installer/Unishade-Setup-${RELEASE_TAG#v}.exe" release/LICENSE \
-            release/Unishade-linux-x64.tar.gz release/Unishade-macOS.zip upload/
+          # Depth.dll and Unishade_nvngx.dll are where src/addons/official.ini points the Add-ons page.
+          cp release/build/Release/Unishade.exe release/build/Release/Depth.dll release/build/Release/Unishade_nvngx.dll \
+            "release/build/installer/Unishade-Setup-${RELEASE_TAG#v}.exe" release/LICENSE release/Unishade-linux-x64.tar.gz release/Unishade-macOS.zip upload/
           # The SHA-256 of every file, in the format sha256sum -c reads.
           (cd upload && sha256sum -- * > ../SHA256SUMS.txt)
           mv SHA256SUMS.txt upload/
