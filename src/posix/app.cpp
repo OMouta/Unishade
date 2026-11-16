@@ -826,8 +826,18 @@ void App::OnHotkey(int id, bool pressed)
             menuOpen ? CloseMenu() : OpenMenu();
         break;
     case kOverlayToggleHotkey:
-        if (pressed)
+        // The overlay stays, so the menu still opens with effects off. Stopping capture is in the tray and the
+        // launcher, and from there the shortcut starts it again.
+        if (pressed && !captureEnabled)
+        {
             ToggleOverlay();
+            effectsEnabled = true;
+        }
+        else if (pressed)
+        {
+            effectsEnabled = !effectsEnabled;
+            ShowToast(effectsEnabled ? "Effects on" : "Effects off");
+        }
         break;
     case kCompareHotkey:
         comparing = pressed;

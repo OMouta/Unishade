@@ -51,7 +51,7 @@ Hold **Compare** at the bottom of the menu, or hold **F7** in the game, to see t
 | Shortcut | What it does |
 | --- | --- |
 | Home | Opens and closes the menu |
-| Ctrl+F8 | Turns the overlay off and on |
+| Ctrl+F8 | Turns effects off and on |
 | F7 | Shows the game without effects while held |
 | Ctrl+F9 | Saves a screenshot |
 | Ctrl+F10 | Saves a before and after pair |

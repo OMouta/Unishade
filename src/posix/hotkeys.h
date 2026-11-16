@@ -62,7 +62,7 @@ struct Shortcut
 #ifdef __APPLE__
 inline constexpr Shortcut kShortcuts[] = {
     { &InputHotkeys::input, kEditModeHotkey, "ToggleKey", "Cmd+Shift+U", false, "Open or close the menu" },
-    { &InputHotkeys::overlay, kOverlayToggleHotkey, "OverlayToggleKey", "Ctrl+Cmd+O", true, "Turn the overlay on or off" },
+    { &InputHotkeys::overlay, kOverlayToggleHotkey, "OverlayToggleKey", "Ctrl+Cmd+O", true, "Turn effects on or off" },
     { &InputHotkeys::compare, kCompareHotkey, "CompareKey", "Cmd+Shift+C", false, "Hold to compare with the game" },
     { &InputHotkeys::screenshot, kScreenshotHotkey, "ScreenshotKey", "Cmd+Shift+P", false, "Screenshot" },
     { &InputHotkeys::beforeAfter, kBeforeAfterHotkey, "BeforeAfterKey", "Cmd+Shift+B", false, "Before and after screenshot" },
@@ -72,7 +72,7 @@ inline constexpr Shortcut kShortcuts[] = {
 #else
 inline constexpr Shortcut kShortcuts[] = {
     { &InputHotkeys::input, kEditModeHotkey, "ToggleKey", "Home", false, "Open or close the menu" },
-    { &InputHotkeys::overlay, kOverlayToggleHotkey, "OverlayToggleKey", "Ctrl+F8", true, "Turn the overlay on or off" },
+    { &InputHotkeys::overlay, kOverlayToggleHotkey, "OverlayToggleKey", "Ctrl+F8", true, "Turn effects on or off" },
     { &InputHotkeys::compare, kCompareHotkey, "CompareKey", "F7", false, "Hold to compare with the game" },
     { &InputHotkeys::screenshot, kScreenshotHotkey, "ScreenshotKey", "Ctrl+F9", false, "Screenshot" },
     { &InputHotkeys::beforeAfter, kBeforeAfterHotkey, "BeforeAfterKey", "Ctrl+F10", false, "Before and after screenshot" },
