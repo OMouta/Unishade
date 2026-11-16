@@ -5,6 +5,7 @@
 #ifdef _WIN32
 #include "discord.h"
 #include "upscale.h"
+#include "update.h"
 #endif
 
 #include <GLFW/glfw3.h>
@@ -51,7 +52,9 @@ bool App::Init(std::string& error)
     Log(LogLevel::Info, "Settings: skip_title_bar=%d.", settings.skipTitleBar);
 #endif
 #ifdef _WIN32
-    Log(LogLevel::Info, "Settings: discord_presence=%d.", settings.discordPresence);
+    Log(LogLevel::Info, "Settings: discord_presence=%d, update_checks=%d.", settings.discordPresence, settings.updateChecks);
+    if (settings.updateChecks)
+        CheckForUpdate();
 #endif
     for (const fs::path& path : settings.effectPaths)
         Log(LogLevel::Info, "Effect search path: %s.", path.string().c_str());

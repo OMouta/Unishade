@@ -311,7 +311,7 @@ if(APPLE)
 elseif(WIN32)
     # Effects download through WinHTTP, with the same code as Setup.
     list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_win32.cpp" "${POSIX_DIR}/../net.cpp" "${POSIX_DIR}/upscale.cpp" "${FSR_SOURCE}"
-        "${POSIX_DIR}/discord_win32.cpp")
+        "${POSIX_DIR}/discord_win32.cpp" "${POSIX_DIR}/../update.cpp")
 else()
     list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_x11.cpp")
 endif()

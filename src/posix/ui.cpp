@@ -5,6 +5,7 @@
 #include "ui.h"
 #ifdef _WIN32
 #include "discord.h"
+#include "update.h"
 #endif
 #include "log.h"
 #include "image.h"
@@ -782,6 +783,12 @@ public:
             Log(LogLevel::Info, "Settings: discord_presence=%d.", on);
         }
 #ifdef _WIN32
+        else if (which == launcher::Switch::UpdateChecks)
+        {
+            app.settings.updateChecks = on;
+            SaveSettings(app.settings);
+            Log(LogLevel::Info, "Settings: update_checks=%d.", on);
+        }
         else if (which == launcher::Switch::StartWithWindows)
         {
             platform::SetStartWithWindows(on);
@@ -1287,6 +1294,17 @@ void DescribeCards(App& app, launcher::Model& model)
         model.cards.push_back(std::move(shown));
         launcherState.cards.push_back(std::move(actions));
     };
+#ifdef _WIN32
+    if (Update update = AvailableUpdate(); !update.version.empty())
+    {
+        model.update = update.version;
+        card({ .title = "Unishade " + update.version + " is available",
+               .text = "Download the new Setup and run it. Your presets and settings stay.",
+               .attention = true,
+               .buttons = { "Download" } },
+             { [url = std::move(update.url)] { platform::Open(url); } });
+    }
+#endif
     if (!platform::HasCapturePermission())
     {
         const auto request = [] {
@@ -1714,6 +1732,7 @@ launcher::Model DescribeLauncher(App& app)
 
 #ifdef _WIN32
     model.settings.startWithWindows = launcherState.startsWithWindows;
+    model.settings.updateChecks = app.settings.updateChecks;
 #endif
     model.settings.autoSavePresets = app.settings.autoSavePresets;
     if (platform::OverlayCanStayBehind())

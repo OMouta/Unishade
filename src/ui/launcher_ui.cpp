@@ -542,7 +542,19 @@ void Sidebar(const Model& model, Host& host, ImVec2 at, float height)
         draw->AddImage(ImTextureRef(texture), origin + ImVec2(S(22), y), origin + ImVec2(S(22) + logo, y + logo));
     const float textX = origin.x + S(22) + logo + S(12);
     Line(draw, textX, origin.x + width - pad, origin.y + y + S(10), "Unishade", kText, kSemibold, true);
-    Line(draw, textX, origin.x + width - pad, origin.y + y + S(28), "Version " + model.version, kDim, kNote);
+    const std::string version = "Version " + model.version;
+    Line(draw, textX, origin.x + width - pad, origin.y + y + S(28), version, kDim, kNote);
+    // Leads to the update's card on Home.
+    if (!model.update.empty())
+    {
+        const ImVec2 tag(std::round(textX + Measure(version, kNote).x + S(8)), std::round(origin.y + y + S(28) - S(11)));
+        ImGui::SetCursorScreenPos(tag);
+        if (ImGui::InvisibleButton("update", ImVec2(Measure("UPDATE", kNote).x + S(18), S(22)), ImGuiButtonFlags_EnableNav))
+            ShowPage(PageKind::Home);
+        HandOnHover();
+        Tooltip("Unishade " + model.update + " is available");
+        Pill(draw, tag, "UPDATE", kAccent);
+    }
     y += logo + S(26);
 
     if (NavRow("home", origin + ImVec2(pad, y), rowWidth, "Home", HomeIcon, state->page == PageKind::Home, Problems(model)))
@@ -669,8 +681,8 @@ void Rail(const Model& model, ImVec2 at, float height)
     if (RailButton("home", origin + ImVec2(left, y), button, home, "Home"))
         ShowPage(PageKind::Home);
     HomeIcon(draw, origin + ImVec2(width / 2, y + button / 2), home ? kText : kDim);
-    if (Problems(model))
-        draw->AddCircleFilled(origin + ImVec2(left + button - S(10), y + S(10)), S(3.5f), kWarning);
+    if (Problems(model) || !model.update.empty())
+        draw->AddCircleFilled(origin + ImVec2(left + button - S(10), y + S(10)), S(3.5f), Problems(model) ? kWarning : kAccent);
     y += button + S(12);
     draw->AddLine(origin + ImVec2(left + S(8), y), origin + ImVec2(left + button - S(8), y), kBorder);
     y += S(12);

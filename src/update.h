@@ -2,17 +2,15 @@
 
 #include <string>
 
+// A newer Unishade on GitHub, which Setup installs.
 struct Update
 {
-    std::wstring version; // such as 0.5.0
-    std::wstring url;     // the release page
+    std::string version; // such as 0.7.0
+    std::string url;     // the release page
 };
 
-// Asks GitHub for the newest release on a background thread, unless update checks are off.
+// Asks GitHub for the newest release with Setup on a background thread.
 void CheckForUpdate();
 
 // The newer release, once found. Empty version while checking, when up to date, or when the check failed.
 Update AvailableUpdate();
-
-// Changes whenever AvailableUpdate does, so it can be compared every loop without copying the update.
-unsigned AvailableUpdateVersion();

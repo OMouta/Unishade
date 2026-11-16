@@ -1,10 +1,6 @@
 #include "update.h"
-#include "config.h"
 #include "log.h"
 #include "net.h"
-#include "text.h"
-
-#include <windows.h>
 
 #include <array>
 #include <atomic>
@@ -20,7 +16,6 @@ struct Shared
 {
     std::mutex mutex;
     Update available;
-    std::atomic<unsigned> version = 0;
 };
 Shared& shared = *new Shared;
 
@@ -131,34 +126,26 @@ void Check()
     }
     if (newest == current)
     {
-        Log(LogLevel::Info, L"Unishade is up to date.");
+        Log(LogLevel::Info, "Unishade is up to date.");
         return;
     }
-    const std::wstring version =
-        std::to_wstring(newest[0]) + L"." + std::to_wstring(newest[1]) + L"." + std::to_wstring(newest[2]);
-    Log(LogLevel::Info, L"Unishade %ls is available.", version.c_str());
+    const std::string version = std::to_string(newest[0]) + "." + std::to_string(newest[1]) + "." + std::to_string(newest[2]);
+    Log(LogLevel::Info, "Unishade %s is available.", version.c_str());
     std::lock_guard lock(shared.mutex);
-    shared.available = { version, Wide(url) };
-    ++shared.version;
+    shared.available = { version, url };
 }
 } // namespace
 
 void CheckForUpdate()
 {
-    if (!UpdateChecksEnabled())
-    {
-        Log(LogLevel::Info, L"Update checks are off.");
-        return;
-    }
     std::thread([] {
-        InitThreadLog();
         try
         {
             Check();
         }
         catch (const std::exception& e)
         {
-            Log(LogLevel::Info, L"Could not check for updates: %hs", e.what());
+            Log(LogLevel::Info, "Could not check for updates: %s", e.what());
         }
     }).detach();
 }
@@ -167,9 +154,4 @@ Update AvailableUpdate()
 {
     std::lock_guard lock(shared.mutex);
     return shared.available;
-}
-
-unsigned AvailableUpdateVersion()
-{
-    return shared.version;
 }

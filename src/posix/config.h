@@ -59,6 +59,8 @@ struct Settings
     bool skipTitleBar = true;
     // Windows only: Discord shows the game Unishade runs on. discord.h says what it shows.
     bool discordPresence = true;
+    // Windows only: GitHub is asked for a newer Unishade when it starts.
+    bool updateChecks = true;
     // Effects stay over the game while another window is in front of it, where platform::OverlayCanStayBehind.
     bool keepEffectsVisible = true;
     // The menu's size on top of the one that follows the game's window, in quarter steps.

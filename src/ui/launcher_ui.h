@@ -285,6 +285,8 @@ struct Picker
 struct Model
 {
     std::string version;
+    // A newer version Setup can install, such as 0.7.0, or empty. Its card is among cards.
+    std::string update;
     Status status;
     std::vector<Card> cards;
     std::vector<Game> games;
