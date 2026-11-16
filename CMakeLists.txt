@@ -126,9 +126,10 @@ target_compile_definitions(installer PRIVATE UNISHADE_USER_AGENT="Unishade-Setup
 target_compile_definitions(installer PRIVATE UNISHADE_VERSION_RESOURCE=${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0)
 target_compile_options(installer PRIVATE /W4 /permissive- /EHsc)
 target_link_libraries(installer PRIVATE setup_libraries d3d11 dxgi d3dcompiler dwmapi windowscodecs winhttp bcrypt imm32 delayimp)
-# Setup's copy lives next to ReShade's dxgi.dll, and Windows looks for DLLs in the exe's folder first. Its imports
-# load from System32 instead: the loader flag covers DLLs loaded at startup (Windows 10 1607 and later), and the DLLs
-# that are not KnownDLLs are delay-loaded, so they load after wWinMain has limited the search to System32.
+# Setup's copy lives in the installation folder, where Unishade 0.6.3 and earlier had ReShade's dxgi.dll, and Windows
+# looks for DLLs in the exe's folder first. Its imports load from System32 instead: the loader flag covers DLLs loaded
+# at startup (Windows 10 1607 and later), and the DLLs that are not KnownDLLs are delay-loaded, so they load after
+# wWinMain has limited the search to System32.
 target_link_options(installer PRIVATE /DEPENDENTLOADFLAG:0x800 /DELAYLOAD:d3d11.dll /DELAYLOAD:d3dcompiler_47.dll
     /DELAYLOAD:dwmapi.dll /DELAYLOAD:winhttp.dll /DELAYLOAD:bcrypt.dll)
 add_dependencies(installer Unishade)

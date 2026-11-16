@@ -162,8 +162,12 @@ int InstallEffects()
     for (EffectSetup::State state = setup.Read(); state.running && !stopSignal; state = setup.Read())
     {
         const std::string line = state.status + (state.detail.empty() ? "" : " - " + state.detail);
+        // Setup reads these through a pipe as they come.
         if (line != last)
+        {
             printf("%3d%%  %s\n", int(state.fraction * 100), line.c_str());
+            fflush(stdout);
+        }
         last = line;
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }

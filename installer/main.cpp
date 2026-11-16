@@ -1,5 +1,5 @@
-// Unishade Setup: installs the host with ReShade, its effects, presets and an optional add-on, and
-// later updates or uninstalls it. Drawn with Dear ImGui, the UI library ReShade's own menu uses.
+// Unishade Setup: installs Unishade, which then downloads its effects and presets, and later updates or uninstalls it.
+// Drawn with Dear ImGui, as Unishade is.
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "install.h"
@@ -68,8 +68,6 @@ enum class Page
 {
     Welcome,
     Manage,
-    Addons,
-    License,
     Installing,
     Failed,
     Finished,
@@ -138,7 +136,6 @@ struct Arguments
     bool silent = false;
     bool uninstall = false;
     bool deleteUserFiles = false;
-    bool acceptLicense = false;
     bool portable = false;
     std::wstring directory;
     std::wstring components;
@@ -152,16 +149,6 @@ struct App
     std::optional<Installation> installation;
     char directory[1024]{};
     std::string directoryError;
-    bool presets = true;
-    bool depth = false;
-    bool dlss5 = false;
-
-    Task releaseTask;
-    std::atomic<bool> releaseCancel = false;
-    ReShadeRelease fetchedRelease;
-    std::optional<ReShadeRelease> release;
-    std::string releaseError;
-    bool accepted = false;
 
     Task installTask;
     std::unique_ptr<Progress> progress;
@@ -213,30 +200,13 @@ fs::path DefaultDirectory()
     return directory;
 }
 
-void StartReleaseFetch()
-{
-    app.releaseError.clear();
-    app.releaseTask.Start([] { app.fetchedRelease = FetchReShadeRelease(app.releaseCancel); });
-}
-
-// Setup started on the uninstall page has not loaded the license yet.
-void ShowLicensePage()
-{
-    if (!app.release && !app.releaseTask.Running())
-        StartReleaseFetch();
-    app.page = Page::License;
-}
-
 void StartInstall()
 {
     InstallOptions options;
     options.directory = Directory();
-    options.presets = app.presets;
-    options.depth = app.depth;
-    options.dlss5 = app.dlss5;
     app.progress = std::make_unique<Progress>();
     app.notes.clear();
-    app.installTask.Start([options, release = *app.release] { Install(options, release, *app.progress); });
+    app.installTask.Start([options] { Install(options, *app.progress); });
     app.page = Page::Installing;
 }
 
@@ -624,69 +594,11 @@ void ManagePage()
     if (app.installation && app.installation->version != UNISHADE_VERSION)
         Text("This setup installs version " UNISHADE_VERSION ".", kDim, 15);
     Spacing(14);
-    if (Card("update", "Update or change add-ons", nullptr, 0,
-             "Get the newest ReShade and effects, or add or remove depth estimation and DLSS5. Your settings and presets stay.", CardKind::Action))
-    {
-        app.depth = AddonInstalled(Directory(), Addon::Depth);
-        app.dlss5 = AddonInstalled(Directory(), Addon::DLSS5);
-        app.page = Page::Addons;
-    }
-    if (Card("uninstall", "Uninstall", nullptr, 0, "Remove Unishade, ReShade and the effects from this PC.", CardKind::Action))
+    if (Card("update", "Update", nullptr, 0, "Install Unishade " UNISHADE_VERSION " and get the newest effects. Your settings and presets stay.",
+             CardKind::Action))
+        StartInstall();
+    if (Card("uninstall", "Uninstall", nullptr, 0, "Remove Unishade and the effects from this PC.", CardKind::Action))
         app.page = Page::Uninstall;
-}
-
-void AddonsPage()
-{
-    Title("Choose what to install");
-    Spacing(6);
-    Card("reshade", "ReShade and effects", "Included", kDim, "ReShade from reshade.me and every effect package on ReShade's official list.", CardKind::Static);
-    if (Card("presets", "Presets", nullptr, 0, "Ready-made looks to start from. Pick one in the Unishade menu.", CardKind::Toggle, app.presets))
-        app.presets = !app.presets;
-    Spacing(8);
-    Text("Optional add-ons", kText, 15, ui.semibold);
-    if (Card("depth", "Depth estimation", "Experimental", kWarning,
-             "Makes effects that need depth work, like ambient occlusion, depth of field and fog. An AI model estimates depth from the "
-             "picture on your GPU, which lowers your frame rate. 85 MB download.",
-             CardKind::Toggle, app.depth))
-        app.depth = !app.depth;
-    if (Card("dlss5", "DLSS5", "NVIDIA RTX", kSuccess,
-             "NVIDIA's DLSS5 through RenoDX's ReShade add-on. Needs an NVIDIA RTX graphics card. 168 MB download.",
-             CardKind::Toggle, app.dlss5))
-        app.dlss5 = !app.dlss5;
-}
-
-void LicensePage()
-{
-    Title("ReShade license");
-    if (app.release)
-    {
-        Text("Setup downloads ReShade " + app.release->version + " from reshade.me. Read its license to continue.", kDim, 15);
-        Spacing(4);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, kCard);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(16), S(12)));
-        ImGui::BeginChild("license", ImVec2(0, ImGui::GetContentRegionAvail().y - S(48)), ImGuiChildFlags_Borders);
-        Text(app.release->license, kDim, 14);
-        ImGui::EndChild();
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor();
-        Spacing(4);
-        CheckLine("I accept the ReShade license", app.accepted);
-    }
-    else if (app.releaseTask.Running())
-    {
-        Spacing(10);
-        Spinner(S(14));
-        ImGui::SameLine(0, S(12));
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + S(4));
-        Text("Finding the newest ReShade...", kDim, 15);
-    }
-    else
-    {
-        Text(app.releaseError, kError, 15);
-        Spacing(4);
-        if (Button("Try again", ImVec2(S(124), S(36)), false))
-            StartReleaseFetch();
-    }
 }
 
 void InstallingPage()
@@ -737,7 +649,7 @@ void FinishedPage()
 void UninstallPage()
 {
     Title("Uninstall Unishade");
-    Text("Removes Unishade, ReShade and the effects from " + std::string(app.directory) + ", and its Start menu shortcuts.", kDim, 15);
+    Text("Removes Unishade and the effects from " + std::string(app.directory) + ", and its Start menu shortcuts.", kDim, 15);
     Spacing(10);
     CheckLine("Also delete my presets, settings, game list and add-ons", app.deleteUserFiles);
     Text("That deletes Unishade.ini and games.ini, the settings of Unishade 0.6.3 and earlier, and the presets, reshade-shaders and "
@@ -769,13 +681,6 @@ void UninstalledPage()
 
 void CollectTasks()
 {
-    if (app.releaseTask.Collect())
-    {
-        if (app.releaseTask.error.empty())
-            app.release = app.fetchedRelease;
-        else
-            app.releaseError = app.releaseTask.error;
-    }
     if (app.installTask.Collect())
     {
         if (!app.installTask.error.empty() || app.installTask.cancelled)
@@ -823,14 +728,12 @@ void DrawUi()
         int step = 0;
         switch (page)
         {
-        case Page::Addons: step = 1; break;
-        case Page::License: step = 2; break;
         case Page::Installing:
-        case Page::Failed: step = 3; break;
-        case Page::Finished: step = 4; break;
+        case Page::Failed: step = 1; break;
+        case Page::Finished: step = 2; break;
         default: break;
         }
-        Sidebar({ "Welcome", "Add-ons", "License", "Install", "Done" }, step);
+        Sidebar({ "Welcome", "Install", "Done" }, step);
     }
 
     // Content, above a footer separated by a line.
@@ -844,8 +747,6 @@ void DrawUi()
     {
     case Page::Welcome: WelcomePage(); break;
     case Page::Manage: ManagePage(); break;
-    case Page::Addons: AddonsPage(); break;
-    case Page::License: LicensePage(); break;
     case Page::Installing: InstallingPage(); break;
     case Page::Failed: FailedPage(); break;
     case Page::Finished: FinishedPage(); break;
@@ -857,28 +758,16 @@ void DrawUi()
     switch (page)
     {
     case Page::Welcome:
-        if (FooterButton(0, "Next", true))
+        if (FooterButton(0, "Install", true))
         {
             app.directoryError = CheckDirectory(Directory());
             if (app.directoryError.empty())
-                app.page = Page::Addons;
+                StartInstall();
         }
         break;
     case Page::Manage:
         if (FooterButton(0, "Close", false))
             DestroyWindow(ui.window);
-        break;
-    case Page::Addons:
-        if (FooterButton(0, "Next", true))
-            ShowLicensePage();
-        if (FooterButton(1, "Back", false))
-            app.page = app.installation ? Page::Manage : Page::Welcome;
-        break;
-    case Page::License:
-        if (FooterButton(0, "Install", true, app.release && app.accepted))
-            StartInstall();
-        if (FooterButton(1, "Back", false))
-            app.page = Page::Addons;
         break;
     case Page::Installing:
         if (FooterButton(0, "Cancel", false, !app.progress->cancel))
@@ -886,7 +775,7 @@ void DrawUi()
         break;
     case Page::Failed:
         if (FooterButton(0, "Back", true))
-            app.page = Page::Addons;
+            app.page = app.installation ? Page::Manage : Page::Welcome;
         if (FooterButton(1, "Close", false))
             DestroyWindow(ui.window);
         break;
@@ -1108,29 +997,15 @@ void AddFonts()
 
 int RunWindow(const Arguments& arguments)
 {
-    // However the window ends, the license download stops first, so no hidden Setup keeps running.
-    struct StopReleaseFetch
-    {
-        ~StopReleaseFetch()
-        {
-            app.releaseCancel = true;
-            app.releaseTask.Wait();
-        }
-    } stopReleaseFetch;
     app.installation = FindInstallation();
     const fs::path directory = !arguments.directory.empty() ? fs::absolute(arguments.directory)
                                : app.installation        ? app.installation->directory
                                                          : DefaultDirectory();
     strncpy_s(app.directory, Utf8(directory.wstring()).c_str(), _TRUNCATE);
-    app.depth = AddonInstalled(directory, Addon::Depth);
-    app.dlss5 = AddonInstalled(directory, Addon::DLSS5);
     if (arguments.uninstall)
         app.page = Page::Uninstall;
     else
-    {
         app.page = app.installation ? Page::Manage : Page::Welcome;
-        StartReleaseFetch();
-    }
 
     WNDCLASSEXW windowClass{ sizeof(windowClass) };
     windowClass.lpfnWndProc = WndProc;
@@ -1214,8 +1089,7 @@ int RunWindow(const Arguments& arguments)
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         ui.swapchain->Present(1, 0);
 
-        const bool animating = app.installTask.Running() || app.uninstallTask.Running() ||
-                               (app.page == Page::License && app.releaseTask.Running());
+        const bool animating = app.installTask.Running() || app.uninstallTask.Running();
         if (!animating && --framesLeft <= 0)
             MsgWaitForMultipleObjects(0, nullptr, FALSE, 500, QS_ALLINPUT);
     }
@@ -1242,8 +1116,8 @@ int RunSilent(const Arguments& arguments)
         }
 
         options.portable = arguments.portable;
-        options.reshade = options.presets = false;
-        const std::wstring components = arguments.components.empty() ? L"reshade,presets" : arguments.components;
+        options.effects = false;
+        const std::wstring components = arguments.components.empty() ? L"effects" : arguments.components;
         for (size_t start = 0; start <= components.size();)
         {
             size_t end = components.find(L',', start);
@@ -1251,26 +1125,14 @@ int RunSilent(const Arguments& arguments)
             std::wstring component = components.substr(start, end - start);
             start = end + 1;
             CharLowerBuffW(component.data(), static_cast<DWORD>(component.size()));
-            if (component == L"reshade")
-                options.reshade = true;
-            else if (component == L"presets")
-                options.presets = true;
-            else if (component == L"depth")
-                options.depth = true;
-            else if (component == L"dlss5")
-                options.dlss5 = true;
+            if (component == L"effects")
+                options.effects = true;
             else if (component != L"host" && !component.empty())
-                throw std::runtime_error("Unknown component: " + Utf8(component) + ". Use reshade, presets, depth or dlss5.");
+                throw std::runtime_error("Unknown component: " + Utf8(component) + ". Use host or effects.");
         }
-        if (!options.reshade && (options.presets || options.depth || options.dlss5))
-            throw std::runtime_error("Presets and add-ons need ReShade. Add reshade to --components.");
-        if (options.reshade && !arguments.acceptLicense)
-            throw std::runtime_error("Installing ReShade needs --accept-reshade-license. Read the license first: "
-                                     "https://github.com/crosire/reshade/blob/main/LICENSE.md");
 
         Progress progress;
-        const ReShadeRelease release = options.reshade ? FetchReShadeRelease(progress.cancel) : ReShadeRelease{};
-        return Install(options, release, progress) ? 0 : kExitIncomplete;
+        return Install(options, progress) ? 0 : kExitIncomplete;
     }
     catch (const Cancelled&)
     {
@@ -1303,8 +1165,6 @@ Arguments ParseArguments()
             arguments.uninstall = true;
         else if (argument == L"--delete-user-files")
             arguments.deleteUserFiles = true;
-        else if (argument == L"--accept-reshade-license")
-            arguments.acceptLicense = true;
         else if (argument == L"--portable")
             arguments.portable = true;
         else if (argument == L"--dir")
@@ -1317,10 +1177,6 @@ Arguments ParseArguments()
             value(sources.effects);
         else if (argument == L"--presets-url")
             value(sources.presets);
-        else if (argument == L"--dlss5-manifest")
-            value(sources.dlss5);
-        else if (argument == L"--depth-manifest")
-            value(sources.depth);
         else
             arguments.error = "Unknown option: " + Utf8(argument);
     }
@@ -1331,9 +1187,9 @@ Arguments ParseArguments()
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
-    // Setup's copy lives next to ReShade, which installs itself as dxgi.dll or d3d11.dll, and Windows looks
-    // in the exe's folder first. From here on, DLLs loaded by name, including the delay-loaded imports, come
-    // from System32 only. dxgi.dll and d3d11.dll are loaded right away, so later loads by name get these copies.
+    // Setup's copy lives in the installation folder, where Unishade 0.6.3 and earlier had ReShade as dxgi.dll, and
+    // Windows looks in the exe's folder first. From here on, DLLs loaded by name, including the delay-loaded imports,
+    // come from System32 only. dxgi.dll and d3d11.dll are loaded right away, so later loads by name get these copies.
     SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32);
     LoadLibraryExW(L"dxgi.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     LoadLibraryExW(L"d3d11.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
