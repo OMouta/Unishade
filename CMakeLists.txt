@@ -186,6 +186,13 @@ if(BUILD_TESTING)
     target_compile_options(names_tests PRIVATE /W4 /permissive- /EHsc)
     add_test(NAME names_tests COMMAND names_tests)
 
+    # Windows only, like the ReShade host whose settings it carries over.
+    add_executable(old_settings_tests tests/old_settings_tests.cpp)
+    target_compile_definitions(old_settings_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    # The test's names outside ASCII are UTF-8 in the source.
+    target_compile_options(old_settings_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    add_test(NAME old_settings_tests COMMAND old_settings_tests)
+
     add_executable(discord_rpc_tests tests/discord_rpc_tests.cpp)
     target_compile_options(discord_rpc_tests PRIVATE /W4 /permissive- /EHsc)
     add_test(NAME discord_rpc_tests COMMAND discord_rpc_tests)

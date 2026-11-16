@@ -4,6 +4,7 @@
 #include "names.h"
 
 #ifdef _WIN32
+#include "old_settings.h"
 #include <windows.h>
 #include <fcntl.h>
 #include <io.h>
@@ -310,7 +311,16 @@ Settings LoadSettings()
     const fs::path path = DataDirectory() / "Unishade.ini";
     std::error_code error;
     const bool existed = fs::exists(path, error);
+#ifdef _WIN32
+    // Made where Unishade 0.6.3 or earlier ran, it starts with that version's settings. Its files stay as they are.
+    std::string text = existed ? ReadFile(path) : CarryOldSettings(OldHostIniText(ReadFile(DataDirectory() / "RobloxShadeHost.ini")),
+                                                                    ReadFile(DataDirectory() / "ReShade.ini"));
+    if (!existed && !text.empty())
+        Log(LogLevel::Info, "Unishade.ini starts with the settings in RobloxShadeHost.ini and ReShade.ini.");
+    IniText ini(std::move(text));
+#else
     IniText ini(ReadFile(path));
+#endif
     Settings settings;
     std::string value;
 
