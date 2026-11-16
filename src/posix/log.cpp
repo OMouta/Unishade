@@ -46,8 +46,8 @@ size_t logSize = 0;
 const auto startedAt = std::chrono::steady_clock::now();
 
 #ifdef _WIN32
-// As in the ReShade host's log.cpp: the exception, then each address of the stack in its module, so an offline
-// debugger can place them without symbols installed here.
+// The exception, then each address of the stack in its module, so an offline debugger can place them without symbols
+// installed here.
 HANDLE OpenEmergencyLog()
 {
     return CreateFileA(crashPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_ALWAYS,

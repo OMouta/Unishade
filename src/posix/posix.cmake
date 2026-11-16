@@ -6,7 +6,7 @@
 # macOS:  brew install molten-vk vulkan-headers, then the same commands. The build is Unishade.app, with
 #         MoltenVK copied inside so it runs without Homebrew.
 # Windows: the same commands with MSVC. Vulkan's headers are downloaded and the loader comes with the graphics
-#         driver, so no Vulkan SDK is needed. The build is vulkan/Unishade.exe, beside the ReShade host's.
+#         driver, so no Vulkan SDK is needed.
 
 if(APPLE)
     # Objective-C first: the language enabled first owns the .m extension, and GLFW's .m files are not C++. The oldest
@@ -17,7 +17,7 @@ endif()
 
 set(POSIX_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
-# ReShade's effect compiler, which turns .fx files into SPIR-V. The same version the Windows host runs.
+# ReShade's effect compiler, which turns .fx files into SPIR-V.
 set(RESHADEFX_DIR "${CMAKE_BINARY_DIR}/reshadefx")
 set(RESHADEFX_URL "https://raw.githubusercontent.com/crosire/reshade/v6.8.0/source")
 fetch_file("${RESHADEFX_URL}/effect_codegen.hpp" 5eab66de38d61b8cf8ef036085e2914a0d20c81691bd9691229d95532e3bc532 "${RESHADEFX_DIR}/effect_codegen.hpp")
@@ -309,7 +309,7 @@ set(POSIX_SOURCES
 if(APPLE)
     list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_macos.mm")
 elseif(WIN32)
-    # Effects download through the ReShade host's WinHTTP code.
+    # Effects download through WinHTTP, with the same code as Setup.
     list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_win32.cpp" "${POSIX_DIR}/../net.cpp" "${POSIX_DIR}/upscale.cpp" "${FSR_SOURCE}"
         "${POSIX_DIR}/discord_win32.cpp")
 else()
@@ -388,12 +388,13 @@ if(APPLE)
                 -P "${POSIX_DIR}/bundle_macos.cmake"
         VERBATIM)
 elseif(WIN32)
-    # Unishade.exe like the ReShade host, so in a folder of its own until it replaces it. The manifest makes UTF-8 the
-    # program's code page, which the narrow file and path functions then use, as they do on the other systems.
-    add_executable(UnishadeVulkan WIN32 "${POSIX_DIR}/main.cpp" "${POSIX_DIR}/Unishade.manifest" "${POSIX_DIR}/Unishade.rc")
-    set_target_properties(UnishadeVulkan PROPERTIES OUTPUT_NAME Unishade RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/vulkan$<0:>")
+    # The manifest makes UTF-8 the program's code page, which the narrow file and path functions then use, as they do
+    # on the other systems.
+    add_executable(Unishade WIN32 "${POSIX_DIR}/main.cpp" "${POSIX_DIR}/Unishade.manifest" "${POSIX_DIR}/Unishade.rc")
+    target_compile_definitions(Unishade PRIVATE
+        UNISHADE_VERSION_RESOURCE=${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0)
     # A program without a console window that still starts at main.
-    target_link_options(UnishadeVulkan PRIVATE /ENTRY:mainCRTStartup)
+    target_link_options(Unishade PRIVATE /ENTRY:mainCRTStartup)
 else()
     add_executable(unishade "${POSIX_DIR}/main.cpp")
     set_target_properties(unishade PROPERTIES OUTPUT_NAME unishade)
@@ -405,8 +406,8 @@ if(APPLE)
     target_link_libraries(Unishade PRIVATE unishade_core)
     target_compile_options(Unishade PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
 elseif(WIN32)
-    target_link_libraries(UnishadeVulkan PRIVATE unishade_core)
-    target_compile_options(UnishadeVulkan PRIVATE ${HOST_COMPILE_OPTIONS})
+    target_link_libraries(Unishade PRIVATE unishade_core)
+    target_compile_options(Unishade PRIVATE ${HOST_COMPILE_OPTIONS})
 else()
     target_link_libraries(unishade PRIVATE unishade_core)
     target_compile_options(unishade PRIVATE -Wall -Wextra -Wno-missing-field-initializers)

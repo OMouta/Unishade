@@ -73,23 +73,11 @@ if(BUILD_TESTING)
     add_test(NAME launcher_ui_tests COMMAND launcher_ui_tests)
 endif()
 
-# macOS and Linux have their own host in src/posix. ReShade itself only runs on Windows, so it uses ReShade's
-# effect compiler with Vulkan instead. Windows builds it too, beside the ReShade host it is replacing.
+# The host, in src/posix for every system. It compiles effects with ReShade's effect compiler and runs them on Vulkan.
 include(src/posix/posix.cmake)
 if(NOT WIN32)
     return()
 endif()
-
-set(RESHADE_INCLUDE "${CMAKE_BINARY_DIR}/reshade/include")
-set(RESHADE_HEADERS_URL "https://raw.githubusercontent.com/crosire/reshade/v6.8.0/include")
-fetch_file("${RESHADE_HEADERS_URL}/reshade.hpp" cf3cd150920ea310b4b1e2e4f11ab8d7221a9fc18755f4891a026563311b524c "${RESHADE_INCLUDE}/reshade.hpp")
-fetch_file("${RESHADE_HEADERS_URL}/reshade_api.hpp" 8d83ec8a620c48da7a20d975bd27b3345b24d3f0d5b78ae4c4fe633d61b804eb "${RESHADE_INCLUDE}/reshade_api.hpp")
-fetch_file("${RESHADE_HEADERS_URL}/reshade_api_device.hpp" a716c44b6fbb064dbbb0826687728f21aa71ed45e13564e4dc1cdf36da5bdfa0 "${RESHADE_INCLUDE}/reshade_api_device.hpp")
-fetch_file("${RESHADE_HEADERS_URL}/reshade_api_format.hpp" 68caa17fef712043e810ab88770c15af009aa3c7693e5c115ddc324f2d0809a7 "${RESHADE_INCLUDE}/reshade_api_format.hpp")
-fetch_file("${RESHADE_HEADERS_URL}/reshade_api_pipeline.hpp" 5bda8e07260c2c60f0fd18a78b11782aed8f69e5d24b5757874614caafdf416f "${RESHADE_INCLUDE}/reshade_api_pipeline.hpp")
-fetch_file("${RESHADE_HEADERS_URL}/reshade_api_resource.hpp" 32cdafe6d783813f3ac72ad43e426638d8d0fef56bcb558fad218a14cfb75ee3 "${RESHADE_INCLUDE}/reshade_api_resource.hpp")
-fetch_file("${RESHADE_HEADERS_URL}/reshade_events.hpp" 2717f56e2bd89af6d708c9c316353d6581c5a41d4526629fadba51d13be57a89 "${RESHADE_INCLUDE}/reshade_events.hpp")
-fetch_file("${RESHADE_HEADERS_URL}/reshade_overlay.hpp" ed914b12fbc41ed038287b0163c0bc934772afcff2c22392044c6008adc5ae79 "${RESHADE_INCLUDE}/reshade_overlay.hpp")
 
 set(ONNXRUNTIME_INCLUDE "${CMAKE_BINARY_DIR}/onnxruntime/include")
 set(ONNXRUNTIME_HEADERS_URL "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.4/include/onnxruntime/core/session")
@@ -104,44 +92,6 @@ target_include_directories(depth_addon PRIVATE src "${ONNXRUNTIME_INCLUDE}")
 target_compile_definitions(depth_addon PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(depth_addon PRIVATE /W4 /permissive- /EHsc)
 target_link_libraries(depth_addon PRIVATE d3d11 d3d12 d3dcompiler dxgi windowsapp)
-
-# The in-game menu draws through ReShade's own Dear ImGui, so it needs the header of the exact version ReShade
-# exports its functions for. Only the header: the functions are ReShade's.
-set(RESHADE_IMGUI_INCLUDE "${CMAKE_BINARY_DIR}/reshade-imgui")
-fetch_file("https://raw.githubusercontent.com/ocornut/imgui/v1.92.5-docking/imgui.h" 07562842049eaca4e47c3fcdcc9d8eafd442695b9856d6f6639e92e1bb6c737e "${RESHADE_IMGUI_INCLUDE}/imgui.h")
-fetch_file("https://raw.githubusercontent.com/ocornut/imgui/v1.92.5-docking/imconfig.h" 6e5687893594ebfaf8569280cfea83d025904a8a4e23bec073086f6c5bc8f7fb "${RESHADE_IMGUI_INCLUDE}/imconfig.h")
-
-# The host embeds AMD's FSR 1 headers, which src/posix/posix.cmake downloads, and compiles the shader when it first
-# upscales.
-add_executable(Unishade WIN32
-    src/Unishade.rc
-    src/main.cpp
-    src/addon.cpp
-    src/capture.cpp
-    src/config.cpp
-    src/discord.cpp
-    src/game_integration.cpp
-    src/hdr.cpp
-    src/launcher.cpp
-    src/log.cpp
-    src/menu.cpp
-    src/depth/depth.cpp
-    src/depth/depth_model.cpp
-    src/overlay.cpp
-    src/reshade_config.cpp
-    src/setup_check.cpp
-    src/update.cpp
-    src/upscale.cpp
-    src/net.cpp)
-target_include_directories(Unishade PRIVATE "${RESHADE_INCLUDE}" "${RESHADE_IMGUI_INCLUDE}" "${ONNXRUNTIME_INCLUDE}")
-target_compile_definitions(Unishade PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
-target_compile_definitions(Unishade PRIVATE FFX_A_HEADER="${FSR_DIR}/ffx_a.h" FFX_FSR1_HEADER="${FSR_DIR}/ffx_fsr1.h")
-target_compile_definitions(Unishade PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
-# src/net.cpp sends this for the update check.
-target_compile_definitions(Unishade PRIVATE UNISHADE_USER_AGENT="Unishade/${PROJECT_VERSION}")
-target_compile_definitions(Unishade PRIVATE UNISHADE_VERSION_RESOURCE=${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0)
-target_compile_options(Unishade PRIVATE /W4 /permissive- /EHsc /bigobj)
-target_link_libraries(Unishade PRIVATE d3d11 d3d12 d3dcompiler dxgi dcomp dwmapi windowsapp gdi32 version winhttp bcrypt windowscodecs)
 
 # Setup's window uses Dear ImGui's Win32 and Direct3D 11 backends.
 fetch_file("${IMGUI_URL}/backends/imgui_impl_win32.h" 2736595b8de1e56871661d5d9b96deec567d35521746fbe2ade8f0543acdfd2b "${IMGUI_DIR}/backends/imgui_impl_win32.h")
@@ -162,34 +112,13 @@ target_compile_definitions(setup_libraries PUBLIC MINIZ_NO_STDIO MINIZ_NO_TIME)
 # Otherwise the backend loads XInput by its bare name, which could find a DLL next to Setup.
 target_compile_definitions(setup_libraries PRIVATE IMGUI_IMPL_WIN32_DISABLE_GAMEPAD)
 
-# The launcher's window, which Unishade.exe loads. It has a Dear ImGui of its own and draws on the CPU, since the
-# host's ImGui and graphics card belong to ReShade. See src/ui/launcher_module.h.
-set(UI_SOURCES src/ui/launcher_module.cpp src/ui/launcher_ui.cpp src/ui/kit.cpp src/ui/soft_renderer.cpp)
-add_library(UnishadeUi SHARED
-    ${UI_SOURCES}
-    src/ui/UnishadeUi.rc
-    "${IMGUI_DIR}/imgui.cpp"
-    "${IMGUI_DIR}/imgui_draw.cpp"
-    "${IMGUI_DIR}/imgui_tables.cpp"
-    "${IMGUI_DIR}/imgui_widgets.cpp"
-    "${IMGUI_DIR}/backends/imgui_impl_win32.cpp")
-target_include_directories(UnishadeUi PRIVATE src "${IMGUI_DIR}" "${IMGUI_DIR}/backends")
-# 32-bit characters, so emoji outside the first 65536 code points show too.
-target_compile_definitions(UnishadeUi PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_UI_EXPORTS IMGUI_IMPL_WIN32_DISABLE_GAMEPAD IMGUI_USE_WCHAR32)
-target_compile_definitions(UnishadeUi PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
-target_compile_definitions(UnishadeUi PRIVATE UNISHADE_VERSION_RESOURCE=${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0)
-target_compile_options(UnishadeUi PRIVATE /EHsc)
-set_source_files_properties(${UI_SOURCES} PROPERTIES COMPILE_OPTIONS "/W4;/permissive-")
-target_link_libraries(UnishadeUi PRIVATE dwmapi imm32)
-add_dependencies(Unishade UnishadeUi)
-
 # Built on request, like the Inno Setup installer it replaces: cmake --build build --config Release --target installer
 add_executable(installer WIN32 EXCLUDE_FROM_ALL
     installer/main.cpp
     installer/install.cpp
     src/net.cpp
     installer/setup.rc)
-# setup.rc embeds Unishade.exe and UnishadeUi.dll, found through the include path.
+# setup.rc embeds Unishade.exe, found through the include path.
 target_include_directories(installer PRIVATE "$<TARGET_FILE_DIR:Unishade>")
 target_compile_definitions(installer PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_definitions(installer PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
@@ -202,7 +131,7 @@ target_link_libraries(installer PRIVATE setup_libraries d3d11 dxgi d3dcompiler d
 # that are not KnownDLLs are delay-loaded, so they load after wWinMain has limited the search to System32.
 target_link_options(installer PRIVATE /DEPENDENTLOADFLAG:0x800 /DELAYLOAD:d3d11.dll /DELAYLOAD:d3dcompiler_47.dll
     /DELAYLOAD:dwmapi.dll /DELAYLOAD:winhttp.dll /DELAYLOAD:bcrypt.dll)
-add_dependencies(installer Unishade UnishadeUi)
+add_dependencies(installer Unishade)
 # The generator expression keeps multi-config generators from adding a Release folder.
 set_target_properties(installer PROPERTIES
     OUTPUT_NAME "Unishade-Setup-${PROJECT_VERSION}"
@@ -237,16 +166,6 @@ target_link_libraries(dlss5_check PRIVATE d3d12 windowsapp)
 add_dependencies(dlss5_check Unishade_nvngx)
 
 if(BUILD_TESTING)
-    add_executable(log_tests tests/log_tests.cpp src/log.cpp)
-    target_compile_definitions(log_tests PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_VERSION="${PROJECT_VERSION}")
-    target_compile_options(log_tests PRIVATE /W4 /permissive- /EHsc)
-    add_test(NAME log_tests COMMAND log_tests)
-    set_tests_properties(log_tests PROPERTIES TIMEOUT 45)
-
-    add_executable(frame_statistics_tests tests/frame_statistics_tests.cpp)
-    target_compile_options(frame_statistics_tests PRIVATE /W4 /permissive- /EHsc)
-    add_test(NAME frame_statistics_tests COMMAND frame_statistics_tests)
-
     add_executable(frame_limit_tests tests/frame_limit_tests.cpp)
     target_compile_options(frame_limit_tests PRIVATE /W4 /permissive- /EHsc)
     add_test(NAME frame_limit_tests COMMAND frame_limit_tests)
@@ -254,11 +173,6 @@ if(BUILD_TESTING)
     add_executable(menu_layout_tests tests/menu_layout_tests.cpp)
     target_compile_options(menu_layout_tests PRIVATE /W4 /permissive- /EHsc)
     add_test(NAME menu_layout_tests COMMAND menu_layout_tests)
-
-    add_executable(hotkey_tests tests/hotkey_tests.cpp)
-    target_compile_definitions(hotkey_tests PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
-    target_compile_options(hotkey_tests PRIVATE /W4 /permissive- /EHsc)
-    add_test(NAME hotkey_tests COMMAND hotkey_tests)
 
     add_executable(ini_text_tests tests/ini_text_tests.cpp)
     target_compile_options(ini_text_tests PRIVATE /W4 /permissive- /EHsc)
@@ -281,11 +195,4 @@ if(BUILD_TESTING)
     target_compile_options(package_files_tests PRIVATE /W4 /permissive- /EHsc)
     target_link_libraries(package_files_tests PRIVATE setup_libraries)
     add_test(NAME package_files_tests COMMAND package_files_tests)
-
-    add_executable(game_window_tests tests/game_window_tests.cpp src/game_integration.cpp)
-    target_compile_definitions(game_window_tests PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
-    target_compile_options(game_window_tests PRIVATE /W4 /permissive- /EHsc)
-    target_link_libraries(game_window_tests PRIVATE dwmapi)
-    add_test(NAME game_window_tests COMMAND game_window_tests)
-    set_tests_properties(game_window_tests PROPERTIES TIMEOUT 30)
 endif()

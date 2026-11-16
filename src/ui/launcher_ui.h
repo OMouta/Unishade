@@ -2,7 +2,7 @@
 
 // The launcher, written once for every platform. A host fills in a Model with what the launcher shows and carries out
 // what the user does through Host. launcher_ui.cpp draws it with Dear ImGui: in the launcher's window, and over the game
-// as its menu, or on Windows with ReShade in UnishadeUi.dll. Text is UTF-8.
+// as its menu. Text is UTF-8.
 //
 // Draw only reads the model, and the host must not change it until Draw returns: a Host call that changes something
 // shows in the model the host makes for the next frame.

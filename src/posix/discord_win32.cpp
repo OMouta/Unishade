@@ -1,4 +1,3 @@
-// The ReShade host's discord.cpp, with this host's log, settings and game.
 #include "discord.h"
 #include "app.h"
 #include "discord_rpc.h"

@@ -307,7 +307,7 @@ void RequestBorderlessCapture()
     }
 }
 
-// HDR, as the ReShade host's hdr.cpp tells it
+// HDR
 
 // The window's monitor and Windows' display paths only share the GDI device name, such as \\.\DISPLAY1.
 bool FindDisplayPath(HWND window, DISPLAYCONFIG_PATH_INFO& found)
