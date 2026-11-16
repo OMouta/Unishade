@@ -162,20 +162,17 @@ struct Performance
 {
     int frameRate = 0; // 0 shows every frame the game draws
     std::optional<int> effectResolution; // where effects can run on a smaller picture
-    std::optional<int> depthSize;        // while depth estimation is installed
 };
 
 enum class PerformanceSetting
 {
     FrameRate,
     EffectResolution,
-    DepthSize,
 };
 
 // The choices Performance offers, besides a custom frame rate between the slowest and fastest.
 inline constexpr int kFrameRates[] = { 0, 120, 60 };
 inline constexpr int kEffectResolutions[] = { 100, 75, 50 };
-inline constexpr int kDepthSizes[] = { 924, 518, 392, 266 };
 inline constexpr int kSlowestFrameRate = 30;
 inline constexpr int kFastestFrameRate = 500;
 

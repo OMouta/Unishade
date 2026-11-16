@@ -449,15 +449,6 @@ void PerformanceRows(const Page& page, float& y, Host& host, const Performance& 
         if (resolution >= 0)
             host.SetPerformance(game, PerformanceSetting::EffectResolution, kEffectResolutions[resolution]);
     }
-    if (performance.depthSize)
-    {
-        RowSeparator(page, y);
-        const int depth = ChoicesRow(page, y, "depth", "Depth detail",
-                                     "Depth is estimated from a smaller picture. Lower is faster, and effects that use depth lose fine detail.",
-                                     { "Ultra", "High", "Medium", "Low" }, ChoiceOf(kDepthSizes, *performance.depthSize));
-        if (depth >= 0)
-            host.SetPerformance(game, PerformanceSetting::DepthSize, kDepthSizes[depth]);
-    }
 }
 
 // Sidebar
