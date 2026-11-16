@@ -349,33 +349,33 @@ public:
     virtual void OpenPresetsFolder(size_t game) = 0;
     // Where the model offers to edit presets. New ones and copies go to the game's own folder, and the game uses them.
     // Each returns false when the name is not taken, with the reason in the next model.
-    virtual bool NewPreset(size_t /*game*/, std::string_view /*name*/) { return false; }
-    virtual bool CopyPreset(size_t /*game*/, std::string_view /*preset*/, std::string_view /*name*/) { return false; }
-    virtual bool RenamePreset(std::string_view /*preset*/, std::string_view /*name*/) { return false; }
-    virtual void MovePreset(std::string_view /*preset*/, std::string_view /*folder*/) {}
-    virtual void DeletePreset(std::string_view /*preset*/) {}
+    virtual bool NewPreset(size_t game, std::string_view name) = 0;
+    virtual bool CopyPreset(size_t game, std::string_view preset, std::string_view name) = 0;
+    virtual bool RenamePreset(std::string_view preset, std::string_view name) = 0;
+    virtual void MovePreset(std::string_view preset, std::string_view folder) = 0;
+    virtual void DeletePreset(std::string_view preset) = 0;
     // The changes to the preset of the game being played, with auto-save off.
-    virtual void SaveChanges() {}
-    virtual void DiscardChanges() {}
+    virtual void SaveChanges() = 0;
+    virtual void DiscardChanges() = 0;
     // The effects of the game being played, by their place in Effects::list.
-    virtual void SetEffect(size_t /*effect*/, bool /*on*/) {}
-    virtual void MoveEffect(size_t /*from*/, size_t /*to*/) {}
+    virtual void SetEffect(size_t effect, bool on) = 0;
+    virtual void MoveEffect(size_t from, size_t to) = 0;
     // An effect's settings while they show. Draw is done with them before it returns, and asks again in the next frame.
-    virtual const EffectSettings* DescribeSettings(size_t /*effect*/) { return nullptr; }
-    virtual void SetSetting(size_t /*effect*/, size_t /*setting*/, const EffectSetting& /*value*/) {}
+    virtual const EffectSettings* DescribeSettings(size_t effect) = 0;
+    virtual void SetSetting(size_t effect, size_t setting, const EffectSetting& value) = 0;
     // One setting, or every setting of the effect without one.
-    virtual void ResetSettings(size_t /*effect*/, std::optional<size_t> /*setting*/) {}
-    virtual void SetDefinition(size_t /*effect*/, size_t /*definition*/, std::string_view /*value*/) {}
+    virtual void ResetSettings(size_t effect, std::optional<size_t> setting) = 0;
+    virtual void SetDefinition(size_t effect, size_t definition, std::string_view value) = 0;
     // The setting being changed and the one under the cursor, which effects can read, in every frame its settings show.
-    virtual void PointAtSettings(size_t /*effect*/, std::optional<size_t> /*active*/, std::optional<size_t> /*hovered*/) {}
+    virtual void PointAtSettings(size_t effect, std::optional<size_t> active, std::optional<size_t> hovered) = 0;
     // Over the game. Compare is called in every frame, with whether its button is held.
-    virtual void Compare(bool /*holding*/) {}
-    virtual void TakeScreenshot(bool /*beforeAfter*/) {}
-    virtual void OpenScreenshots() {}
-    virtual void CloseMenu() {}
+    virtual void Compare(bool holding) = 0;
+    virtual void TakeScreenshot(bool beforeAfter) = 0;
+    virtual void OpenScreenshots() = 0;
+    virtual void CloseMenu() = 0;
     // The answer to the question about unsaved changes before quitting.
-    virtual void Quit(bool /*save*/) {}
-    virtual void KeepRunning() {}
+    virtual void Quit(bool save) = 0;
+    virtual void KeepRunning() = 0;
     // For a game, or the defaults without one.
     virtual void SetPerformance(std::optional<size_t> game, PerformanceSetting setting, int value) = 0;
 
@@ -385,17 +385,17 @@ public:
     virtual void ClearShortcut(size_t shortcut) = 0;
     virtual void ResetShortcuts() = 0;
     // Only where Settings offers it.
-    virtual void DownloadEffects() {}
-    virtual void ReloadEffects() {}
+    virtual void DownloadEffects() = 0;
+    virtual void ReloadEffects() = 0;
 
     // Add-ons, by their place in Model::addons.
-    virtual void InstallAddon(size_t /*addon*/) {}
-    virtual void CancelInstall(size_t /*addon*/) {}
+    virtual void InstallAddon(size_t addon) = 0;
+    virtual void CancelInstall(size_t addon) = 0;
     // The answer for a Pending add-on.
-    virtual void LoadAddon(size_t /*addon*/, bool /*load*/) {}
-    virtual void SetAddon(size_t /*addon*/, bool /*on*/) {}
-    virtual void SetAddonSetting(size_t /*addon*/, size_t /*setting*/, const EffectSetting& /*value*/) {}
-    virtual void OpenAddonsFolder() {}
+    virtual void LoadAddon(size_t addon, bool load) = 0;
+    virtual void SetAddon(size_t addon, bool on) = 0;
+    virtual void SetAddonSetting(size_t addon, size_t setting, const EffectSetting& value) = 0;
+    virtual void OpenAddonsFolder() = 0;
 
 protected:
     ~Host() = default;

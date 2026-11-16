@@ -97,6 +97,21 @@ public:
     void RecordShortcut(int) override {}
     void ClearShortcut(size_t) override {}
     void ResetShortcuts() override {}
+    bool NewPreset(size_t, std::string_view) override { return true; }
+    bool CopyPreset(size_t, std::string_view, std::string_view) override { return true; }
+    bool RenamePreset(std::string_view, std::string_view) override { return true; }
+    void MovePreset(std::string_view, std::string_view) override {}
+    void DeletePreset(std::string_view) override {}
+    void SetSetting(size_t, size_t, const launcher::EffectSetting&) override {}
+    void ResetSettings(size_t, std::optional<size_t>) override {}
+    void SetDefinition(size_t, size_t, std::string_view) override {}
+    void PointAtSettings(size_t, std::optional<size_t>, std::optional<size_t>) override {}
+    void Compare(bool) override {}
+    void TakeScreenshot(bool) override {}
+    void OpenScreenshots() override {}
+    void DownloadEffects() override {}
+    void ReloadEffects() override {}
+    void OpenAddonsFolder() override {}
 
     void InstallAddon(size_t addon) override { calls.push_back("install " + std::to_string(addon)); }
     void CancelInstall(size_t addon) override { calls.push_back("cancel " + std::to_string(addon)); }
