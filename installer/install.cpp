@@ -38,18 +38,22 @@ constexpr wchar_t kStartupApprovedKey[] = L"Software\\Microsoft\\Windows\\Curren
 constexpr wchar_t kManifest[] = L"RobloxShadeHost-Setup.files";
 constexpr wchar_t kSetupExe[] = L"Unishade-Setup.exe";
 
-// Logs the host and ReShade write next to Unishade.exe, and the host's copy of Discord's game icons, deleted on every
-// uninstall. ReShade numbers its log when another copy has it open.
-constexpr const wchar_t* kLogs[] = { L"Unishade.log", L"Unishade.old.log", L"RobloxShadeHost.log", L"RobloxShadeHost.old.log",
-                                     L"ReShade.log",  L"ReShade.log1",     L"ReShade.log2",        L"ReShade.log3",
-                                     L"ReShade.log4", L"ReShade.log5",     L"ReShade.log6",        L"ReShade.log7",
-                                     L"ReShade.log8", L"ReShade.log9",     L"ReShade.log10",       L"DiscordIcons.txt",
-                                     L"DiscordIcons.txt.tmp" };
-// The user's settings, saved games and presets, deleted only when the user asks. The folders go with everything in
-// them, including effects the user added to reshade-shaders.
-constexpr const wchar_t* kUserFiles[] = { L"ReShade.ini", L"ReShadePreset.ini", L"RobloxShadeHost.ini", L"RobloxShadeHost.ini.tmp",
-                                          L"games.ini", L"games.ini.tmp" };
-constexpr const wchar_t* kUserFolders[] = { L"presets", L"reshade-shaders" };
+// What the host writes next to Unishade.exe for itself, deleted on every uninstall: its logs and locks, its copy of
+// Discord's game icons, and the logs of the ReShade host and ReShade from Unishade 0.6.3 and earlier. ReShade
+// numbers its log when another copy has it open.
+constexpr const wchar_t* kLogs[] = { L"Unishade.log",  L"Unishade.old.log", L"Unishade.previous.log", L"unishade.lock",
+                                     L"setup.lock",    L"DiscordIcons.txt", L"DiscordIcons.txt.tmp",  L"RobloxShadeHost.log",
+                                     L"RobloxShadeHost.old.log", L"ReShade.log", L"ReShade.log1",     L"ReShade.log2",
+                                     L"ReShade.log3",  L"ReShade.log4",     L"ReShade.log5",          L"ReShade.log6",
+                                     L"ReShade.log7",  L"ReShade.log8",     L"ReShade.log9",          L"ReShade.log10" };
+// The host's compiled effects, also deleted on every uninstall.
+constexpr const wchar_t* kCacheFolders[] = { L"cache" };
+// The user's settings, saved games and presets, deleted only when the user asks, with the settings Unishade 0.6.3 and
+// earlier kept in ReShade.ini, ReShadePreset.ini and RobloxShadeHost.ini. The folders go with everything in them,
+// including effects the user added to reshade-shaders and add-ons the user installed.
+constexpr const wchar_t* kUserFiles[] = { L"Unishade.ini",      L"Unishade.ini.tmp",    L"games.ini",           L"games.ini.tmp",
+                                          L"ReShade.ini",       L"ReShadePreset.ini",   L"RobloxShadeHost.ini", L"RobloxShadeHost.ini.tmp" };
+constexpr const wchar_t* kUserFolders[] = { L"presets", L"reshade-shaders", L"Addons" };
 
 // The files of each add-on, under the names the host loads them by. Where each one comes from and its SHA-256 are in
 // the add-on's downloaded manifest, so they can change without a new Setup.
@@ -797,27 +801,30 @@ void RemoveFromStartup(const fs::path& directory)
     SetupLog("Removed Unishade from the apps Windows starts at sign-in.");
 }
 
-// Calls back for each running host started from the folder.
+// Calls back for each running host started from the folder, with the window that quits it when closed: the hidden
+// window of Unishade's shortcuts, or the main window of Unishade 0.6.3 and earlier, which was a ReShade host.
 template <typename Callback>
 void ForEachHost(const fs::path& directory, Callback callback)
 {
-    for (HWND window = nullptr; (window = FindWindowExW(nullptr, window, L"RobloxShadeHost", nullptr));)
-    {
-        DWORD id = 0;
-        GetWindowThreadProcessId(window, &id);
-        const std::unique_ptr<void, decltype(&CloseHandle)> process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, id),
-                                                                    &CloseHandle);
-        if (!process)
-            continue;
-        wchar_t path[32768]{};
-        DWORD size = static_cast<DWORD>(std::size(path));
-        // A closed window cannot be the starting point of the next search, so start over.
-        if (QueryFullProcessImageNameW(process.get(), 0, path, &size) && IsInside(path, directory) && callback(window, process.get()))
-            window = nullptr;
-    }
+    for (const wchar_t* name : { L"UnishadeMessages", L"RobloxShadeHost" })
+        for (HWND window = nullptr; (window = FindWindowExW(nullptr, window, name, nullptr));)
+        {
+            DWORD id = 0;
+            GetWindowThreadProcessId(window, &id);
+            const std::unique_ptr<void, decltype(&CloseHandle)> process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, id),
+                                                                        &CloseHandle);
+            if (!process)
+                continue;
+            wchar_t path[32768]{};
+            DWORD size = static_cast<DWORD>(std::size(path));
+            // A closed window cannot be the starting point of the next search, so start over.
+            if (QueryFullProcessImageNameW(process.get(), 0, path, &size) && IsInside(path, directory) && callback(window, process.get()))
+                window = nullptr;
+        }
 }
 
-// Files cannot be replaced while the host runs from them, so ask it to quit.
+// Files cannot be replaced while the host runs from them, so ask it to quit. With unsaved changes to a preset it asks
+// the user first, and Setup stops after waiting for it.
 void CloseHost(const fs::path& directory)
 {
     ForEachHost(directory, [](HWND window, HANDLE process) {
@@ -1136,6 +1143,9 @@ void Uninstall(const fs::path& directory, bool deleteUserFiles)
     }
     else
         WriteManifest(directory, remaining);
+    for (const wchar_t* folder : kCacheFolders)
+        if (!DeleteInside(root, directory / folder, true))
+            failed = true;
 
     // Deepest folders first, so parents are empty by the time they are tried. Folders with other files stay, and
     // links and junctions are left alone.

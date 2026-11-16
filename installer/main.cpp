@@ -739,9 +739,9 @@ void UninstallPage()
     Title("Uninstall Unishade");
     Text("Removes Unishade, ReShade and the effects from " + std::string(app.directory) + ", and its Start menu shortcuts.", kDim, 15);
     Spacing(10);
-    CheckLine("Also delete my presets, settings and game list", app.deleteUserFiles);
-    Text("That deletes ReShade.ini, ReShadePreset.ini, RobloxShadeHost.ini and games.ini, and the presets and reshade-shaders folders with "
-         "everything in them. Other files in the folder, such as screenshots, stay.",
+    CheckLine("Also delete my presets, settings, game list and add-ons", app.deleteUserFiles);
+    Text("That deletes Unishade.ini and games.ini, the settings of Unishade 0.6.3 and earlier, and the presets, reshade-shaders and "
+         "Addons folders with everything in them. Other files in the folder, such as screenshots, stay.",
          kDim, 14);
     if (app.uninstallTask.Running())
     {

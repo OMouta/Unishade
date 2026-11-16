@@ -88,8 +88,8 @@ ReShadeRelease FetchReShadeRelease(const std::atomic<bool>& cancel);
 // result is false. Throws std::runtime_error or Cancelled.
 bool Install(const InstallOptions& options, const ReShadeRelease& release, Progress& progress);
 
-// Removes the files Setup installed and the logs. With deleteUserFiles, also removes ReShade.ini, ReShadePreset.ini,
-// RobloxShadeHost.ini, games.ini and the presets and reshade-shaders folders. Refuses a folder that is not a Unishade
+// Removes the files Setup installed, what Unishade made for itself and the logs. With deleteUserFiles, also the
+// settings, the game list and the presets, reshade-shaders and Addons folders. Refuses a folder that is not a Unishade
 // installation. When Setup runs from the folder, it moves its own exe out first; call DeleteMovedSetup before exiting.
 void Uninstall(const std::filesystem::path& directory, bool deleteUserFiles);
 void DeleteMovedSetup();
