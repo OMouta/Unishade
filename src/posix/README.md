@@ -1,6 +1,6 @@
 # Unishade for macOS and Linux
 
-ReShade is Windows only, so this host runs ReShade effects itself. It follows the Windows design: it copies the game's window, runs effects on the copy and shows the result in a window over the game, with clicks passing through until the menu opens.
+ReShade is Windows only, so this host runs ReShade effects itself. It copies the game's window, runs effects on the copy and shows the result in a window over the game, with clicks passing through until the menu opens. Windows runs the same host.
 
 | | macOS | Linux |
 | --- | --- | --- |
@@ -127,10 +127,10 @@ Set `UNISHADE_VALIDATION=1` to run with the Vulkan validation layers.
 | `ui.cpp` | What the shared launcher in `src/ui` shows, in its window and over the game as the menu |
 | `effects.cpp` | ReShade effect runtime on Vulkan |
 | `gpu.cpp` | Vulkan device, images and window swapchains |
-| `platform_x11.cpp`, `platform_macos.mm` | Everything in `platform.h` |
+| `platform_x11.cpp`, `platform_macos.mm`, `platform_win32.cpp` | Everything in `platform.h` |
 | `macho.h` | Reads the SDK a Mac program was built with from its executable, so the overlay knows whether macOS 26 draws the game with the new look. Plain C++, so tests can check it anywhere |
 | `window_rules.h` | macOS rules for which layers can hold a game, whether a window covers its screen, and which pixels of a frame are the game's. Kept apart so `tests/posix_tests.cpp` can check them without a window |
 | `setup.cpp` | `--install-effects` and the launcher's download button. Downloads over https only, except the sources given with `--effects-url` and `--presets-url`, which tests can point at local files |
 | `config.cpp`, `games.cpp`, `hotkeys.cpp` | `Unishade.ini`, `games.ini` and shortcuts |
 
-Shared with the Windows host, in `src/`: `preset_ini.h` (ReShade presets), `game_list.h` (`games.ini`), `hotkey_text.h` (how shortcuts are written), `names.h` (the rules for game folders and typed names), `package_files.h` (unpacking effect packages), `menu_layout.h` (the menu's size), `ini_text.h` and `theme.h`.
+Kept in `src/`: `preset_ini.h` (ReShade presets), `game_list.h` (`games.ini`), `hotkey_text.h` (how shortcuts are written), `names.h` (the rules for game folders and typed names), `package_files.h` (unpacking effect packages), `menu_layout.h` (the menu's size), `ini_text.h` and `theme.h`.

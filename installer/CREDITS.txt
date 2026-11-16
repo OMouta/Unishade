@@ -3,27 +3,33 @@ Copyright 2026 Unishade contributors. MIT license.
 https://github.com/OMouta/Unishade
 
 Unishade includes:
+ReShade FX compiler (effect_*.cpp from ReShade 6.8.0), copyright 2014 Patrick Mours. BSD 3-Clause license, below.
+https://github.com/crosire/reshade
+SPIR-V Headers, copyright 2015-2024 The Khronos Group Inc. MIT license.
+https://github.com/KhronosGroup/SPIRV-Headers
+Dear ImGui, copyright 2014-2026 Omar Cornut. MIT license.
+https://github.com/ocornut/imgui
+GLFW, copyright 2002-2006 Marcus Geelnard, 2006-2019 Camilla Löwy. zlib license.
+https://www.glfw.org/
+miniz, copyright 2013-2014 RAD Game Tools and Valve Software, 2010-2014 Rich Geldreich and Tenacious Software LLC. MIT license.
+https://github.com/richgel999/miniz
+stb_image, stb_image_write and stb_image_resize2, by Sean Barrett, with Jeff Roberts and Jorge L Rodriguez for stb_image_resize2. Public domain or MIT license.
+https://github.com/nothings/stb
+stb_image_dds (from ReShade 6.8.0), based on SOIL by Jonathan Dummer. Public domain.
+https://github.com/crosire/reshade
 AMD FidelityFX Super Resolution 1, copyright 2021 Advanced Micro Devices, Inc. MIT license.
 https://github.com/GPUOpen-Effects/FidelityFX-FSR
 
 Unishade Setup includes:
 Dear ImGui, copyright 2014-2026 Omar Cornut. MIT license.
 https://github.com/ocornut/imgui
-miniz, copyright 2013-2014 RAD Game Tools and Valve Software, 2010-2014 Rich Geldreich and Tenacious Software LLC. MIT license.
-https://github.com/richgel999/miniz
-
-ReShade
-By Patrick Mours (crosire) and contributors. BSD 3-Clause license.
-https://reshade.me/
-The ReShade license is shown separately when you select ReShade.
 
 DLSS5 optional add-on
-renodx-dlss.addon64: RenoDX / clshortfuse
-https://github.com/clshortfuse
-https://discord.com/invite/renodx
-
 nvngx_dlssnr.dll: NVIDIA DLSSNR
 Copyright 2026 NVIDIA Corporation.
+The copy the add-on downloads comes from RenoDX / clshortfuse.
+https://github.com/clshortfuse
+https://discord.com/invite/renodx
 
 Depth estimation optional add-on
 depth-anything-v2-small.onnx: Depth Anything V2 Small, by Lihe Yang and others. Apache-2.0 license.
@@ -37,7 +43,20 @@ DirectML.dll: DirectML, Microsoft Corporation. Microsoft Software License Terms.
 https://github.com/microsoft/DirectML
 
 The DLSS5 and depth estimation files are downloaded separately and are not bundled in this installer.
+Effects and presets are downloaded separately and keep their own licenses.
 Third-party files are not covered by Unishade's MIT license.
 Their inclusion does not imply endorsement by their authors.
 
 Removal requests: tiago@mouta.me
+
+ReShade FX compiler license:
+
+Copyright 2014 Patrick Mours. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+  * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+  * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+  * Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

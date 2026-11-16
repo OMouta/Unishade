@@ -10,7 +10,7 @@ Use the bug report form. Include the host version, how you installed it, your Wi
 
 Presets live in `presets/`. Every effect a preset uses must come from [ReShade's official package list](https://github.com/crosire/reshade-shaders/blob/list/EffectPackages.ini); the installer downloads all of those and nothing else. Do not reference shaders from other sources.
 
-1. Save the preset from ReShade and copy the `.ini` into `presets/`.
+1. Save the preset in Unishade and copy the `.ini` into `presets/`.
 2. Test it with the host on a supported game and name the game in your submission. Roblox provides no depth buffer; depth effects require the optional depth estimation add-on.
 3. Add its filename and SHA-256 to `presets/downloads.ini`:
 
@@ -67,12 +67,12 @@ A release doesn't change `main`, so Cloudflare would keep linking the old files.
 
 ## Code changes
 
-Game discovery lives in `src/game_integration.cpp`. `FindGameTarget()` uses a manual window selection or the executable list saved in `games.ini`, with Roblox enabled by default. Custom games match their full executable path; Roblox matches its filename because its install folder changes with updates. Discovery queries executable metadata without reading game memory or injecting code.
+Game discovery lives in `src/posix/games.cpp`. `FindGameTarget()` uses a manual window selection or the executable list saved in `games.ini`, with Roblox enabled by default. Custom games match their full executable path; Roblox matches its filename because its install folder changes with updates. Discovery queries executable metadata without reading game memory or injecting code.
 
 - The host is C++20.
 - Builds use `/W4`. Fix warnings rather than suppressing them.
-- Hotkey parsing has tests in `tests/hotkey_tests.cpp`. Add a case when you change it.
-- Installer changes must pass `tests/installer_tests.ps1`. It downloads ReShade and all effect packages, so it takes a few minutes. CI runs it too, with the presets from your commit.
+- Hotkey parsing has tests in `tests/posix_tests.cpp`, which builds on macOS and Linux. Add a case when you change it.
+- Installer changes must pass `tests/installer_tests.ps1`. It downloads all effect packages, so it takes a few minutes. CI runs it too, with the presets from your commit.
 - Keep pull requests focused. Separate unrelated fixes into their own pull requests.
 - Do not bump the version. Releases are cut from tags by the maintainer.
 
