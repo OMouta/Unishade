@@ -1,10 +1,9 @@
 // Unishade Setup: installs the host with ReShade, its effects, presets and an optional add-on, and
-// later changes shortcuts or uninstalls. Drawn with Dear ImGui, the UI library ReShade's own menu uses.
+// later updates or uninstalls it. Drawn with Dear ImGui, the UI library ReShade's own menu uses.
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "install.h"
 #include "resource.h"
-#include "../src/config.h"
 #include "../src/text.h"
 #include "../src/theme.h"
 
@@ -169,10 +168,6 @@ struct App
     std::vector<std::string> notes;
     bool closeRequested = false;
 
-    InputHotkeys hotkeys;
-    // The index in kShortcuts of the shortcut waiting for new keys, or -1.
-    int capturing = -1;
-    std::string shortcutError;
     bool hostRunning = false;
     bool launch = true;
     bool highPerformanceGpu = true;
@@ -216,69 +211,6 @@ fs::path DefaultDirectory()
     fs::path directory = fs::path(path ? path : L"") / L"Unishade";
     CoTaskMemFree(path);
     return directory;
-}
-
-// Reads the shortcuts the way the host does: a missing or unsupported entry is the default, and an empty one
-// leaves the shortcut unassigned, except for the menu's.
-void LoadShortcuts()
-{
-    const fs::path directory = Directory();
-    for (const Shortcut& shortcut : kShortcuts)
-    {
-        const std::wstring text = ReadShortcut(directory, shortcut.name, shortcut.fallback);
-        Hotkey& hotkey = app.hotkeys.*shortcut.member;
-        hotkey = {};
-        if (text.empty() && shortcut.member != &InputHotkeys::input)
-            continue;
-        if (!ParseHotkey(text, hotkey))
-            ParseHotkey(shortcut.fallback, hotkey);
-    }
-}
-
-// While Setup waits for a shortcut, the next key pressed with any modifiers becomes it.
-void CaptureShortcut(UINT key)
-{
-    // Modifiers on their own.
-    if (key == VK_SHIFT || key == VK_CONTROL || key == VK_MENU || key == VK_LWIN || key == VK_RWIN)
-        return;
-    Hotkey hotkey;
-    if (GetKeyState(VK_CONTROL) < 0)
-        hotkey.modifiers |= MOD_CONTROL;
-    if (GetKeyState(VK_MENU) < 0)
-        hotkey.modifiers |= MOD_ALT;
-    if (GetKeyState(VK_SHIFT) < 0)
-        hotkey.modifiers |= MOD_SHIFT;
-    if (GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0)
-        hotkey.modifiers |= MOD_WIN;
-    if (key == VK_ESCAPE && hotkey.modifiers == MOD_NOREPEAT)
-    {
-        app.capturing = -1;
-        return;
-    }
-    hotkey.key = key;
-    const std::wstring text = FormatHotkey(hotkey);
-    if (text.empty())
-    {
-        app.shortcutError = "That key cannot be used. Try a letter, a number or an F key other than F12.";
-        return;
-    }
-    // The host turns off the later of two shortcuts on the same keys.
-    const Shortcut& shortcut = kShortcuts[app.capturing];
-    for (const Shortcut& other : kShortcuts)
-    {
-        const Hotkey& taken = app.hotkeys.*other.member;
-        if (&other != &shortcut && taken.key == hotkey.key && taken.modifiers == hotkey.modifiers)
-        {
-            app.shortcutError = Utf8(text) + " is already used by another Unishade shortcut.";
-            return;
-        }
-    }
-    app.capturing = -1;
-    app.shortcutError.clear();
-    if (WriteShortcut(Directory(), shortcut.name, text))
-        app.hotkeys.*shortcut.member = hotkey;
-    else
-        app.shortcutError = "Could not save RobloxShadeHost.ini.";
 }
 
 void StartReleaseFetch()
@@ -585,60 +517,6 @@ void ProgressLine(float fraction)
     ImGui::Dummy(end - start);
 }
 
-// A shortcut drawn like a key, followed by what it does. Clicking the key makes it wait for new ones.
-void KeybindLine(int index, const std::string& description)
-{
-    const Hotkey& hotkey = app.hotkeys.*kShortcuts[index].member;
-    const bool capturing = app.capturing == index;
-    const std::string label = capturing ? "Press keys..." : hotkey.key ? Utf8(FormatHotkey(hotkey)) : "Not set";
-    ImGui::PushID(index);
-    ImGui::PushFont(ui.semibold, 14.5f);
-    ImGui::PushStyleColor(ImGuiCol_Button, kBackground);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kCardHover);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, kBorder);
-    ImGui::PushStyleColor(ImGuiCol_Border, capturing ? kAccent : kBorderStrong);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(10), S(5)));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(6));
-    const float width = std::max(ImGui::CalcTextSize(label.c_str()).x + S(20), S(116));
-    if (ImGui::Button((label + "###key").c_str(), ImVec2(width, 0)))
-    {
-        app.capturing = capturing ? -1 : index;
-        app.shortcutError.clear();
-    }
-    if (ImGui::IsItemHovered())
-        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(4);
-    ImGui::PopFont();
-    ImGui::PopID();
-    ImGui::SameLine(0, S(14));
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + S(4));
-    Text(description, kText, 15);
-}
-
-// The two shortcuts needed from the first start, in a card with the accent border so it is not skipped.
-void Keybinds()
-{
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, kCard);
-    ImGui::PushStyleColor(ImGuiCol_Border, kAccent);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(16), S(14)));
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, S(1.5f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(10));
-    ImGui::BeginChild("keybinds", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
-    ImGui::PopStyleVar(3);
-    ImGui::PopStyleColor(2);
-    Text("Set your keybinds", kText, 18, ui.semibold);
-    Text(app.hostRunning ? "Click a key, then press the keys you want. They apply the next time Unishade starts."
-                         : "Click a key, then press the keys you want.",
-         kDim, 14.5f);
-    Spacing(2);
-    KeybindLine(0, "opens the Unishade menu over the game. Press it again to go back to playing.");
-    KeybindLine(1, "turns the overlay off and on.");
-    if (!app.shortcutError.empty())
-        Text(app.shortcutError, kError, 14.5f);
-    ImGui::EndChild();
-}
-
 void Sidebar(std::initializer_list<const char*> steps, int current)
 {
     ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -845,10 +723,6 @@ void FinishedPage()
 {
     Title("Unishade is ready");
     Text("Start Unishade and open your game. Roblox is detected automatically. Add other games in the Unishade window.", kDim, 15);
-    Spacing(14);
-    Keybinds();
-    Spacing(4);
-    Text(app.presets ? "Pick a preset or change the other shortcuts in the menu." : "You can change the other shortcuts in the menu.", kText, 15);
     for (const auto& note : app.notes)
     {
         Spacing(4);
@@ -910,7 +784,6 @@ void CollectTasks()
         {
             app.notes = app.progress->Read().notes;
             app.installation = FindInstallation();
-            LoadShortcuts();
             app.hostRunning = HostRunning(Directory());
             // A different preference picked in Windows' settings stays unless the box is ticked.
             const int preference = GpuPreference(Directory());
@@ -1150,12 +1023,6 @@ void CreateRenderTarget()
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-    // Keys pressed for a shortcut are not meant for the window, so Alt+F4 can be picked without closing it.
-    if (app.capturing >= 0 && (message == WM_KEYDOWN || message == WM_SYSKEYDOWN))
-    {
-        CaptureShortcut(static_cast<UINT>(wParam));
-        return 0;
-    }
     if (ImGui_ImplWin32_WndProcHandler(hwnd, message, wParam, lParam))
         return 1;
 

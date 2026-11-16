@@ -1199,18 +1199,6 @@ bool AddonInstalled(const fs::path& directory, Addon addon)
     return false;
 }
 
-std::wstring ReadShortcut(const fs::path& directory, const wchar_t* name, const wchar_t* fallback)
-{
-    wchar_t value[128]{};
-    GetPrivateProfileStringW(L"Input", name, fallback, value, static_cast<DWORD>(std::size(value)), (directory / L"RobloxShadeHost.ini").c_str());
-    return value;
-}
-
-bool WriteShortcut(const fs::path& directory, const wchar_t* name, const std::wstring& value)
-{
-    return WritePrivateProfileStringW(L"Input", name, value.c_str(), (directory / L"RobloxShadeHost.ini").c_str()) != FALSE;
-}
-
 bool HostRunning(const fs::path& directory)
 {
     bool running = false;
