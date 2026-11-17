@@ -306,7 +306,8 @@ set(POSIX_SOURCES
     "${POSIX_DIR}/ui.cpp"
     # The launcher every platform shares.
     "${POSIX_DIR}/../ui/kit.cpp"
-    "${POSIX_DIR}/../ui/launcher_ui.cpp")
+    "${POSIX_DIR}/../ui/launcher_ui.cpp"
+    "${POSIX_DIR}/../ui/tray.cpp")
 if(APPLE)
     list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_macos.mm")
 elseif(WIN32)

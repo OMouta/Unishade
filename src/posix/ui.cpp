@@ -7,6 +7,7 @@
 #include "discord.h"
 #include "update.h"
 #endif
+#include "backdrop.h"
 #include "log.h"
 #include "image.h"
 #include "menu_layout.h"
@@ -251,6 +252,70 @@ void ForgetPictures(const std::function<bool(const std::string& folder)>& keep)
         DestroyPicture(entry->second);
         entry = pictures.erase(entry);
     }
+}
+
+// The game's picture for the interface, which the overlay's frames make with backdrop: frost behind the tray, the
+// preview on the launcher's page and the last screenshot. Each is a texture in the one context that asks for it.
+struct GamePicture
+{
+    backdrop::Target target;
+    unsigned made = 0;  // goes up whenever the image is made again
+    bool ready = false; // drawn into since it was made
+    platform::WindowId window = 0; // the game's window it shows
+    double asked = -10;
+    ImGuiContext* context = nullptr;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    unsigned setMade = 0;
+};
+GamePicture frost;
+GamePicture preview;
+GamePicture shot;
+backdrop::Target frostScratch; // the blur's way between its two passes
+double nextPreview = 0;
+// The launcher refreshes its preview this often, at most.
+constexpr double kPreviewInterval = 1.0 / 30;
+// The preview at most this wide, and a screenshot's thumbnail half the picture's size.
+constexpr uint32_t kPreviewWidth = 1280;
+// CSS's backdrop-filter of the design's tray: blur(30px) saturate(1.7).
+constexpr float kFrostBlur = 30;
+constexpr float kFrostSaturation = 1.7f;
+
+ImTextureID GameTexture(GamePicture& picture, ImVec2* size)
+{
+    picture.asked = glfwGetTime();
+    ImGuiContext* context = ImGui::GetCurrentContext();
+    if (!picture.ready || !app.active || app.active->id != picture.window || (picture.context && picture.context != context))
+        return ImTextureID_Invalid;
+    // The old set was last drawn by this context's previous frame, which is done.
+    if (picture.set && picture.setMade != picture.made)
+    {
+        ImGui_ImplVulkan_RemoveTexture(picture.set);
+        picture.set = VK_NULL_HANDLE;
+    }
+    if (!picture.set)
+    {
+        picture.set = ImGui_ImplVulkan_AddTexture(picture.target.image.view, VK_IMAGE_LAYOUT_GENERAL);
+        picture.context = context;
+        picture.setMade = picture.made;
+    }
+    if (size)
+        *size = ImVec2(static_cast<float>(picture.target.image.width), static_cast<float>(picture.target.image.height));
+    return (ImTextureID)picture.set;
+}
+
+// Gives a picture's image the size, making it again when it has another. shared is for one that another window's
+// frame may still be reading.
+bool Fit(VkCommandBuffer commands, GamePicture& picture, uint32_t width, uint32_t height, bool shared)
+{
+    width = std::max(width, 1u);
+    height = std::max(height, 1u);
+    if (picture.target.framebuffer && picture.target.image.width == width && picture.target.image.height == height)
+        return true;
+    if (shared && picture.target.framebuffer)
+        vkDeviceWaitIdle(gpu.device);
+    picture.ready = false;
+    ++picture.made;
+    return backdrop::Make(commands, picture.target, width, height);
 }
 
 
@@ -769,6 +834,11 @@ public:
         }
         else if (which == launcher::Switch::Effects)
             app.effectsEnabled = on;
+        else if (which == launcher::Switch::SmallTiles)
+        {
+            app.settings.smallTiles = on;
+            SaveSettings(app.settings);
+        }
         else if (which == launcher::Switch::SkipTitleBar)
         {
             app.settings.skipTitleBar = on;
@@ -1047,6 +1117,8 @@ public:
 
     void TakeScreenshot(bool beforeAfter) override
     {
+        // The thumbnail waits for the frame that takes it, and stays away when none does.
+        shot.ready = false;
         app.RequestScreenshot(beforeAfter);
     }
 
@@ -1125,6 +1197,25 @@ public:
         SaveSettings(app.settings);
     }
 
+    void SetMenuSize(int percent) override
+    {
+        app.settings.menuScale = std::clamp(static_cast<float>(percent) / 100, kSmallestMenuScale, kLargestMenuScale);
+        SaveSettings(app.settings);
+    }
+
+    void PlaceMenu(float x, float y) override
+    {
+        app.settings.menuX = std::clamp(x, 0.0f, 1.0f);
+        app.settings.menuY = std::clamp(y, 0.0f, 1.0f);
+        SaveSettings(app.settings);
+    }
+
+    void SetMenuOpacity(float opacity) override
+    {
+        app.settings.menuOpacity = std::clamp(opacity, 0.4f, 1.0f);
+        SaveSettings(app.settings);
+    }
+
     void RecordShortcut(int shortcut) override
     {
         StopShortcut(app);
@@ -1198,6 +1289,12 @@ public:
     {
         if (addon < launcherState.addonFiles.size())
             app.addons.SetEnabled(launcherState.addonFiles[addon], on);
+    }
+
+    void BypassAddon(size_t addon, bool bypassed) override
+    {
+        if (addon < launcherState.addonFiles.size())
+            app.addons.SetBypassed(launcherState.addonFiles[addon], bypassed);
     }
 
     void SetAddonSetting(size_t addon, size_t setting, const launcher::EffectSetting& value) override
@@ -1541,6 +1638,8 @@ void DescribeAddons(App& app, launcher::Model& model)
         {
             addon.state = StateOf(installed->state);
             addon.error = installed->error;
+            addon.changesPicture = addon.state == launcher::AddonState::On && app.addons.ChangesPicture(*installed);
+            addon.bypassed = installed->bypassed;
             if (addon.state == launcher::AddonState::On)
                 for (const Addons::Setting& setting : installed->settings)
                     addon.settings.push_back(SettingOf(setting));
@@ -1562,6 +1661,8 @@ void DescribeAddons(App& app, launcher::Model& model)
                                                                     .official = other.official,
                                                                     .state = StateOf(other.state),
                                                                     .error = other.error });
+        addon.changesPicture = addon.state == launcher::AddonState::On && app.addons.ChangesPicture(other);
+        addon.bypassed = other.bypassed;
         if (addon.state == launcher::AddonState::On)
             for (const Addons::Setting& setting : other.settings)
                 addon.settings.push_back(SettingOf(setting));
@@ -1740,6 +1841,10 @@ launcher::Model DescribeLauncher(App& app)
     model.settings.menuSize = static_cast<int>(std::lround(app.settings.menuScale * 100));
     model.settings.canShrinkMenu = app.settings.menuScale > kSmallestMenuScale + 0.01f;
     model.settings.canGrowMenu = app.settings.menuScale < kLargestMenuScale - 0.01f;
+    model.settings.menuX = app.settings.menuX;
+    model.settings.menuY = app.settings.menuY;
+    model.settings.menuOpacity = app.settings.menuOpacity;
+    model.settings.smallTiles = app.settings.smallTiles;
     model.settings.reloadEffects = true;
     model.settings.performance = launcherState.defaults;
 #ifdef __APPLE__
@@ -1768,6 +1873,13 @@ launcher::Model DescribeLauncher(App& app)
         model.quitting = app.runtime.PresetPath().stem().string();
     return model;
 }
+// The menu's scale over the game, which follows the size of the game's window, as on Windows, counted in the monitor's
+// own units. display is the overlay's size in Dear ImGui's units.
+float MenuScale(const App& app, ImVec2 display)
+{
+    return menu_layout::Scale(display.x / app.overlay.scale, display.y / app.overlay.scale, app.settings.menuScale) * app.overlay.scale;
+}
+
 // The interface's scale for the window's monitor. On X11 it is the same on every monitor.
 float WindowScale([[maybe_unused]] GLFWwindow* window)
 {
@@ -1794,6 +1906,25 @@ ImU32 PictureTint(const std::string& key)
     const auto& pictures = Pictures();
     const auto found = pictures.lower_bound({ key, 0 });
     return found != pictures.end() && found->first.first == key ? found->second.tint : 0;
+}
+
+ImTextureID GameImage(GameView view, ImVec2* size)
+{
+    switch (view)
+    {
+    case GameView::Frost: return GameTexture(frost, size);
+    case GameView::Preview:
+        // Hidden while the game is played, when nobody looks at the launcher. It is still asked for, so a picture
+        // from the last second is there when the launcher comes to the front.
+        if (app.inFront)
+        {
+            preview.asked = glfwGetTime();
+            return ImTextureID_Invalid;
+        }
+        return GameTexture(preview, size);
+    case GameView::Shot: return GameTexture(shot, size);
+    }
+    return ImTextureID_Invalid;
 }
 } // namespace kit
 
@@ -1872,6 +2003,13 @@ void ShutdownUi(UiWindow& ui)
     for (auto& [key, picture] : pictureSets[ui.context].pictures)
         DestroyPicture(picture);
     pictureSets.erase(ui.context);
+    // Their sets go with the context's descriptor pool.
+    for (GamePicture* picture : { &frost, &preview, &shot })
+        if (picture->context == ui.context)
+        {
+            picture->context = nullptr;
+            picture->set = VK_NULL_HANDLE;
+        }
     kit::ForgetContext(ui.context);
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -1961,7 +2099,59 @@ void ResetMenu(App& app)
 {
     StopShortcut(app);
     app.compareButton = false;
+}
+
+void ForgetMenu(App& app)
+{
+    app.menuClosing = false;
     launcher::Reset(launcher::Place::Game);
+}
+
+void DrawGamePictures(App& app, VkCommandBuffer commands, const GpuImage& output, bool screenshot)
+{
+    const double now = glfwGetTime();
+    const bool frosted = app.menuOpen || app.menuClosing;
+    const bool previewing = now - preview.asked < 1 && now >= nextPreview;
+    if ((!frosted && !previewing && !screenshot) || !app.active || !output.image)
+        return;
+    backdrop::Begin(commands);
+    const platform::WindowId window = app.active->id;
+    if (frosted)
+    {
+        int width = 1, height = 1;
+        glfwGetWindowSize(app.overlay.window, &width, &height);
+        const ImVec2 display(static_cast<float>(std::max(width, 1)), static_cast<float>(std::max(height, 1)));
+        // The design's pixels at the menu's scale, in the picture's pixels, then in those of its quarter.
+        const float radius = kFrostBlur * MenuScale(app, display) * static_cast<float>(output.width) / display.x / 4;
+        const uint32_t width4 = output.width / 4, height4 = output.height / 4;
+        frost.ready = Fit(commands, frost, width4, height4, false) && backdrop::Make(commands, frostScratch, width4, height4) &&
+                      backdrop::Shrink(commands, output, frost.target) && backdrop::Blur(commands, frost.target, frostScratch, radius, kFrostSaturation);
+        frost.window = window;
+    }
+    if (previewing)
+    {
+        // Once a second while the game is played, so it costs the game next to nothing.
+        nextPreview = now + (app.inFront ? 1.0 : kPreviewInterval);
+        const uint32_t divisor = std::max(2u, (output.width + kPreviewWidth - 1) / kPreviewWidth);
+        preview.ready = Fit(commands, preview, output.width / divisor, output.height / divisor, true) && backdrop::Shrink(commands, output, preview.target);
+        preview.window = window;
+    }
+    if (screenshot)
+    {
+        shot.ready = Fit(commands, shot, output.width / 2, output.height / 2, false) && backdrop::Shrink(commands, output, shot.target);
+        shot.window = window;
+    }
+}
+
+void ReleaseGamePictures()
+{
+    for (GamePicture* picture : { &frost, &preview, &shot })
+    {
+        backdrop::Destroy(picture->target);
+        *picture = GamePicture{};
+    }
+    backdrop::Destroy(frostScratch);
+    backdrop::Release();
 }
 
 void DrawOverlay(App& app)
@@ -1971,24 +2161,30 @@ void DrawOverlay(App& app)
     // The start hint, the only message with a key, has done its job once the menu opens.
     if (app.menuOpen && !app.toastKey.empty())
         app.toastUntil = 0;
-    // The menu follows the size of the game's window, as on Windows, counted in the monitor's own units.
-    const ImVec2 display = ImGui::GetIO().DisplaySize;
-    const float menuScale = menu_layout::Scale(display.x / app.overlay.scale, display.y / app.overlay.scale, app.settings.menuScale) * app.overlay.scale;
+    const float menuScale = MenuScale(app, ImGui::GetIO().DisplaySize);
     if (menuScale <= 0)
-        return;
-    if (app.menuOpen)
     {
-        TakeShortcut(app, app.overlay.window);
+        if (app.menuClosing)
+            ForgetMenu(app);
+        return;
+    }
+    if (app.menuOpen || app.menuClosing)
+    {
+        if (app.menuOpen)
+            TakeShortcut(app, app.overlay.window);
         Host host(app);
         launcher::Model model = DescribeLauncher(app);
         model.menuKey = app.HotkeyText(kEditModeHotkey);
+        model.closing = app.menuClosing;
         // How to open the menu says nothing in it.
         if (app.active)
             model.status.detail.clear();
         launcherState.overGame = true;
-        launcher::Draw(model, host, menuScale, launcher::Place::Game);
+        const bool shown = launcher::Draw(model, host, menuScale, launcher::Place::Game);
         launcherState.overGame = false;
         GiveBack(model);
+        if (!shown)
+            ForgetMenu(app);
     }
     scale = menuScale;
     ApplyStyle(ImGui::GetStyle());

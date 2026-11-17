@@ -18,3 +18,11 @@ void DrawLauncher(App& app);
 void DrawOverlay(App& app);
 // Ends what only lasts while the menu is open, such as recording a shortcut.
 void ResetMenu(App& app);
+// Ends the menu's way out, so it opens anew next time. DrawOverlay does once it is gone.
+void ForgetMenu(App& app);
+// Records what the interface shows of output, the effects' picture in VK_IMAGE_LAYOUT_GENERAL, into the overlay's
+// commands before its Dear ImGui frame: the frost behind the menu while it shows, the launcher's preview while it is
+// asked for, and the thumbnail of a screenshot this frame takes.
+void DrawGamePictures(App& app, VkCommandBuffer commands, const GpuImage& output, bool screenshot);
+// Call before the graphics card's device goes, after ShutdownUi.
+void ReleaseGamePictures();

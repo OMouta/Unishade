@@ -216,6 +216,14 @@ struct Settings
     std::optional<int> menuSize; // in percent
     bool canShrinkMenu = false;
     bool canGrowMenu = false;
+    // Where the menu over the game was left: across the game's window from 0 to 1, where exactly 0 and 1 are docked at
+    // its left and right sides, and down it to the middle of the menu's buttons. In the top half the menu opens
+    // downward. Below 0 until the menu is moved.
+    float menuX = -1;
+    float menuY = -1;
+    // The tray's white, from 0.4 to 1, and whether its tiles are small.
+    float menuOpacity = 1;
+    bool smallTiles = false;
     std::optional<bool> keepEffectsVisible;
     std::optional<bool> updateChecks;
     std::optional<Performance> performance; // for every game without its own
@@ -261,6 +269,10 @@ struct Addon
     // Why it failed, or why the last install did.
     std::string error;
     float progress = 0; // from 0 to 1, while it installs
+    // While it is on: it changes the game's picture, as effects do.
+    bool changesPicture = false;
+    // It stays loaded and leaves the picture alone, as an effect that is turned off.
+    bool bypassed = false;
     // While it is on: its settings, which each preset keeps.
     std::vector<EffectSetting> settings;
 };
@@ -297,6 +309,8 @@ struct Model
     std::optional<Effects> effects;
     // Over the game: the shortcut that opens and closes the menu.
     std::string menuKey;
+    // Over the game: the menu was closed and is on its way out, without taking input. See Draw.
+    bool closing = false;
     // The preset whose unsaved changes the launcher asks about before Unishade quits, or empty.
     std::string quitting;
     std::vector<Notice> notices; // oldest first
@@ -322,6 +336,7 @@ enum class Switch
     DebugInfo,
     DiscordPresence,
     SkipTitleBar,
+    SmallTiles,
     Effects, // the effects of the game being played, without stopping the overlay
 };
 
@@ -380,6 +395,12 @@ public:
     virtual void SetPerformance(std::optional<size_t> game, PerformanceSetting setting, int value) = 0;
 
     virtual void StepMenuSize(int step) = 0;
+    // Over the game: the menu size in percent that dragging the menu's corner left, and where the menu was moved to,
+    // as Settings::menuX and menuY say.
+    virtual void SetMenuSize(int percent) = 0;
+    virtual void PlaceMenu(float x, float y) = 0;
+    // As Settings::menuOpacity, once its bar is let go.
+    virtual void SetMenuOpacity(float opacity) = 0;
     // The next keys pressed become the shortcut. -1 stops waiting for them.
     virtual void RecordShortcut(int shortcut) = 0;
     virtual void ClearShortcut(size_t shortcut) = 0;
@@ -394,6 +415,8 @@ public:
     // The answer for a Pending add-on.
     virtual void LoadAddon(size_t addon, bool load) = 0;
     virtual void SetAddon(size_t addon, bool on) = 0;
+    // Has an add-on that is on leave the picture alone, or work on it again.
+    virtual void BypassAddon(size_t addon, bool bypassed) = 0;
     virtual void SetAddonSetting(size_t addon, size_t setting, const EffectSetting& value) = 0;
     virtual void OpenAddonsFolder() = 0;
 
@@ -405,11 +428,13 @@ protected:
 enum class Place
 {
     Window, // over the whole launcher window
-    Game,   // in a panel at the side of the game, which leaves the rest of the game in sight
+    Game,   // in a tray over the game, which can be moved and resized and leaves the rest of the game in sight
 };
 
 // Draws the launcher into the current Dear ImGui frame. scale is the window's scaling, or the menu's over the game.
-void Draw(const Model& model, Host& host, float scale, Place place = Place::Window);
+// While Model::closing, the menu goes away the way it came, and Draw returns false once it is gone: the host then stops
+// drawing it and calls Reset. Otherwise it returns true.
+bool Draw(const Model& model, Host& host, float scale, Place place = Place::Window);
 // Starts the place over on the page of the game being played, the next time it is drawn.
 void Reset(Place place);
 } // namespace launcher

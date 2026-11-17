@@ -161,7 +161,7 @@ void App::Run()
     while (!glfwWindowShouldClose(launcher.window))
     {
         // A render held back happens as soon as it is due, so the last change in the menu always gets drawn.
-        double timeout = overlayVisible ? (menuOpen ? overlayInterval : 0.1) : 0.25;
+        double timeout = overlayVisible ? (menuOpen || menuClosing ? overlayInterval : 0.1) : 0.25;
         if (overlayVisible && renderHeld)
             timeout = std::min(timeout, lastOverlayFrame + std::max(overlayInterval, frameRateLimit ? 0.5 / frameRateLimit : 0.0) - Now());
         glfwWaitEventsTimeout(std::max(timeout, 0.001));
@@ -192,6 +192,9 @@ void App::Run()
         inFront = active && (platform::ProcessInFront(active->pid) || overlayFocused);
         UpdateGameHotkeys();
         UpdateOverlay();
+        // A menu on its way out has nowhere to go once the overlay hides.
+        if (menuClosing && !overlayVisible)
+            ForgetMenu(*this);
 
         if (menuOpen)
         {
@@ -229,7 +232,7 @@ void App::Run()
         if (overlayVisible && HasFrame())
         {
             UpdateOverlayInterval();
-            const bool wanted = menuOpen || toastShowing || Now() - lastOverlayFrame > 0.1;
+            const bool wanted = menuOpen || menuClosing || toastShowing || Now() - lastOverlayFrame > 0.1;
             const int64_t time = static_cast<int64_t>(Now() * 1e6);
             const int64_t interval = frameRateLimit ? 1000000 / frameRateLimit : 0;
             if ((!frameRateLimit || frameLimit.Ready(time, interval)) && (framePending || (wanted && Now() - lastOverlayFrame >= overlayInterval)))
@@ -313,6 +316,7 @@ void App::Shutdown()
             glfwDestroyWindow(ui->window);
         ui->window = nullptr;
     }
+    ReleaseGamePictures();
     runtime.Shutdown();
 #ifdef _WIN32
     ReleaseUpscaler();
@@ -664,6 +668,7 @@ void App::RenderOverlay()
         vkCmdBlitImage(surface.commands, output.image, VK_IMAGE_LAYOUT_GENERAL, surface.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
                        VK_FILTER_LINEAR);
     }
+    DrawGamePictures(*this, surface.commands, output, screenshot);
 
     BeginUi(overlay);
     DrawOverlay(*this);
@@ -753,7 +758,9 @@ void App::OpenMenu()
 {
     if (menuOpen || !captureEnabled || !active || !overlayVisible)
         return;
+    // Opened again on its way out, it comes back from where it is.
     menuOpen = true;
+    menuClosing = false;
     menuFocused = false;
     glfwSetWindowAttrib(overlay.window, GLFW_MOUSE_PASSTHROUGH, GLFW_FALSE);
     platform::FocusOverlay(overlay.window);
@@ -765,6 +772,8 @@ void App::CloseMenu(bool returnToGame)
     if (!menuOpen)
         return;
     menuOpen = false;
+    // The input goes back to the game now, and the menu is drawn on its way out until DrawOverlay sees it gone.
+    menuClosing = true;
     ResetMenu(*this);
     glfwSetWindowAttrib(overlay.window, GLFW_MOUSE_PASSTHROUGH, GLFW_TRUE);
     if (settings.autoSavePresets && runtime.Dirty())

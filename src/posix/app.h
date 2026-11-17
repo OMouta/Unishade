@@ -123,6 +123,10 @@ public:
     bool startMinimized = false;
     bool captureEnabled = true;
     bool menuOpen = false;
+    // The menu was closed and is still drawn on its way out, while the input is the game's again.
+    bool menuClosing = false;
+    bool launcherAnimating = false; // something in the launcher's last frame was still moving
+    bool inFront = false; // the game or the overlay has focus
     bool effectsEnabled = true;
     bool comparing = false;     // effects off while the compare shortcut is held
     bool compareButton = false; // or the menu's compare button
@@ -164,7 +168,6 @@ private:
     bool HasFrame() const;
     fx::Runtime::Source Source() const;
 
-    bool inFront = false; // the game or the overlay has focus
     double effectsCheckTime = -10;
     bool effectsInstalled = false;
 

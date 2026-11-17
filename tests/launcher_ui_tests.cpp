@@ -12,6 +12,7 @@ namespace kit
 {
 ImTextureID Picture(const std::string&, float) { return ImTextureID_Invalid; }
 ImU32 PictureTint(const std::string&) { return 0; }
+ImTextureID GameImage(GameView, ImVec2*) { return ImTextureID_Invalid; }
 } // namespace kit
 
 // Dear ImGui's hooks for its test engine tell where each control of the last frame was, by its label.
@@ -94,6 +95,9 @@ public:
     void OpenPresetsFolder(size_t) override {}
     void SetPerformance(std::optional<size_t>, launcher::PerformanceSetting, int) override {}
     void StepMenuSize(int) override {}
+    void SetMenuSize(int) override {}
+    void PlaceMenu(float, float) override {}
+    void SetMenuOpacity(float) override {}
     void RecordShortcut(int) override {}
     void ClearShortcut(size_t) override {}
     void ResetShortcuts() override {}
@@ -117,6 +121,7 @@ public:
     void CancelInstall(size_t addon) override { calls.push_back("cancel " + std::to_string(addon)); }
     void LoadAddon(size_t addon, bool load) override { calls.push_back((load ? "load " : "leave ") + std::to_string(addon)); }
     void SetAddon(size_t addon, bool on) override { calls.push_back("addon " + std::to_string(addon) + (on ? " on" : " off")); }
+    void BypassAddon(size_t addon, bool bypassed) override { calls.push_back("addon " + std::to_string(addon) + (bypassed ? " bypassed" : " shown")); }
     void SetAddonSetting(size_t addon, size_t setting, const launcher::EffectSetting& value) override
     {
         calls.push_back("addon " + std::to_string(addon) + " setting " + std::to_string(setting) + " " + std::to_string(value.ints[0]));
@@ -165,20 +170,36 @@ std::optional<ImVec2> Find(const char* label, size_t nth = 0)
 }
 
 // Presses and lets go of the left button on the nth control with a label. Returns false when there is none.
-bool Click(Host& host, const launcher::Model& model, const char* label, size_t nth = 0)
+bool Click(Host& host, const launcher::Model& model, const char* label, size_t nth = 0, launcher::Place place = launcher::Place::Window)
 {
     const std::optional<ImVec2> at = Find(label, nth);
     if (!at)
         return false;
     ImGuiIO& io = ImGui::GetIO();
     io.AddMousePosEvent(at->x, at->y);
-    Frame(host, model);
+    Frame(host, model, place);
     io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
-    Frame(host, model);
+    Frame(host, model, place);
     io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
-    Frame(host, model);
-    Frame(host, model);
+    Frame(host, model, place);
+    Frame(host, model, place);
     return true;
+}
+
+// A second of frames, long enough for what opens or closes to get there.
+void Settle(Host& host, const launcher::Model& model, launcher::Place place = launcher::Place::Window)
+{
+    for (int i = 0; i < 60; ++i)
+        Frame(host, model, place);
+}
+
+void PressEscape(Host& host, const launcher::Model& model, launcher::Place place = launcher::Place::Window)
+{
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddKeyEvent(ImGuiKey_Escape, true);
+    Frame(host, model, place);
+    io.AddKeyEvent(ImGuiKey_Escape, false);
+    Frame(host, model, place);
 }
 
 void OpenPicker(Host& host, bool add)
@@ -189,15 +210,6 @@ void OpenPicker(Host& host, bool add)
         Frame(host);
 }
 
-std::optional<ImVec2> WindowRow()
-{
-    for (ImGuiWindow* window : ImGui::GetCurrentContext()->Windows)
-        if ((window->Flags & ImGuiWindowFlags_ChildWindow) && window->ParentWindow &&
-            std::strcmp(window->ParentWindow->Name, "##picker") == 0)
-            return ImVec2(window->DC.CursorStartPos.x + 20, window->DC.CursorStartPos.y + 26);
-    return std::nullopt;
-}
-
 bool PickerTests(Host& host)
 {
     ImGuiIO& io = ImGui::GetIO();
@@ -206,7 +218,7 @@ bool PickerTests(Host& host)
     for (bool add : { true, false })
     {
         OpenPicker(host, add);
-        const auto row = WindowRow();
+        const auto row = Find("window");
         ok &= Check(row.has_value(), "picker lists an open window");
         if (!row)
             break;
@@ -250,27 +262,31 @@ bool UnsavedTests(Host& host)
 {
     bool ok = true;
     launcher::Model model = PlayedGame(false);
-    Frame(host, model);
-    ok &= Check(Click(host, model, "game"), "the sidebar lists the game");
-    ok &= Check(Click(host, model, "preset", 1), "the game's page lists its presets");
+    Settle(host, model);
+    ok &= Check(Click(host, model, "next"), "the page of the game being played has the tray");
     ok &= Check(host.calls == std::vector<std::string>{ "use 0 b.ini" }, "a preset without unsaved changes switches at once");
 
     host.calls.clear();
     model = PlayedGame(true);
-    Frame(host, model);
-    Click(host, model, "preset", 1);
+    Settle(host, model);
+    Click(host, model, "next");
+    Settle(host, model);
     ok &= Check(host.calls.empty(), "unsaved changes hold the switch");
     ok &= Check(Click(host, model, "Save"), "the switch asks what to do with the changes");
     ok &= Check(host.calls == std::vector<std::string>{ "save", "use 0 b.ini" }, "saving the changes then switches");
 
     host.calls.clear();
-    Click(host, model, "preset", 1);
-    // The card offers Discard too, before the dialog does.
-    ok &= Check(Click(host, model, "Discard", 1), "the question offers to discard the changes");
+    Settle(host, model);
+    Click(host, model, "next");
+    Settle(host, model);
+    // The question is above the tray's buttons, which offer Discard too.
+    ok &= Check(Click(host, model, "Discard"), "the question offers to discard the changes");
     ok &= Check(host.calls == std::vector<std::string>{ "discard", "use 0 b.ini" }, "discarding the changes then switches");
 
     host.calls.clear();
-    Click(host, model, "preset", 1);
+    Settle(host, model);
+    Click(host, model, "next");
+    Settle(host, model);
     ok &= Check(Click(host, model, "Cancel"), "the question can be cancelled");
     ok &= Check(host.calls.empty(), "cancelling keeps the preset");
     return ok;
@@ -283,79 +299,91 @@ launcher::Model EffectsModel()
     return model;
 }
 
+// The page of the game being played has the tray: a tile for each effect that is on.
 bool EffectsTests(Host& host)
 {
     bool ok = true;
     launcher::Model model = EffectsModel();
-    Frame(host, model);
-    Click(host, model, "game");
-    ok &= Check(Count("effect") == 2, "the effects that are on are listed, and the others wait under All effects");
-    ok &= Check(Click(host, model, "on"), "each effect has a switch");
-    ok &= Check(host.calls == std::vector<std::string>{ "effect 0 off" }, "the switch turns the effect off");
+    Settle(host, model);
+    ok &= Check(Count("effect") == 2, "the effects that are on have tiles, and the others wait in Add effect");
+    ok &= Check(Click(host, model, "on"), "each tile has a dot");
+    ok &= Check(host.calls == std::vector<std::string>{ "effect 0 off" }, "the dot turns the effect off");
     model.effects->list[0].on = false;
     Frame(host, model);
-    ok &= Check(Count("effect") == 2, "an effect turned off stays under Active, to be turned back on where it was");
+    ok &= Check(Count("effect") == 2, "an effect turned off keeps its tile, to be turned back on where it was");
 
-    // Dragging the first effect onto the other one that is on runs it after that one.
+    // Dragging the first tile onto the other one runs its effect after that one.
     host.calls.clear();
     model = EffectsModel();
-    Frame(host, model);
+    Settle(host, model);
     const std::optional<ImVec2> first = Find("effect", 0), second = Find("effect", 1);
-    ok &= Check(first && second, "both effects that are on are listed");
+    ok &= Check(first && second, "both effects that are on have tiles");
     if (first && second)
     {
         ImGuiIO& io = ImGui::GetIO();
-        io.AddMousePosEvent(first->x + 100, first->y);
+        io.AddMousePosEvent(first->x, first->y);
         Frame(host, model);
         io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
         Frame(host, model);
         for (int step = 1; step <= 8; ++step)
         {
-            io.AddMousePosEvent(first->x + 100, first->y + (second->y - first->y) * step / 8);
+            io.AddMousePosEvent(first->x + (second->x - first->x) * step / 8, first->y + (second->y - first->y) * step / 8);
             Frame(host, model);
         }
         io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
         Frame(host, model);
         Frame(host, model);
     }
-    ok &= Check(host.calls == std::vector<std::string>{ "move 0 2" }, "dropping an effect on another moves it there");
+    ok &= Check(host.calls == std::vector<std::string>{ "move 0 2" }, "dropping a tile on another moves its effect there");
     return ok;
 }
-// Over the game the launcher opens on the page of the game being played, and Escape goes back to the game.
+// Over the game the menu is a tray of the effects of the game being played, and Escape goes back to the game.
 bool PanelTests(Host& host)
 {
     bool ok = true;
     launcher::Model model = EffectsModel();
     model.games.insert(model.games.begin(), launcher::Game{ .id = "other", .name = "Other", .executable = "other.exe" });
     const auto panel = [&] { Frame(host, model, launcher::Place::Game); };
-    panel();
-    panel();
-    ok &= Check(Count("effect") == 2, "the panel opens on the page of the game being played");
-    ok &= Check(Find("home") && Find("back"), "the panel has the rail and the menu's buttons");
-    if (const std::optional<ImVec2> home = Find("home"))
+    // The tray rises into place when it opens.
+    const auto settle = [&] { Settle(host, model, launcher::Place::Game); };
+    settle();
+    ok &= Check(Count("effect") == 2, "the tray has a tile for each effect that is on");
+    ok &= Check(Find("power") && Find("back"), "the tray has the menu's buttons");
+    if (const std::optional<ImVec2> dot = Find("on"))
     {
         ImGuiIO& io = ImGui::GetIO();
-        io.AddMousePosEvent(home->x, home->y);
+        io.AddMousePosEvent(dot->x, dot->y);
         panel();
         io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
         panel();
         io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
         panel();
-        panel();
     }
-    ok &= Check(Count("effect") == 0, "the rail goes to Home");
+    ok &= Check(host.calls == std::vector<std::string>{ "effect 0 off" }, "a tile's dot turns its effect off");
+    model.effects->list[0].on = false;
+    panel();
+    ok &= Check(Count("effect") == 2, "an effect turned off keeps its tile");
+    model.effects->list[0].on = true;
     launcher::Reset(launcher::Place::Game);
-    panel();
-    panel();
-    ok &= Check(Count("effect") == 2, "the panel opens on the game's page again once reset");
+    settle();
+    ok &= Check(Count("effect") == 2, "the tray opens with the same tiles once reset");
 
     host.calls.clear();
-    ImGuiIO& io = ImGui::GetIO();
-    io.AddKeyEvent(ImGuiKey_Escape, true);
-    panel();
-    io.AddKeyEvent(ImGuiKey_Escape, false);
-    panel();
+    PressEscape(host, model, launcher::Place::Game);
     ok &= Check(host.calls == std::vector<std::string>{ "close" }, "Escape goes back to the game");
+
+    // More opens the rest of the launcher over the game, which takes Escape first.
+    launcher::Reset(launcher::Place::Game);
+    settle();
+    host.calls.clear();
+    ok &= Check(Click(host, model, "more", 0, launcher::Place::Game), "the tray has More");
+    settle();
+    ok &= Check(Click(host, model, "Games", 0, launcher::Place::Game), "More opens the games");
+    settle();
+    ok &= Check(Count("game") == 2, "the games show over the game, as on the window's shelf");
+    PressEscape(host, model, launcher::Place::Game);
+    settle();
+    ok &= Check(Count("game") == 0 && host.calls.empty(), "Escape closes them and leaves the menu open");
     return ok;
 }
 // Quitting with unsaved changes waits for the answer to whether to save them.
@@ -374,8 +402,8 @@ bool QuitTests(Host& host)
     ok &= Check(Click(host, model, "Cancel"), "the question can be cancelled");
     ok &= Check(host.calls == std::vector<std::string>{ "keep running" }, "Cancel keeps Unishade running");
     model.quitting.clear();
-    Frame(host, model);
-    Frame(host, model);
+    // It fades away.
+    Settle(host, model);
     ok &= Check(!Find("Don't save"), "the question goes once nothing asks it");
     return ok;
 }
@@ -389,20 +417,21 @@ std::vector<launcher::Addon> Addons()
              { .id = "Mine.dll", .name = "Mine", .file = "Mine.dll", .state = AddonState::Pending } };
 }
 
-// The Add-ons page installs official add-ons, asks about files that are not official, and turns add-ons on and off.
+// Add-ons installs official add-ons, asks about files that are not official, and turns add-ons on and off.
 bool AddonsTests(Host& host)
 {
     bool ok = true;
     launcher::Model model;
     Frame(host, model);
-    ok &= Check(!Find("addons"), "without add-ons there is no Add-ons page");
+    ok &= Check(!Find("addons"), "without add-ons there is no Add-ons button");
     model.addons = Addons();
     Frame(host, model);
-    ok &= Check(Click(host, model, "addons"), "the sidebar has the Add-ons page");
+    ok &= Check(Click(host, model, "addons"), "the window has an Add-ons button");
+    Settle(host, model);
     ok &= Check(Click(host, model, "Install"), "an official add-on that is not installed offers Install");
     ok &= Check(Click(host, model, "Load"), "a file that is not official asks whether to load it");
     ok &= Check(Click(host, model, "Don't load"), "it can be left unloaded");
-    ok &= Check(Click(host, model, "on"), "an add-on that is installed has a switch");
+    ok &= Check(Click(host, model, "Off"), "an add-on that is installed can be turned off");
     ok &= Check(host.calls == std::vector<std::string>{ "install 1", "load 2", "leave 2", "addon 0 off" }, "each control acts on its own add-on");
 
     host.calls.clear();
@@ -418,12 +447,13 @@ bool AddonsTests(Host& host)
     (*model.addons)[0].state = launcher::AddonState::Failed;
     (*model.addons)[0].error = "It did not start.";
     Frame(host, model);
-    ok &= Check(Click(host, model, "on"), "a failed add-on keeps its switch");
+    ok &= Check(Click(host, model, "On"), "a failed add-on can be turned on");
     ok &= Check(host.calls == std::vector<std::string>{ "cancel 1", "install 1", "addon 0 on" }, "turning a failed add-on on tries it again");
     return ok;
 }
 
-// The settings of the add-ons that are on show on the page of the game being played, under its effects.
+// The settings of the add-ons that are on are in the More of the tray of the game being played, since its preset keeps
+// them.
 bool AddonSettingsTests(Host& host)
 {
     bool ok = true;
@@ -433,23 +463,28 @@ bool AddonSettingsTests(Host& host)
     io.DisplaySize.y = 1400;
     launcher::Model model = EffectsModel();
     model.addons = Addons();
-    Frame(host, model);
-    Click(host, model, "game");
-    ok &= Check(Count("##value") == 1, "the game's page shows the setting of the add-on that is on");
-    ok &= Check(Click(host, model, "##value"), "the setting can be changed");
+    Settle(host, model);
+    ok &= Check(Click(host, model, "more"), "the tray on the game's page has More");
+    Settle(host, model);
+    ok &= Check(Click(host, model, "Add-ons"), "More has the add-ons that are on");
+    Settle(host, model);
+    host.calls.clear();
+    // Above the page's own choices, which follow the tray.
+    ok &= Check(Click(host, model, "On"), "the setting can be changed");
     ok &= Check(host.calls == std::vector<std::string>{ "addon 0 setting 0 1" }, "the change goes to the add-on");
     (*model.addons)[0].state = launcher::AddonState::Off;
-    Frame(host, model);
-    ok &= Check(Count("##value") == 0, "an add-on that is off shows no settings");
+    Settle(host, model);
+    ok &= Check(!Find("Add-ons"), "an add-on that is off shows no settings");
     model.games[0].running = false;
     (*model.addons)[0].state = launcher::AddonState::On;
-    Frame(host, model);
-    ok &= Check(Count("##value") == 0, "settings show only while the game is played, since its preset keeps them");
+    Settle(host, model);
+    ok &= Check(!Find("more"), "settings show only while the game is played");
     io.DisplaySize = size;
     return ok;
 }
 
-// Every page, in both places, with an effect's settings open, has controls Dear ImGui can tell apart.
+// The window and the menu, with an effect's settings open and each of the launcher's windows, have controls Dear
+// ImGui can tell apart.
 bool IdTests(Host& host)
 {
     bool ok = true;
@@ -457,7 +492,12 @@ bool IdTests(Host& host)
     model.settings.performance = launcher::Performance{};
     model.settings.shortcuts = { { "Open the menu", "", "Home", true }, { "Screenshot", "", "F9" } };
     model.games[0].performance = launcher::Performance{};
+    model.games.push_back(launcher::Game{ .id = "other", .name = "Other", .executable = "other.exe" });
     model.addons = Addons();
+    model.discord = launcher::Discord{ .on = true, .status = "Showing Game on Discord." };
+    model.cards = { { .title = "Unishade 9.9.9 is available", .text = "Download the new Setup and run it.", .attention = true, .buttons = { "Download" } } };
+    model.notices = { { launcher::Level::Warning, "See https://unishade.me/docs/ for help." } };
+    model.links = { "Open log", "Docs" };
     using Control = launcher::EffectSetting::Control;
     host.settings = { .tooltip = "Does things.",
                       .settings = { { .control = Control::Slider, .label = "Amount", .category = "Look", .range = true, .max = 1 },
@@ -467,9 +507,7 @@ bool IdTests(Host& host)
     for (const launcher::Place place : { launcher::Place::Window, launcher::Place::Game })
     {
         launcher::Reset(place);
-        const auto frame = [&] { Frame(host, model, place); };
-        frame();
-        frame();
+        Settle(host, model, place);
         const auto check = [&](const char* page) {
             if (const std::optional<std::string> shared = SharedId())
             {
@@ -477,34 +515,49 @@ bool IdTests(Host& host)
                 ok = false;
             }
         };
-        ImGuiIO& io = ImGui::GetIO();
         const auto press = [&](const char* label) {
-            if (const std::optional<ImVec2> at = Find(label))
-            {
-                io.AddMousePosEvent(at->x, at->y);
-                frame();
-                io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
-                frame();
-                io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
-                frame();
-                frame();
-            }
+            Click(host, model, label, 0, place);
+            Settle(host, model, place);
         };
-        press("game");
+        const auto escape = [&] {
+            PressEscape(host, model, place);
+            Settle(host, model, place);
+        };
         press("effect");
-        frame();
         check("the game's page");
-        press("home");
-        check("Home");
-        press("settings");
-        check("Settings");
-        for (const char* page : { "Performance", "Shortcuts" })
+        if (place == launcher::Place::Window)
         {
-            press(page);
-            check(page);
+            press("settings");
+            check("Settings");
+            for (const char* page : { "Performance", "Shortcuts", "Discord", "About" })
+            {
+                press(page);
+                check(page);
+            }
+            escape();
+            press("addons");
+            check("Add-ons");
+            escape();
+            press("messages");
+            check("Messages");
+            escape();
+            Click(host, model, "game", 1, place);
+            Settle(host, model, place);
+            check("the page of a game that is not played");
         }
-        press("addons");
-        check("Add-ons");
+        else
+        {
+            press("more");
+            press("Menu");
+            check("More");
+            // Add-ons last, since the tray's own tab of that name comes first.
+            for (const char* window : { "Games", "Settings", "Messages", "Add-ons" })
+            {
+                press(window);
+                check(window);
+                escape();
+            }
+        }
     }
     return ok;
 }
