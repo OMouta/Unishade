@@ -295,6 +295,7 @@ set(POSIX_SOURCES
     "${OFFICIAL_ADDONS_SOURCE}"
     "${POSIX_DIR}/addons.cpp"
     "${POSIX_DIR}/app.cpp"
+    "${POSIX_DIR}/backdrop.cpp"
     "${POSIX_DIR}/config.cpp"
     "${POSIX_DIR}/effects.cpp"
     "${POSIX_DIR}/games.cpp"
