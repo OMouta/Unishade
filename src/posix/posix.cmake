@@ -248,6 +248,20 @@ file(CONFIGURE OUTPUT "${LOGO_SOURCE}" CONTENT
     "extern const unsigned char kLogoPng[];\nextern const unsigned kLogoPngSize;\nconst unsigned char kLogoPng[] = {${logo_bytes}};\nconst unsigned kLogoPngSize = sizeof(kLogoPng);\n"
     @ONLY)
 
+# The launcher's and the menu's font, Bricolage Grotesque, goes in the same way, so the menu over a game finds it too.
+# Dear ImGui draws only the default instance of a variable font, so assets/fonts holds static instances of it.
+set(FONTS_SOURCE "${CMAKE_BINARY_DIR}/fonts.cpp")
+set(fonts_code "")
+foreach(face Regular SemiBold ExtraBold)
+    set(font "${CMAKE_SOURCE_DIR}/assets/fonts/BricolageGrotesque-${face}.ttf")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${font}")
+    file(READ "${font}" font_bytes HEX)
+    string(REGEX REPLACE "(..)" "0x\\1," font_bytes "${font_bytes}")
+    string(APPEND fonts_code
+        "extern const unsigned char kBricolage${face}[];\nextern const unsigned kBricolage${face}Size;\nconst unsigned char kBricolage${face}[] = {${font_bytes}};\nconst unsigned kBricolage${face}Size = sizeof(kBricolage${face});\n")
+endforeach()
+file(CONFIGURE OUTPUT "${FONTS_SOURCE}" CONTENT "${fonts_code}" @ONLY)
+
 # AMD's FSR 1 upscales effects that run below the game's resolution on Windows. Its headers go into the program the same
 # way, and ReShade's effect compiler builds them the first time it upscales. That compiler takes no prototypes, which
 # ffx_fsr1.h declares its callbacks with, and two blocks of ffx_a.h that FSR does not use call min on unsigned integers,
@@ -292,6 +306,7 @@ add_custom_command(OUTPUT "${OFFICIAL_ADDONS_SOURCE}"
 # Everything but main, so tests can link it.
 set(POSIX_SOURCES
     "${LOGO_SOURCE}"
+    "${FONTS_SOURCE}"
     "${OFFICIAL_ADDONS_SOURCE}"
     "${POSIX_DIR}/addons.cpp"
     "${POSIX_DIR}/app.cpp"

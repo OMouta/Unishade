@@ -49,6 +49,13 @@
 // assets/Unishade.png, which the build puts into the program.
 extern const unsigned char kLogoPng[];
 extern const unsigned kLogoPngSize;
+// assets/fonts, which the build puts into the program too.
+extern const unsigned char kBricolageRegular[];
+extern const unsigned kBricolageRegularSize;
+extern const unsigned char kBricolageSemiBold[];
+extern const unsigned kBricolageSemiBoldSize;
+extern const unsigned char kBricolageExtraBold[];
+extern const unsigned kBricolageExtraBoldSize;
 
 namespace
 {
@@ -1957,14 +1964,19 @@ bool InitUi(UiWindow& ui, std::string& error)
             StopShortcut(app);
     });
 
-    // Headings fall back to the regular font.
+    // Bricolage Grotesque, then the system's own font and the fonts for what that lacks, such as Cyrillic, Chinese or
+    // emoji. Headings fall back to the regular font.
     const auto fallbacks = [](bool bold) {
         std::vector<kit::FontFile> fonts;
+        if (std::string system = platform::UiFont(bold); !system.empty())
+            fonts.push_back({ std::move(system) });
         for (auto& [path, index] : platform::UiFallbackFonts(bold))
             fonts.push_back({ std::move(path), index });
         return fonts;
     };
-    kit::LoadFonts({ platform::UiFont(false) }, fallbacks(false), { platform::UiFont(true) }, fallbacks(true));
+    kit::LoadFonts({ .data = { kBricolageRegular, kBricolageRegularSize } }, fallbacks(false),
+                   { .data = { kBricolageSemiBold, kBricolageSemiBoldSize } }, fallbacks(true),
+                   { .data = { kBricolageExtraBold, kBricolageExtraBoldSize } });
 
     if (!ImGui_ImplGlfw_InitForVulkan(ui.window, true))
     {
