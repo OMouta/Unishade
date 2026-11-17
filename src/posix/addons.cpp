@@ -889,12 +889,23 @@ void Addons::Install(const Official& addon, const std::atomic<bool>& cancel,
 #endif
 }
 
+void Addons::SetBypassed(const std::string& file, bool bypassed)
+{
+    if (Addon* addon = Find(file))
+        addon->bypassed = bypassed;
+}
+
+bool Addons::ChangesPicture(const Addon& addon) const
+{
+    return addon.library && addon.library->addon && (addon.library->addon->flags & UNISHADE_ADDON_CHANGES_PICTURE) != 0;
+}
+
 bool Addons::Frame(Surface& surface, const fx::Runtime::Source& source, uint64_t picture)
 {
 #ifdef _WIN32
     std::vector<Addon*> running;
     for (Addon& addon : addons)
-        if (addon.state == State::Enabled && addon.library->instance && (addon.library->addon->flags & kFrameFlags))
+        if (addon.state == State::Enabled && !addon.bypassed && addon.library->instance && (addon.library->addon->flags & kFrameFlags))
             running.push_back(&addon);
     // Add-ons that write depth see the picture before add-ons change it.
     std::stable_partition(running.begin(), running.end(),

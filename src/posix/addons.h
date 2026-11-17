@@ -52,6 +52,7 @@ public:
         bool official = false;
         State state = State::Pending;
         std::string error;
+        bool bypassed = false; // enabled, but frames skip it until Unishade starts again
         std::vector<Setting> settings; // once it loaded
         std::shared_ptr<Library> library;
     };
@@ -79,6 +80,9 @@ public:
     // Reads the Addons folder again, for files added, removed or replaced.
     void Scan();
     const std::vector<Addon>& List() const { return addons; }
+    // Whether a loaded add-on changes the game's picture, rather than only reading it or writing depth.
+    bool ChangesPicture(const Addon& addon) const;
+    void SetBypassed(const std::string& file, bool bypassed);
     // The answer for a Pending add-on: load it or not. Either way it is kept.
     void Approve(const std::string& file, bool load);
     // Turning a failed add-on on tries it again.
