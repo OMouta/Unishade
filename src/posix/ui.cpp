@@ -2126,6 +2126,7 @@ void DrawLauncher(App& app)
     Host host(app);
     launcher::Model model = DescribeLauncher(app);
     launcher::Draw(model, host, app.launcher.scale);
+    app.launcherAnimating = kit::Animating();
     GiveBack(model);
 }
 

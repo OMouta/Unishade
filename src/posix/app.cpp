@@ -164,6 +164,15 @@ void App::Run()
         double timeout = overlayVisible ? (menuOpen || menuClosing ? overlayInterval : 0.1) : 0.25;
         if (overlayVisible && renderHeld)
             timeout = std::min(timeout, lastOverlayFrame + std::max(overlayInterval, frameRateLimit ? 0.5 / frameRateLimit : 0.0) - Now());
+        // The launcher draws only when something happens, so while it animates the next frame is due at once, and the
+        // display paces it. With the game's picture on its page it keeps up with that.
+        if (glfwGetWindowAttrib(launcher.window, GLFW_VISIBLE) && !glfwGetWindowAttrib(launcher.window, GLFW_ICONIFIED))
+        {
+            if (launcherAnimating)
+                timeout = 0;
+            else if (overlayVisible && (glfwGetWindowAttrib(launcher.window, GLFW_FOCUSED) || glfwGetWindowAttrib(launcher.window, GLFW_HOVERED)))
+                timeout = std::min(timeout, lastLauncherFrame + 1.0 / 30 - Now());
+        }
         glfwWaitEventsTimeout(std::max(timeout, 0.001));
         platform::PollHotkeys();
         runtime.Update();
@@ -256,8 +265,15 @@ void App::Run()
 
         const bool launcherActive = glfwGetWindowAttrib(launcher.window, GLFW_FOCUSED) || glfwGetWindowAttrib(launcher.window, GLFW_HOVERED);
         const bool launcherShown = glfwGetWindowAttrib(launcher.window, GLFW_VISIBLE) && !glfwGetWindowAttrib(launcher.window, GLFW_ICONIFIED);
-        if (launcherShown && Now() - lastLauncherFrame >= (launcherActive ? 1.0 / 60 : 0.25))
+        const double launcherInterval = launcherAnimating ? 0 : launcherActive ? 1.0 / 60 : 0.25;
+        if (launcherShown && Now() - lastLauncherFrame >= launcherInterval)
+        {
+            // Drawing says whether it still animates. A frame that could not be drawn must not keep the loop spinning.
+            launcherAnimating = false;
             RenderLauncher();
+        }
+        else if (!launcherShown)
+            launcherAnimating = false;
     }
 }
 
