@@ -8,6 +8,7 @@
 #include "log.h"
 #include "macho.h"
 #include "window_rules.h"
+#include "ui/caption.h"
 
 #define GLFW_EXPOSE_NATIVE_COCOA
 #include <GLFW/glfw3.h>
@@ -971,8 +972,57 @@ bool SaveWindowIcon(const Window& window, const std::string& path)
     }
 }
 
-void SetupLauncherWindow(GLFWwindow*)
+namespace
 {
+// Whether a click in the launcher falls on the shelf's row away from what takes clicks there and the window's own
+// buttons, where it moves the window as a title bar does.
+bool OnTitleBar(NSWindow* window, NSEvent* event)
+{
+    for (NSWindowButton kind : { NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton })
+    {
+        NSButton* button = [window standardWindowButton:kind];
+        if (button && !button.hidden && NSPointInRect([button convertPoint:event.locationInWindow fromView:nil], button.bounds))
+            return false;
+    }
+    NSView* view = window.contentView;
+    const NSPoint point = [view convertPoint:event.locationInWindow fromView:nil];
+    const float x = static_cast<float>(point.x);
+    const float y = static_cast<float>(view.isFlipped ? point.y : NSHeight(view.bounds) - point.y);
+    for (const caption::Box& box : caption::bar.controls)
+        if (box.Contains(x, y))
+            return false;
+    return y >= 0 && y < caption::bar.height;
+}
+} // namespace
+
+void SetupLauncherWindow(GLFWwindow* glfwWindow)
+{
+    // The shelf's row is the title bar, with the window's own buttons at its left, where they are by default.
+    NSWindow* window = glfwGetCocoaWindow(glfwWindow);
+    window.styleMask |= NSWindowStyleMaskFullSizeContentView;
+    window.titlebarAppearsTransparent = YES;
+    window.titleVisibility = NSWindowTitleHidden;
+    if (NSButton* zoom = [window standardWindowButton:NSWindowZoomButton])
+        caption::bar.inset = static_cast<float>(NSMaxX([zoom convertRect:zoom.bounds toView:nil])) + 12;
+
+    // GLFW's view takes every click, so the row's empty parts move the window here, and a double click does what
+    // the user chose for title bars in System Settings.
+    [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown
+                                          handler:^NSEvent*(NSEvent* event) {
+                                              if (event.window != window || !OnTitleBar(window, event))
+                                                  return event;
+                                              if (event.clickCount == 2)
+                                              {
+                                                  NSString* action = [NSUserDefaults.standardUserDefaults stringForKey:@"AppleActionOnDoubleClick"];
+                                                  if ([action isEqualToString:@"Minimize"])
+                                                      [window performMiniaturize:nil];
+                                                  else if (![action isEqualToString:@"None"])
+                                                      [window performZoom:nil];
+                                              }
+                                              else
+                                                  [window performWindowDragWithEvent:event];
+                                              return nil;
+                                          }];
 }
 
 void AddTrayIcon(Tray)

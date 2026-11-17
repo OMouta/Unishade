@@ -7,6 +7,7 @@
 #include "log.h"
 #include "text.h"
 #include "theme.h"
+#include "ui/caption.h"
 
 #include <d3d11_4.h>
 #include <d3dcompiler.h>
@@ -1210,13 +1211,164 @@ bool SaveWindowIcon(const Window& window, const std::string& path)
     return saved;
 }
 
+namespace
+{
+// The launcher's caption is left off so the shelf's row can be the title bar, and the system's caption buttons with
+// it, which the launcher draws instead. Everything else stays the system's: the frame's style, so snapping, the
+// shadow, rounded corners and the animations stay, the resize borders, and moving, maximizing and the window menu
+// from the row through HTCAPTION. GLFW has no hook for this, so its window procedure is wrapped.
+WNDPROC glfwLauncherProc = nullptr;
+
+// The resize border along the top, which is inside the client area once the caption is gone.
+int ResizeBorder(HWND window)
+{
+    const UINT dpi = GetDpiForWindow(window);
+    return GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) + GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi);
+}
+
+caption::Button CaptionButton(WPARAM hit)
+{
+    switch (hit)
+    {
+    case HTMINBUTTON: return caption::Button::Minimize;
+    case HTMAXBUTTON: return caption::Button::Maximize;
+    case HTCLOSE: return caption::Button::Close;
+    default: return caption::Button::None;
+    }
+}
+
+// standard is what GLFW's procedure, which leaves it to DefWindowProc, says: the frame on the left, right and bottom,
+// and HTCLIENT for the rest.
+LRESULT LauncherHitTest(HWND window, LPARAM lParam, LRESULT standard)
+{
+    POINT point{ static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam)) };
+    ScreenToClient(window, &point);
+    const bool top = !IsZoomed(window) && point.y < ResizeBorder(window);
+    if (standard != HTCLIENT)
+    {
+        if (top && standard == HTLEFT)
+            return HTTOPLEFT;
+        if (top && standard == HTRIGHT)
+            return HTTOPRIGHT;
+        return standard;
+    }
+    if (top)
+        return HTTOP;
+    const caption::Bar& bar = caption::bar;
+    const float x = static_cast<float>(point.x), y = static_cast<float>(point.y);
+    // HTMAXBUTTON is also what shows Windows 11's snap layouts.
+    constexpr LRESULT kButtons[] = { HTMINBUTTON, HTMAXBUTTON, HTCLOSE };
+    for (int i = 0; i < 3 && bar.drawButtons; ++i)
+        if (bar.buttons[i].Contains(x, y))
+            return kButtons[i];
+    for (const caption::Box& box : bar.controls)
+        if (box.Contains(x, y))
+            return HTCLIENT;
+    return y < bar.height ? HTCAPTION : HTCLIENT;
+}
+
+LRESULT CALLBACK LauncherProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    caption::Bar& bar = caption::bar;
+    switch (message)
+    {
+    case WM_NCCALCSIZE:
+    {
+        if (!wParam)
+            break;
+        // The system's frame stays outside the client area on the left, right and bottom. The top keeps none.
+        RECT& client = reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam)->rgrc[0];
+        const LONG top = client.top;
+        const LRESULT result = CallWindowProcW(glfwLauncherProc, window, message, wParam, lParam);
+        if (result != 0)
+            return result;
+        client.top = top;
+        if (IsZoomed(window))
+        {
+            // Maximized, the frame hangs off the screen on every side, the top too.
+            client.top += ResizeBorder(window);
+            // A taskbar that hides itself only comes back at a screen edge the window leaves a little of.
+            MONITORINFO info{ sizeof(info) };
+            if (GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &info))
+            {
+                const auto hides = [&](UINT edge) {
+                    APPBARDATA data{ sizeof(data) };
+                    data.uEdge = edge;
+                    data.rc = info.rcMonitor;
+                    return SHAppBarMessage(ABM_GETAUTOHIDEBAREX, &data) != 0;
+                };
+                if (hides(ABE_BOTTOM))
+                    client.bottom -= 2;
+                else if (hides(ABE_TOP))
+                    client.top += 2;
+                else if (hides(ABE_LEFT))
+                    client.left += 2;
+                else if (hides(ABE_RIGHT))
+                    client.right -= 2;
+            }
+        }
+        return 0;
+    }
+    case WM_NCHITTEST: return LauncherHitTest(window, lParam, CallWindowProcW(glfwLauncherProc, window, message, wParam, lParam));
+    case WM_SIZE: bar.maximized = IsZoomed(window) != FALSE; break;
+    // The system sends the mouse over the buttons here, as over its own, rather than to the client area.
+    case WM_NCMOUSEMOVE:
+    {
+        bar.hovered = bar.drawButtons ? CaptionButton(wParam) : caption::Button::None;
+        TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE | TME_NONCLIENT, window, HOVER_DEFAULT };
+        TrackMouseEvent(&track);
+        break;
+    }
+    case WM_NCMOUSELEAVE:
+    case WM_MOUSEMOVE:
+        bar.hovered = caption::Button::None;
+        bar.pressed = caption::Button::None;
+        break;
+    // DefWindowProc would run its own loop for the buttons and draw the old ones, so the buttons act here, on release
+    // over the one pressed.
+    case WM_NCLBUTTONDOWN:
+    case WM_NCLBUTTONDBLCLK:
+        if (const caption::Button button = CaptionButton(wParam); bar.drawButtons && button != caption::Button::None)
+        {
+            bar.pressed = bar.hovered = button;
+            return 0;
+        }
+        break;
+    case WM_NCLBUTTONUP:
+        if (const caption::Button button = CaptionButton(wParam); bar.drawButtons && button != caption::Button::None)
+        {
+            const bool clicked = bar.pressed == button;
+            bar.pressed = bar.hovered = caption::Button::None;
+            // As the system's buttons do, so closing goes through WM_CLOSE to GLFW's close callback.
+            if (clicked)
+                PostMessageW(window, WM_SYSCOMMAND,
+                             button == caption::Button::Minimize ? SC_MINIMIZE
+                             : button == caption::Button::Close  ? SC_CLOSE
+                             : IsZoomed(window)                  ? SC_RESTORE
+                                                                 : SC_MAXIMIZE,
+                             0);
+            return 0;
+        }
+        break;
+    }
+    return CallWindowProcW(glfwLauncherProc, window, message, wParam, lParam);
+}
+} // namespace
+
 void SetupLauncherWindow(GLFWwindow* window)
 {
     const HWND launcher = glfwGetWin32Window(window);
     const BOOL dark = TRUE;
     DwmSetWindowAttribute(launcher, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
-    const COLORREF caption = RGB((theme::kSidebar >> 16) & 0xFF, (theme::kSidebar >> 8) & 0xFF, theme::kSidebar & 0xFF);
-    DwmSetWindowAttribute(launcher, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
+    // For what the system still draws of the frame, such as the edge left for a taskbar that hides itself.
+    const COLORREF color = RGB((theme::kBackground >> 16) & 0xFF, (theme::kBackground >> 8) & 0xFF, theme::kBackground & 0xFF);
+    DwmSetWindowAttribute(launcher, DWMWA_CAPTION_COLOR, &color, sizeof(color));
+
+    glfwLauncherProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(launcher, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(LauncherProc)));
+    caption::bar.drawButtons = true;
+    caption::bar.maximized = IsZoomed(launcher) != FALSE;
+    // The client area takes the caption's place from here on.
+    SetWindowPos(launcher, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE);
 }
 
 void AddTrayIcon(Tray actions)
