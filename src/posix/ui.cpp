@@ -344,22 +344,44 @@ void DrawToast(App& app)
     const double left = app.toastUntil - glfwGetTime();
     if (app.toast.empty() || left <= 0)
         return;
-    const ImGuiIO& io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y - S(48)), ImGuiCond_Always, ImVec2(0.5f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, std::clamp(static_cast<float>(left / 0.6), 0.0f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(14), S(10)));
-    ImGui::Begin("##toast", nullptr,
-                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize);
-    if (!app.toastKey.empty())
+    // When this message came up, which the host does not keep.
+    static double since = 0, until = 0;
+    static std::string shownText;
+    if (until != app.toastUntil || shownText != app.toast)
     {
-        KeyCap(app.toastKey, 14);
-        ImGui::SameLine(0, S(10));
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + S(3));
+        since = glfwGetTime();
+        until = app.toastUntil;
+        shownText = app.toast;
     }
-    Text(app.toast, kText, 14.5f, -1.0f);
-    ImGui::End();
-    ImGui::PopStyleVar(2);
+    // A black pill that springs up over half a second and sinks away over the last 0.3, as the design's toast. It
+    // stands at the top while the menu is open, whose tray opens at the bottom.
+    const float in = Ease(Curve::Spring, std::clamp(static_cast<float>((glfwGetTime() - since) / 0.5), 0.0f, 1.0f));
+    const float out = 1 - std::clamp(static_cast<float>(left / 0.3), 0.0f, 1.0f);
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool top = app.menuOpen;
+    const float height = S(44.8f), pad = S(20.8f), gap = S(9.6f);
+    const float keyWidth = app.toastKey.empty() ? 0 : std::max(Measure(app.toastKey, spectrum::kTextSmall, true).x + S(19.2f), S(30.4f));
+    const float room = std::max(io.DisplaySize.x * 0.8f - pad * 2 - (keyWidth > 0 ? keyWidth + gap : 0), S(120));
+    const float textWidth = std::min(Measure(app.toast, spectrum::kTextBody, true).x, room);
+    const ImVec2 size(pad * 2 + (keyWidth > 0 ? keyWidth + gap - S(8) : 0) + textWidth, height);
+    const ImVec2 min(std::round((io.DisplaySize.x - size.x) / 2), top ? S(48) : io.DisplaySize.y - S(48) - height);
+    const float middle = min.y + height / 2;
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    const int start = draw->VtxBuffer.Size;
+    draw->AddRectFilled(min + ImVec2(0, S(6.4f)), min + size + ImVec2(0, S(6.4f)), IM_COL32(0, 0, 0, 40), height / 2);
+    draw->AddRectFilled(min, min + size, spectrum::kInk, height / 2);
+    float x = min.x + pad;
+    if (keyWidth > 0)
+    {
+        x -= S(8);
+        const float keyHeight = S(28.8f);
+        draw->AddRectFilled(ImVec2(x, middle - keyHeight / 2), ImVec2(x + keyWidth, middle + keyHeight / 2), IM_COL32(255, 255, 255, 46), S(9.6f));
+        Line(draw, x, x + keyWidth, middle, app.toastKey, IM_COL32_WHITE, spectrum::kTextSmall, true, true);
+        x += keyWidth + gap;
+    }
+    Line(draw, x, x + textWidth + 1, middle, app.toast, IM_COL32_WHITE, spectrum::kTextBody, true);
+    const float away = S(24) * (1 - in) + S(9.6f) * out;
+    Transform(draw, start, min + size * 0.5f, 0.8f + 0.2f * in, 0, ImVec2(0, top ? -away : away), std::min(in, 1.0f) * (1 - out));
 }
 
 
