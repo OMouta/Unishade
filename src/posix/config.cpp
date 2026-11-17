@@ -366,7 +366,20 @@ Settings LoadSettings()
     settings.updateChecks = !ini.Get("HOST", "CheckForUpdates", value) || value != "0";
     settings.keepEffectsVisible = !ini.Get("HOST", "KeepEffectsVisible", value) || value != "0";
     if (ini.Get("HOST", "MenuScale", value))
-        settings.menuScale = std::clamp(std::round(std::strtof(value.c_str(), nullptr) * 4) / 4, kSmallestMenuScale, kLargestMenuScale);
+        settings.menuScale = std::clamp(std::round(std::strtof(value.c_str(), nullptr) * 100) / 100, kSmallestMenuScale, kLargestMenuScale);
+    std::string y;
+    if (ini.Get("HOST", "MenuX", value) && ini.Get("HOST", "MenuY", y))
+    {
+        const float menuX = std::strtof(value.c_str(), nullptr), menuY = std::strtof(y.c_str(), nullptr);
+        if (menuX >= 0 && menuX <= 1 && menuY >= 0 && menuY <= 1)
+        {
+            settings.menuX = menuX;
+            settings.menuY = menuY;
+        }
+    }
+    if (ini.Get("HOST", "MenuOpacity", value))
+        settings.menuOpacity = std::clamp(std::round(std::strtof(value.c_str(), nullptr) * 100) / 100, 0.4f, 1.0f);
+    settings.smallTiles = ini.Get("HOST", "SmallTiles", value) && value == "1";
 
     if ((ini.Changed() || !existed) && !WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
@@ -387,6 +400,18 @@ bool SaveSettings(const Settings& settings)
     char scale[16];
     std::snprintf(scale, sizeof(scale), "%.2f", settings.menuScale);
     ini.Set("HOST", "MenuScale", scale);
+    if (settings.menuX >= 0 && settings.menuY >= 0)
+    {
+        char place[16];
+        std::snprintf(place, sizeof(place), "%.3f", settings.menuX);
+        ini.Set("HOST", "MenuX", place);
+        std::snprintf(place, sizeof(place), "%.3f", settings.menuY);
+        ini.Set("HOST", "MenuY", place);
+    }
+    char opacity[16];
+    std::snprintf(opacity, sizeof(opacity), "%.2f", settings.menuOpacity);
+    ini.Set("HOST", "MenuOpacity", opacity);
+    ini.Set("HOST", "SmallTiles", settings.smallTiles ? "1" : "0");
 #ifdef __APPLE__
     ini.Set("HOST", "SkipTitleBar", settings.skipTitleBar ? "1" : "0");
 #endif

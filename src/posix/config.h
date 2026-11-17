@@ -63,8 +63,14 @@ struct Settings
     bool updateChecks = true;
     // Effects stay over the game while another window is in front of it, where platform::OverlayCanStayBehind.
     bool keepEffectsVisible = true;
-    // The menu's size on top of the one that follows the game's window, in quarter steps.
+    // The menu's size on top of the one that follows the game's window, to the percent.
     float menuScale = 1;
+    // Where the menu was moved over the game, as launcher::Settings::menuX and menuY, or -1 before it was.
+    float menuX = -1;
+    float menuY = -1;
+    // As launcher::Settings::menuOpacity and smallTiles.
+    float menuOpacity = 1;
+    bool smallTiles = false;
     fs::path preset;
     // Searched recursively, like ReShade's paths ending in \**.
     std::vector<fs::path> effectPaths;
