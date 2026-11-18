@@ -44,6 +44,7 @@ constexpr float kRingPad = 3.2f;
 constexpr float kShelfGap = 11.2f;
 constexpr float kPanelWidth = 736;
 constexpr float kPanelPad = 22.4f;
+constexpr float kSettingsBody = 560; // what Settings shows of a tab, at most
 constexpr float kBlockRounding = 35.2f;
 constexpr float kBlockPad = 19.2f;
 constexpr float kField = 52.8f;
@@ -2148,8 +2149,13 @@ void Modals(const Model& model, Host& host)
     const bool hasBody = state->shown != Modal::Question && state->shown != Modal::Quit;
     const float header = state->header * s;
     const float most = std::max(display.y * 0.86f - header - S(kPanelPad) * 2 - S(14.4f), S(80));
-    // Contents not measured yet get all the room for a frame, while the modal is still on its way in.
-    const float body = !hasBody ? 0 : state->measured == state->shown ? std::min(state->body * s, most) : most;
+    // Settings is as high on every tab, so nothing moves when the tab changes, and a longer tab scrolls. The others
+    // are as high as their contents. Contents not measured yet get all the room for a frame, while the modal is still
+    // on its way in.
+    const float body = !hasBody                           ? 0
+                       : state->shown == Modal::Settings  ? std::min(S(kSettingsBody), most)
+                       : state->measured == state->shown ? std::min(state->body * s, most)
+                                                         : most;
     const float height = S(kPanelPad) * 2 + header + (hasBody ? S(14.4f) + body : 0);
     const ImVec2 min(std::round((display.x - width) / 2), std::round((display.y - height) / 2));
     const ImVec2 max = min + ImVec2(width, height);

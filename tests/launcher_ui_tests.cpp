@@ -426,6 +426,24 @@ bool PanelTests(Host& host)
     ok &= Check(Count("game") == 0 && host.calls.empty(), "Escape closes them and leaves the menu open");
     return ok;
 }
+// Settings stays where it is and as large as it is when its tab changes.
+bool SettingsTests(Host& host)
+{
+    bool ok = true;
+    launcher::Model model;
+    model.settings.performance = launcher::Performance{};
+    Settle(host, model);
+    ok &= Check(Click(host, model, "settings"), "the window has a Settings button");
+    Settle(host, model);
+    const std::optional<ImVec2> done = Find("Done"), general = Find("General");
+    ok &= Check(done && general && Click(host, model, "About"), "Settings has tabs");
+    Settle(host, model);
+    const std::optional<ImVec2> doneAfter = Find("Done"), generalAfter = Find("General");
+    ok &= Check(done && doneAfter && general && generalAfter && done->x == doneAfter->x && done->y == doneAfter->y && general->y == generalAfter->y,
+                "a shorter tab leaves the window's size and place alone");
+    launcher::Reset(launcher::Place::Window);
+    return ok;
+}
 // The dark theme draws the same controls, so nothing is laid out by a color.
 bool DarkTests(Host& host)
 {
@@ -663,6 +681,10 @@ int main()
     {
         Host host;
         ok &= DarkTests(host);
+    }
+    {
+        Host host;
+        ok &= SettingsTests(host);
     }
     {
         Host host;
