@@ -18,6 +18,7 @@
 #include <stb_image.h>
 #include <stb_image_write.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
@@ -307,11 +308,18 @@ int Render(const char* input, const char* preset, const char* output, bool gpuSo
                 break;
             }
     }
+    // Some effects turn a technique on by themselves. The preset did not ask for those, so one that fails is said
+    // without counting against the preset.
+    const std::vector<std::string> chosen = PresetIni::Split(runtime.PresetValue("", "Techniques"));
     for (const fx::Technique& technique : runtime.Techniques())
         if (technique.enabled && (!runtime.Effects()[technique.effect].gpu || runtime.Effects()[technique.effect].gpuFailed))
         {
-            fprintf(stderr, "Failed: %s\n", fx::TechniqueKey(technique, runtime.Effects()[technique.effect]).c_str());
-            ++failed;
+            const std::string key = fx::TechniqueKey(technique, runtime.Effects()[technique.effect]);
+            const bool preset = std::any_of(chosen.begin(), chosen.end(), [&](const std::string& entry) {
+                return PresetIni::Same(entry, key) || PresetIni::Same(entry, technique.name);
+            });
+            fprintf(stderr, preset ? "Failed: %s\n" : "Failed, and not in the preset: %s\n", key.c_str());
+            failed += preset ? 1 : 0;
         }
     const std::vector<uint8_t> result = runtime.ReadOutput();
     const bool written = stbi_write_png(output, width, height, 4, result.data(), width * 4);

@@ -112,7 +112,7 @@ The Mac app runs on macOS 13 and newer. The top-level `CMakeLists.txt` sets `CMA
 
 ## Checking effects without a game
 
-`unishade --render in.png preset.ini out.png` applies a preset to an image with the overlay's own code and no window. It exits with 1 when a technique the preset turns on is missing or fails to start. CI renders the repository's presets this way on Mesa's software Vulkan driver.
+`unishade --render in.png preset.ini out.png` applies a preset to an image with the overlay's own code and no window. It exits with 1 when a technique the preset turns on is missing or fails to start. A technique an effect turns on by itself is named when it fails, and does not change the exit code. CI renders the repository's presets this way on Mesa's software Vulkan driver.
 
 `--render` and `--install-effects` write their log to the terminal only and do not take the lock that keeps a second Unishade from starting, so the app can start while one runs. Ctrl-C, `SIGTERM` and `SIGHUP` quit the app the way closing the launcher does, and cancel a terminal install.
 
