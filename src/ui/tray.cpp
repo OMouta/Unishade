@@ -555,6 +555,21 @@ Field Choices(const std::string& id, const std::string& label, std::vector<const
             } };
 }
 
+// A row with a label and a switch, as one column or two.
+Field Switched(const std::string& id, const std::string& label, bool on, std::function<void(bool)> set, const std::string& tip, const Grid& grid)
+{
+    const float need = S(17.6f) + Measure(label, kTextBody, true).x + S(9.6f) + S(kSwitchWidth) + S(11.2f);
+    return { S(kField), need <= grid.column ? 1 : 2, [=](ImVec2 min, ImVec2 size) {
+                ImGui::PushID(id.c_str());
+                RowBack(min, size);
+                const ImVec2 at(min.x + size.x - S(11.2f) - S(kSwitchWidth), min.y + (size.y - S(kSwitchHeight)) / 2);
+                RowLabel(min, size, label, at.x - S(9.6f), tip);
+                if (SwitchButton("switch", at, on))
+                    set(!on);
+                ImGui::PopID();
+            } };
+}
+
 // A row with a label and buttons on its right, or under the label where they do not fit beside it.
 Field Actions(const std::string& id, const std::string& label, std::vector<Action> actions, std::function<void(int)> pressed, float width)
 {
@@ -611,13 +626,13 @@ Field SettingField(const std::string& scope, const EffectSetting& setting, size_
 
     if (setting.control == EffectSetting::Control::Check)
     {
-        Field field = Choices(id, setting.label, { "Off", "On" }, setting.ints[0] != 0 ? 1 : 0,
-                              [s, change](int choice) {
-                                  EffectSetting value = *s;
-                                  value.ints[0] = choice;
-                                  change(value);
-                              },
-                              setting.tooltip, grid);
+        Field field = Switched(id, setting.label, setting.ints[0] != 0,
+                               [s, change](bool on) {
+                                   EffectSetting value = *s;
+                                   value.ints[0] = on ? 1 : 0;
+                                   change(value);
+                               },
+                               setting.tooltip, grid);
         field.draw = [draw = field.draw, point](ImVec2 min, ImVec2 size) {
             draw(min, size);
             point(min, size, false);
@@ -1559,8 +1574,8 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
     const Grid grid = GridOf(width, f.side ? width : S(kFieldWidth));
     std::vector<Field> fields;
     const auto debugInfo = [&] {
-        return Choices("debug", "Show debug info", { "Off", "On" }, *settings.debugInfo ? 1 : 0,
-                       [&f](int choice) { f.host.SetSwitch(Switch::DebugInfo, choice == 1); }, "Captured game FPS, output FPS and frame loss.", grid);
+        return Switched("debug", "Show debug info", *settings.debugInfo, [&f](bool on) { f.host.SetSwitch(Switch::DebugInfo, on); },
+                        "Captured game FPS, output FPS and frame loss.", grid);
     };
     switch (state->tab)
     {
@@ -1700,9 +1715,9 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
         if (settings.debugInfo && !(f.game && f.game->performance))
             fields.push_back(debugInfo());
         fields.push_back(Heading("Presets"));
-        fields.push_back(Choices("autosave", "Save changes automatically", { "Off", "On" }, settings.autoSavePresets ? 1 : 0,
-                                 [&f](int choice) { f.host.SetSwitch(Switch::AutoSavePresets, choice == 1); },
-                                 "Turn off to try changes first, then save or discard them.", grid));
+        fields.push_back(Switched("autosave", "Save changes automatically", settings.autoSavePresets,
+                                  [&f](bool on) { f.host.SetSwitch(Switch::AutoSavePresets, on); },
+                                  "Turn off to try changes first, then save or discard them.", grid));
         if (settings.reloadEffects)
             fields.push_back(Actions("reload", "Reload effects", { { "Reload", PillStyle::Text } }, [&f](int) { f.host.ReloadEffects(); }, width));
         if (!page)

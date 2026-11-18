@@ -1022,6 +1022,26 @@ int Segments(const char* id, ImVec2 min, std::span<const char* const> choices, i
     return clicked;
 }
 
+bool SwitchButton(const char* id, ImVec2 min, bool on)
+{
+    const ImVec2 size(S(kSwitchWidth), S(kSwitchHeight));
+    ImGui::SetCursorScreenPos(min);
+    const bool clicked = ImGui::InvisibleButton(id, size, ImGuiButtonFlags_EnableNav);
+    const ImGuiID key = ImGui::GetItemID();
+    const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+    HandOnHover();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const int start = draw->VtxBuffer.Size;
+    const float fill = Animate(SubId(key, "fill"), on ? 1.0f : 0.0f, 0.2f, Curve::Out);
+    const float slide = Animate(SubId(key, "slide"), on ? 1.0f : 0.0f, 0.4f, Curve::Spring);
+    draw->AddRectFilled(min, min + size, Mix(hovered ? IM_COL32(0, 0, 0, 77) : kFaint, hovered ? Color(0x2A2A33) : kInk, fill), size.y / 2);
+    const float inset = S(3.2f), radius = size.y / 2 - inset;
+    const float left = min.x + inset + radius, right = min.x + size.x - inset - radius;
+    draw->AddCircleFilled(ImVec2(left + (right - left) * slide, min.y + size.y / 2), radius, kPaper, 32);
+    Transform(draw, start, min + size * 0.5f, Animate(SubId(key, "press"), held ? 0.92f : 1, 0.25f, Curve::Spring));
+    return clicked;
+}
+
 bool FillBar(const char* id, ImVec2 min, ImVec2 size, const Bar& bar, float& value, bool* reset, bool* active)
 {
     ImGui::PushID(id);

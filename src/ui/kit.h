@@ -244,6 +244,12 @@ inline float SegmentsWidth(std::initializer_list<const char*> choices, bool tabs
     return SegmentsWidth(std::span<const char* const>(choices.begin(), choices.size()), tabs);
 }
 
+constexpr float kSwitchWidth = 54.4f;
+constexpr float kSwitchHeight = 32;
+// On or off: black with its knob at the right while on, grey with it at the left while off, so a column of them reads
+// at a glance. Returns true when clicked.
+bool SwitchButton(const char* id, ImVec2 min, bool on);
+
 // A value as a bar filled to it in color. Dragging across sets it, double-clicking types it, the arrow keys step it
 // while the mouse is on it, and right-clicking asks to reset it.
 struct Bar

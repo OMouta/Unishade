@@ -471,7 +471,7 @@ bool AddonsTests(Host& host)
     ok &= Check(Click(host, model, "Install"), "an official add-on that is not installed offers Install");
     ok &= Check(Click(host, model, "Load"), "a file that is not official asks whether to load it");
     ok &= Check(Click(host, model, "Don't load"), "it can be left unloaded");
-    ok &= Check(Click(host, model, "Off"), "an add-on that is installed can be turned off");
+    ok &= Check(Click(host, model, "switch"), "an add-on that is installed can be turned off");
     ok &= Check(host.calls == std::vector<std::string>{ "install 1", "load 2", "leave 2", "addon 0 off" }, "each control acts on its own add-on");
 
     host.calls.clear();
@@ -487,7 +487,7 @@ bool AddonsTests(Host& host)
     (*model.addons)[0].state = launcher::AddonState::Failed;
     (*model.addons)[0].error = "It did not start.";
     Frame(host, model);
-    ok &= Check(Click(host, model, "On"), "a failed add-on can be turned on");
+    ok &= Check(Click(host, model, "switch"), "a failed add-on can be turned on");
     ok &= Check(host.calls == std::vector<std::string>{ "cancel 1", "install 1", "addon 0 on" }, "turning a failed add-on on tries it again");
     return ok;
 }
@@ -512,7 +512,7 @@ bool AddonSettingsTests(Host& host)
     Settle(host, model);
     host.calls.clear();
     // Above the page's own choices, which follow the tray.
-    ok &= Check(Click(host, model, "On"), "the setting can be changed");
+    ok &= Check(Click(host, model, "switch"), "the setting can be changed");
     ok &= Check(host.calls == std::vector<std::string>{ "addon 0 setting 0 1" }, "the change goes to the add-on");
     (*model.addons)[0].state = launcher::AddonState::Off;
     Settle(host, model);

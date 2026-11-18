@@ -65,7 +65,7 @@ constexpr ImU32 kOutline = Color(0x4A4A58);
 constexpr ImU32 kOutlineText = Color(0x8A8A98);
 constexpr ImU32 kBadge = Color(0xF8E44C);
 
-constexpr const char* kOffOn[] = { "Off", "On" };
+
 constexpr const char* kRates[] = { "Follow game", "120 FPS", "60 FPS", "Custom" };
 constexpr const char* kResolutions[] = { "100%", "75%", "50%" };
 // The frame rate choice that is typed in a box.
@@ -514,13 +514,23 @@ int Choices(Flow& flow, const char* id, const std::string& label, std::span<cons
     return clicked >= 0 && clicked != selected ? clicked : -1;
 }
 
-// Off and On. Returns the one clicked, or nothing.
+// A grey row with a label and a switch. Returns what a click turns it to, or nothing.
 std::optional<bool> OnOff(Flow& flow, const char* id, const std::string& label, bool on, const std::string& tip = {})
 {
-    const int clicked = Choices(flow, id, label, kOffOn, on ? 1 : 0, tip);
-    if (clicked < 0)
+    const float width = S(kSwitchWidth);
+    const float need = S(17.6f) + Measure(label, kTextBody, true).x + S(9.6f) + width + S(11.2f);
+    const ImRect at = flow.Next(S(kField), need <= flow.column ? 1 : 0);
+    ImGui::PushID(id);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(at.Min, at.Max, kWell, S(kRowRounding));
+    const ImVec2 spot(at.Max.x - S(11.2f) - width, at.Min.y + (S(kField) - S(kSwitchHeight)) / 2);
+    Line(draw, at.Min.x + S(17.6f), spot.x - S(9.6f), at.GetCenter().y, label, kInk, kTextBody, true);
+    LabelTip(at.Min, spot.x - S(9.6f), S(kField), tip);
+    const bool clicked = SwitchButton("switch", spot, on);
+    ImGui::PopID();
+    if (!clicked)
         return std::nullopt;
-    return clicked == 1;
+    return !on;
 }
 
 // A grey row with a label and buttons on its right, or under the label where they do not fit beside it. Returns the
@@ -1698,7 +1708,7 @@ void AddonRow(Flow& flow, Host& host, const Addon& addon, size_t index)
     const bool installing = addon.state == AddonState::Installing;
     const bool switched = actions.empty();
     const float gap = S(6.4f), progressWidth = S(96);
-    float controls = switched ? SegmentsWidth(kOffOn) : installing ? progressWidth + gap : 0;
+    float controls = switched ? S(kSwitchWidth) : installing ? progressWidth + gap : 0;
     for (const Action& action : actions)
         controls += PillWidth(action.label, action.style) + gap;
     if (!switched)
@@ -1735,11 +1745,11 @@ void AddonRow(Flow& flow, Host& host, const Addon& addon, size_t index)
     if (switched)
     {
         const bool on = addon.state == AddonState::On;
-        const int clicked = Segments("state", ImVec2(x, top), kOffOn, on ? 1 : 0);
+        const bool clicked = SwitchButton("switch", ImVec2(x, top + (S(kButton) - S(kSwitchHeight)) / 2), on);
         if (addon.state == AddonState::Failed)
             Tip("Turn on to try again");
-        if (clicked >= 0 && (clicked == 1) != on)
-            host.SetAddon(index, clicked == 1);
+        if (clicked)
+            host.SetAddon(index, !on);
     }
     if (installing)
     {
