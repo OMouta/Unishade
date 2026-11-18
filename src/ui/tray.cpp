@@ -115,8 +115,6 @@ struct State
     bool gone = false; // out of sight after the menu closed
     // The effects in the preset in use, by key: the ones that are on, and the ones turned off that the preset keeps.
     std::set<std::string> members;
-    std::map<std::string, size_t> colors; // each tile's color of the ring
-    size_t nextColor = 0;
     std::string preset;
     bool presetKnown = false;
     std::string presetName;
@@ -288,10 +286,10 @@ std::optional<size_t> IndexOf(const Effects& effects, const std::string& key)
     return std::nullopt;
 }
 
+// An effect's color of the ring, which is its own in every preset.
 ImU32 TileColor(const std::string& key)
 {
-    const auto found = state->colors.find(key);
-    return Ring(found == state->colors.end() ? 0 : found->second);
+    return Ring(ImHashStr(key.c_str()));
 }
 
 float TitleSize(const Frame& f)
@@ -383,8 +381,6 @@ void Follow(Frame& f)
     {
         state->presetKnown = true;
         state->preset = preset;
-        state->colors.clear();
-        state->nextColor = 0;
         state->dragging = false;
         state->held.clear();
         state->addedHere.clear();
@@ -394,8 +390,8 @@ void Follow(Frame& f)
     state->members.clear();
     if (f.effects)
         for (const Effect& effect : f.effects->list)
-            if ((effect.on || effect.kept) && state->members.insert(effect.key).second && !state->colors.count(effect.key))
-                state->colors[effect.key] = state->nextColor++;
+            if (effect.on || effect.kept)
+                state->members.insert(effect.key);
     if (state->sheet == Sheet::Tune && (!f.effects || !IndexOf(*f.effects, state->tuned) || !state->members.count(state->tuned)))
         CloseSheet();
 
