@@ -1151,8 +1151,11 @@ bool FillBar(const char* id, ImVec2 min, ImVec2 size, const Bar& bar, float& val
         changed = settled != value;
         value = settled;
     }
-    else if (hovered && range != 0 && (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_RightArrow)))
+    else if ((hovered || ImGui::IsItemFocused()) && range != 0 && (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_RightArrow)))
     {
+        // The arrows change the bar the keyboard is on, as they do a slider, rather than move to the control beside it.
+        if (ImGui::IsItemFocused())
+            ImGui::NavMoveRequestCancel();
         const float direction = ImGui::IsKeyPressed(ImGuiKey_RightArrow) ? 1.0f : -1.0f;
         float stepBy = range * (ImGui::GetIO().KeyShift ? 0.002f : 0.02f);
         if (bar.integer || bar.step > 0)

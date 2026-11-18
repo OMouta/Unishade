@@ -251,7 +251,7 @@ constexpr float kSwitchHeight = 32;
 bool SwitchButton(const char* id, ImVec2 min, bool on);
 
 // A value as a bar filled to it in color. Dragging across sets it, double-clicking types it, the arrow keys step it
-// while the mouse is on it, and right-clicking asks to reset it.
+// while the mouse or the keyboard is on it, and right-clicking asks to reset it.
 struct Bar
 {
     std::string label;

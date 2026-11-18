@@ -874,7 +874,7 @@ void PresetCards(Flow& flow, const Model& model, Host& host, size_t index)
             const float button = S(28);
             const ImVec2 dots(at.Max.x - S(8) - button, at.Min.y + S(8));
             ImGui::SetCursorScreenPos(dots);
-            if (ImGui::InvisibleButton("##actions", ImVec2(button, button)))
+            if (ImGui::InvisibleButton("##actions", ImVec2(button, button), ImGuiButtonFlags_EnableNav))
                 ImGui::OpenPopup("actions");
             const bool over = ImGui::IsItemHovered();
             HandOnHover();

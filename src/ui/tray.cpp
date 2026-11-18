@@ -512,7 +512,7 @@ Field Category(const std::string& text, ImGuiStorage* storage, ImGuiID key, bool
                 ImGui::PushID(static_cast<int>(key));
                 const float width = Measure(text, kTextHeading, true).x + S(28);
                 ImGui::SetCursorScreenPos(min);
-                if (ImGui::InvisibleButton("##category", ImVec2(std::min(width, size.x), size.y)))
+                if (ImGui::InvisibleButton("##category", ImVec2(std::min(width, size.x), size.y), ImGuiButtonFlags_EnableNav))
                     storage->SetBool(key, !open);
                 const bool hovered = ImGui::IsItemHovered();
                 HandOnHover();
@@ -675,7 +675,7 @@ Field SettingField(const std::string& scope, const EffectSetting& setting, size_
                     const ImVec2 boxMin(left, min.y + (size.y - S(kButton)) / 2), boxSize(width, S(kButton));
                     const float boxMiddle = boxMin.y + boxSize.y / 2;
                     ImGui::SetCursorScreenPos(boxMin);
-                    const bool pressed = ImGui::InvisibleButton("##list", boxSize);
+                    const bool pressed = ImGui::InvisibleButton("##list", boxSize, ImGuiButtonFlags_EnableNav);
                     const bool hovered = ImGui::IsItemHovered();
                     if (hovered)
                         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -1116,7 +1116,7 @@ float AddSheet(Frame& f, ImVec2 min, float width, float space)
         fields.push_back({ S(64), 1, [&f, index, effect, added](ImVec2 at, ImVec2 size) {
                               ImGui::PushID(effect->key.c_str());
                               ImGui::SetCursorScreenPos(at);
-                              const bool clicked = ImGui::InvisibleButton("add", size);
+                              const bool clicked = ImGui::InvisibleButton("add", size, ImGuiButtonFlags_EnableNav);
                               const ImGuiID key = ImGui::GetItemID();
                               const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
                               HandOnHover();
@@ -1326,7 +1326,7 @@ float PresetsSheet(Frame& f, ImVec2 min, float width, float space)
                               ImGui::SetCursorScreenPos(at);
                               if (edit)
                                   ImGui::SetNextItemAllowOverlap();
-                              const bool clicked = ImGui::InvisibleButton("preset", size);
+                              const bool clicked = ImGui::InvisibleButton("preset", size, ImGuiButtonFlags_EnableNav);
                               const ImGuiID key = ImGui::GetItemID();
                               const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
                               if (!used)
@@ -1356,7 +1356,7 @@ float PresetsSheet(Frame& f, ImVec2 min, float width, float space)
                                   const float button = S(28);
                                   const ImVec2 dots(at.x + size.x - S(8) - button, at.y + S(8));
                                   ImGui::SetCursorScreenPos(dots);
-                                  if (ImGui::InvisibleButton("##actions", ImVec2(button, button)))
+                                  if (ImGui::InvisibleButton("##actions", ImVec2(button, button), ImGuiButtonFlags_EnableNav))
                                       ImGui::OpenPopup("actions");
                                   const bool over = ImGui::IsItemHovered();
                                   HandOnHover();
@@ -1384,7 +1384,7 @@ float PresetsSheet(Frame& f, ImVec2 min, float width, float space)
                                   return;
                               }
                               ImGui::SetCursorScreenPos(at);
-                              const bool clicked = ImGui::InvisibleButton("new", size);
+                              const bool clicked = ImGui::InvisibleButton("new", size, ImGuiButtonFlags_EnableNav);
                               const bool hovered = ImGui::IsItemHovered();
                               HandOnHover();
                               ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -1752,7 +1752,7 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
                                   const ImVec2 keyMin(at.x + size.x - S(5.6f) - clear - keyWidth, at.y + (size.y - S(40)) / 2);
                                   RowLabel(at, size, shortcut->title, keyMin.x - S(9.6f), shortcut->description);
                                   ImGui::SetCursorScreenPos(keyMin);
-                                  if (ImGui::InvisibleButton("keys", ImVec2(keyWidth, S(40))))
+                                  if (ImGui::InvisibleButton("keys", ImVec2(keyWidth, S(40)), ImGuiButtonFlags_EnableNav))
                                   {
                                       f.host.RecordShortcut(recording ? -1 : static_cast<int>(i));
                                       state->recordingHere = !recording;
@@ -2040,7 +2040,7 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
         const ImVec2 slotMin = origin + slotAt * s, slotSize = ImVec2(cell, height) * s;
         ImGui::SetCursorScreenPos(slotMin);
         ImGui::SetNextItemAllowOverlap();
-        const bool clicked = ImGui::InvisibleButton("addon", slotSize);
+        const bool clicked = ImGui::InvisibleButton("addon", slotSize, ImGuiButtonFlags_EnableNav);
         const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
         if (hovered)
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -2049,7 +2049,7 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
         // The dot takes clicks in the whole corner around it, which is easier to hit than the dot.
         const float reach = (slotMin.x + slotSize.x - dot.x) * 2;
         ImGui::SetCursorScreenPos(ImVec2(slotMin.x + slotSize.x - reach, slotMin.y));
-        const bool dotClicked = ImGui::InvisibleButton("on", ImVec2(reach, reach));
+        const bool dotClicked = ImGui::InvisibleButton("on", ImVec2(reach, reach), ImGuiButtonFlags_EnableNav);
         const bool dotHovered = ImGui::IsItemHovered();
         if (dotHovered)
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -2111,7 +2111,7 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
         // Pressing opens its settings, the dot turns it on and off, and moving it far enough drags it to another place.
         ImGui::SetCursorScreenPos(slotMin);
         ImGui::SetNextItemAllowOverlap();
-        const bool clicked = ImGui::InvisibleButton("effect", slotSize);
+        const bool clicked = ImGui::InvisibleButton("effect", slotSize, ImGuiButtonFlags_EnableNav);
         const bool hovered = ImGui::IsItemHovered() && !cooking, held = ImGui::IsItemActive();
         const bool activated = ImGui::IsItemActivated(), released = ImGui::IsItemDeactivated();
         if (hovered)
@@ -2121,7 +2121,7 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
         // The dot takes clicks in the whole corner around it, which is easier to hit than the dot.
         const float reach = (slotMin.x + slotSize.x - dot.x) * 2;
         ImGui::SetCursorScreenPos(ImVec2(slotMin.x + slotSize.x - reach, slotMin.y));
-        const bool dotClicked = ImGui::InvisibleButton("on", ImVec2(reach, reach));
+        const bool dotClicked = ImGui::InvisibleButton("on", ImVec2(reach, reach), ImGuiButtonFlags_EnableNav);
         const bool dotHovered = ImGui::IsItemHovered() && !cooking;
         if (dotHovered)
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -2147,6 +2147,9 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
             state->heldOffset = (io.MousePos - origin) / s - shownAt;
         }
         const bool dragged = state->dragging && state->held == tile.key;
+        // From the keyboard, which presses without letting go in the same frame as the mouse does.
+        if (clicked && !released && !cooking)
+            Select(tiles, tile.key);
         if (released && state->held == tile.key)
         {
             if (state->dragging)
@@ -2234,7 +2237,7 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
         ImGui::PushID("+add");
         const ImVec2 slotAt = slot(i);
         ImGui::SetCursorScreenPos(origin + slotAt * s);
-        const bool clicked = ImGui::InvisibleButton("add", ImVec2(cell, height) * s);
+        const bool clicked = ImGui::InvisibleButton("add", ImVec2(cell, height) * s, ImGuiButtonFlags_EnableNav);
         const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
         HandOnHover();
         if (clicked)
