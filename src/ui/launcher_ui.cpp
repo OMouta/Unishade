@@ -357,7 +357,7 @@ ImU32 Backdrop(ImU32 tint, const std::string& key)
     return ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, 1));
 }
 
-// A game's square: its picture on its color, or the first letter of its name on a color of the ring.
+// A game's square: its picture on its color, or the start of its name on a color of the ring.
 void GameSquare(ImDrawList* draw, ImVec2 min, float size, float rounding, const std::string& name, const std::string& picture, const std::string& key)
 {
     const ImVec2 max = min + ImVec2(size, size);
@@ -1461,9 +1461,8 @@ void WindowView(const Model& model, Host& host)
         ImGui::ShadeVertsLinearColorGradientKeepAlpha(draw, start, draw->VtxBuffer.Size, min, max, Mix(tint, IM_COL32_BLACK, 0.45f),
                                                       Mix(Mix(tint, other, 0.55f), IM_COL32_BLACK, 0.3f));
         const ImVec2 center = (min + max) * 0.5f;
-        const ImVec2 squareMin(std::round(center.x - square / 2), std::round(center.y - square / 2 - S(16)));
+        const ImVec2 squareMin(std::round(center.x - square / 2), std::round(center.y - square / 2));
         GameSquare(draw, squareMin, square, S(22), game.name, game.picture, game.id);
-        Line(draw, min.x, max.x, squareMin.y + square + S(24), "No preview", Alpha(kWhite, 0.75f), kTextBody, true, true);
         Transform(draw, start, center, 1, 0, ImVec2(0, S(24) * (1 - shown)), shown);
     }
 
