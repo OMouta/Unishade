@@ -769,7 +769,10 @@ launcher::Effects DescribeEffects(App& app)
         launcherState.settingsEffect = SIZE_MAX;
     }
     for (size_t i = 0; i < list.size(); ++i)
+    {
         list[i].on = techniques[indices[i]].enabled;
+        list[i].kept = techniques[indices[i]].kept;
+    }
     if (launcherState.brokenFrom != effects.size())
     {
         launcherState.brokenFrom = effects.size();
@@ -1087,6 +1090,12 @@ public:
     {
         if (effect < launcherState.effectTechniques.size())
             app.runtime.SetEnabled(launcherState.effectTechniques[effect], on);
+    }
+
+    void RemoveEffect(size_t effect) override
+    {
+        if (effect < launcherState.effectTechniques.size())
+            app.runtime.RemoveTechnique(launcherState.effectTechniques[effect]);
     }
 
     void MoveEffect(size_t from, size_t to) override

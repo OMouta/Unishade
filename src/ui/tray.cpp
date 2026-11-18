@@ -113,8 +113,7 @@ struct State
     bool justOpened = false;
     double opened = -100;
     bool gone = false; // out of sight after the menu closed
-    // The effects in the preset in use, by key: the ones that were on when it loaded or turned on since, until they are
-    // removed. An effect turned off with its dot keeps its tile, to be turned back on where it was.
+    // The effects in the preset in use, by key: the ones that are on, and the ones turned off that the preset keeps.
     std::set<std::string> members;
     std::map<std::string, size_t> colors; // each tile's color of the ring
     size_t nextColor = 0;
@@ -384,7 +383,6 @@ void Follow(Frame& f)
     {
         state->presetKnown = true;
         state->preset = preset;
-        state->members.clear();
         state->colors.clear();
         state->nextColor = 0;
         state->dragging = false;
@@ -393,9 +391,10 @@ void Follow(Frame& f)
         if (state->sheet == Sheet::Tune)
             CloseSheet();
     }
+    state->members.clear();
     if (f.effects)
         for (const Effect& effect : f.effects->list)
-            if (effect.on && state->members.insert(effect.key).second)
+            if ((effect.on || effect.kept) && state->members.insert(effect.key).second && !state->colors.count(effect.key))
                 state->colors[effect.key] = state->nextColor++;
     if (state->sheet == Sheet::Tune && (!f.effects || !IndexOf(*f.effects, state->tuned) || !state->members.count(state->tuned)))
         CloseSheet();
@@ -893,8 +892,7 @@ float TuneSheet(Frame& f, ImVec2 min, float width, float space)
     }
     else if (action == 1)
     {
-        f.host.SetEffect(index, false);
-        state->members.erase(effect.key);
+        f.host.RemoveEffect(index);
         CloseSheet();
     }
     else if (action == 2)
@@ -1045,16 +1043,14 @@ float AddSheet(Frame& f, ImVec2 min, float width, float space)
                               ImGui::PopID();
                               if (!clicked)
                                   return;
-                              f.host.SetEffect(index, !added);
                               if (added)
                               {
-                                  state->members.erase(effect->key);
+                                  f.host.RemoveEffect(index);
                                   state->addedHere.erase(effect->key);
                               }
                               else
                               {
-                                  state->members.insert(effect->key);
-                                  state->colors[effect->key] = state->nextColor++;
+                                  f.host.SetEffect(index, true);
                                   state->addedHere.insert(effect->key);
                               }
                           } });

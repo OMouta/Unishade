@@ -87,6 +87,7 @@ struct Effect
     std::string file;
     bool on = false;
     bool failed = false; // could not start on the graphics card
+    bool kept = false;   // turned off, and still one of the preset's until it is removed
 };
 
 // One setting of an effect, or of an add-on, with its value as floats or as ints.
@@ -373,8 +374,10 @@ public:
     // The changes to the preset of the game being played, with auto-save off.
     virtual void SaveChanges() = 0;
     virtual void DiscardChanges() = 0;
-    // The effects of the game being played, by their place in Effects::list.
+    // The effects of the game being played, by their place in Effects::list. One turned off stays the preset's, as
+    // Effect::kept says, until it is removed.
     virtual void SetEffect(size_t effect, bool on) = 0;
+    virtual void RemoveEffect(size_t effect) = 0;
     virtual void MoveEffect(size_t from, size_t to) = 0;
     // An effect's settings while they show. Draw is done with them before it returns, and asks again in the next frame.
     virtual const EffectSettings* DescribeSettings(size_t effect) = 0;

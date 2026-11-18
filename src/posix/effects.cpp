@@ -1798,6 +1798,9 @@ void Runtime::ApplyPreset(Effect& effect, size_t effectIndex)
     std::vector<std::string> enabled;
     if (presetIni.Get("", "Techniques", value))
         enabled = PresetIni::Split(value);
+    std::vector<std::string> off;
+    if (presetIni.Get("", "TechniquesOff", value))
+        off = PresetIni::Split(value);
     for (Technique& technique : techniques)
         if (technique.effect == effectIndex)
         {
@@ -1805,6 +1808,7 @@ void Runtime::ApplyPreset(Effect& effect, size_t effectIndex)
             Enable(technique, std::find(enabled.begin(), enabled.end(), key) != enabled.end() ||
                                   std::find(enabled.begin(), enabled.end(), technique.name) != enabled.end() ||
                                   (technique.hidden && technique.enabledByDefault));
+            technique.kept = !technique.enabled && std::find(off.begin(), off.end(), key) != off.end();
             // The preset's shortcut, as ReShade writes it, or the one the effect suggests in older ReShade's way.
             technique.toggleKeyInPreset = presetIni.Get("", "Key" + key, value) || presetIni.Get("", "Key" + technique.name, value);
             if (technique.toggleKeyInPreset)
@@ -1921,7 +1925,7 @@ void Runtime::ReloadKeepingChanges()
 
 PresetIni Runtime::ComposePreset(PresetIni preset, const std::vector<std::string>& order) const
 {
-    std::vector<std::string> enabled, loaded;
+    std::vector<std::string> enabled, off, loaded;
     std::set<size_t> used;
     for (const Technique& technique : techniques)
     {
@@ -1932,6 +1936,8 @@ PresetIni Runtime::ComposePreset(PresetIni preset, const std::vector<std::string
             enabled.push_back(key);
             used.insert(technique.effect);
         }
+        else if (technique.kept)
+            off.push_back(key);
         if (technique.toggleKeyInPreset)
             preset.Set("", "Key" + key, FormatKey(technique.toggleKey));
     }
@@ -1943,6 +1949,16 @@ PresetIni Runtime::ComposePreset(PresetIni preset, const std::vector<std::string
             if (std::find(loaded.begin(), loaded.end(), key) == loaded.end())
                 enabled.push_back(key);
     preset.Set("", "Techniques", PresetIni::Join(enabled));
+    // The ones turned off that stay the preset's. ReShade's presets have no such list, so it is only written once
+    // there is something in it.
+    if (preset.Get("", "TechniquesOff", value))
+        for (const std::string& key : PresetIni::Split(value))
+            if (std::find(loaded.begin(), loaded.end(), key) == loaded.end())
+                off.push_back(key);
+    if (off.empty())
+        preset.Remove("", "TechniquesOff");
+    else
+        preset.Set("", "TechniquesOff", PresetIni::Join(off));
     // While effects load, the order keeps the places of the techniques still to come.
     preset.Set("", "TechniqueSorting", PresetIni::Join(order));
     for (const auto& [section, key, text] : presetValues)
@@ -2077,6 +2093,17 @@ void Runtime::SetEnabled(size_t index, bool enabled)
     if (index < techniques.size() && techniques[index].enabled != enabled)
     {
         Enable(techniques[index], enabled);
+        techniques[index].kept = !enabled;
+        dirty = true;
+    }
+}
+
+void Runtime::RemoveTechnique(size_t index)
+{
+    if (index < techniques.size() && (techniques[index].enabled || techniques[index].kept))
+    {
+        Enable(techniques[index], false);
+        techniques[index].kept = false;
         dirty = true;
     }
 }

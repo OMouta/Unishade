@@ -75,6 +75,7 @@ public:
     void SaveChanges() override { calls.push_back("save"); }
     void DiscardChanges() override { calls.push_back("discard"); }
     void SetEffect(size_t effect, bool on) override { calls.push_back("effect " + std::to_string(effect) + (on ? " on" : " off")); }
+    void RemoveEffect(size_t effect) override { calls.push_back("effect " + std::to_string(effect) + " removed"); }
     void MoveEffect(size_t from, size_t to) override { calls.push_back("move " + std::to_string(from) + " " + std::to_string(to)); }
     void CloseMenu() override { calls.push_back("close"); }
     void Quit(bool save) override { calls.push_back(save ? "quit saving" : "quit"); }
@@ -324,8 +325,19 @@ bool EffectsTests(Host& host)
     ok &= Check(Click(host, model, "on"), "each tile has a dot");
     ok &= Check(host.calls == std::vector<std::string>{ "effect 0 off" }, "the dot turns the effect off");
     model.effects->list[0].on = false;
+    model.effects->list[0].kept = true;
     Frame(host, model);
     ok &= Check(Count("effect") == 2, "an effect turned off keeps its tile, to be turned back on where it was");
+
+    // Its settings can take it out of the preset.
+    host.calls.clear();
+    ok &= Check(Click(host, model, "effect"), "a tile opens its effect's settings");
+    Settle(host, model);
+    ok &= Check(Click(host, model, "Remove"), "the settings offer to remove the effect");
+    ok &= Check(host.calls == std::vector<std::string>{ "effect 0 removed" }, "removing is not turning off");
+    model.effects->list[0].kept = false;
+    Settle(host, model);
+    ok &= Check(Count("effect") == 1, "an effect that was removed has no tile");
 
     // Dragging the first tile onto the other one runs its effect after that one.
     host.calls.clear();
@@ -376,12 +388,15 @@ bool PanelTests(Host& host)
     }
     ok &= Check(host.calls == std::vector<std::string>{ "effect 0 off" }, "a tile's dot turns its effect off");
     model.effects->list[0].on = false;
+    model.effects->list[0].kept = true;
     panel();
     ok &= Check(Count("effect") == 2, "an effect turned off keeps its tile");
-    model.effects->list[0].on = true;
     launcher::Reset(launcher::Place::Game);
     settle();
-    ok &= Check(Count("effect") == 2, "the tray opens with the same tiles once reset");
+    ok &= Check(Count("effect") == 2, "it still has its tile when the menu opens again");
+    model.effects->list[0].on = true;
+    model.effects->list[0].kept = false;
+    settle();
 
     host.calls.clear();
     PressEscape(host, model, launcher::Place::Game);

@@ -98,6 +98,8 @@ struct Technique
     size_t effect = 0; // index into Runtime::Effects
     size_t index = 0;  // index into the effect's module
     bool enabled = false;
+    // Turned off, and still one of the preset's, which lists it in TechniquesOff until it is removed.
+    bool kept = false;
     bool hidden = false;
     bool enabledByDefault = false;
     bool enabledInScreenshot = true;
@@ -321,7 +323,9 @@ public:
     std::vector<Effect>& Effects() { return effects; }
     // In the order they run.
     std::vector<Technique>& Techniques() { return techniques; }
+    // A technique turned off stays one of the preset's, to be turned back on. Removing it takes it out.
     void SetEnabled(size_t technique, bool enabled);
+    void RemoveTechnique(size_t technique);
     void MoveTechnique(size_t from, size_t to);
 
     // Values as floats or ints, converted from the variable's own type. Arrays and matrices keep ReShade's
