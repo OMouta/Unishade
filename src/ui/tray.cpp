@@ -1781,9 +1781,13 @@ void SizeCorner(Frame& f, ImVec2 min, ImVec2 max)
         return;
     const ImGuiIO& io = ImGui::GetIO();
     const bool mirrored = state->x == 1;
-    const float box = S(22.4f), inset = S(8);
+    const float box = S(22.4f), inset = S(6);
     const ImVec2 at = mirrored ? ImVec2(min.x + inset, max.y - inset - box) : ImVec2(max.x - inset - box, max.y - inset - box);
     ImGui::SetCursorScreenPos(at);
+    // The buttons along the bottom win where the corner reaches under them, so a grab that misses it does not turn
+    // every effect off. Opening downward, only the grab handle is there, which the corner wins over.
+    if (!f.down)
+        ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("##size", ImVec2(box, box));
     const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
     if (hovered || held)
@@ -1810,7 +1814,7 @@ void SizeCorner(Frame& f, ImVec2 min, ImVec2 max)
     }
     // An L that rounds with the tray's corner.
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    const float radius = S(20.8f);
+    const float radius = S(22);
     const ImU32 color = hovered || held ? kInk : kFaint;
     if (mirrored)
     {
@@ -2551,7 +2555,7 @@ float Tray(Frame& f, std::optional<ImVec2> place, float pageWidth, bool& compari
     }
     draw->AddRectFilled(min, max, Alpha(kTray, state->opacity), rounding);
     draw->AddRect(min + ImVec2(0.5f, 0.5f), max - ImVec2(0.5f, 0.5f), IM_COL32(255, 255, 255, 178), rounding, 1.0f);
-    // First, so it wins over the buttons it overlaps.
+    // First, so it wins over the grab handle.
     SizeCorner(f, min, max);
 
     // A line in the ring's colors along the top while effects compile.
