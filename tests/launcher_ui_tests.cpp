@@ -461,6 +461,8 @@ bool AddonSettingsTests(Host& host)
     ImGuiIO& io = ImGui::GetIO();
     const ImVec2 size = io.DisplaySize;
     io.DisplaySize.y = 1400;
+    // The test before leaves the Add-ons window open, and a click beside it would only close it.
+    launcher::Reset(launcher::Place::Window);
     launcher::Model model = EffectsModel();
     model.addons = Addons();
     Settle(host, model);
