@@ -79,11 +79,16 @@ if(NOT WIN32)
     return()
 endif()
 
-set(ONNXRUNTIME_INCLUDE "${CMAKE_BINARY_DIR}/onnxruntime/include")
-set(ONNXRUNTIME_HEADERS_URL "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.4/include/onnxruntime/core/session")
-fetch_file("${ONNXRUNTIME_HEADERS_URL}/onnxruntime_c_api.h" 9ed0d7054a4e74249467365b25b415d36f51a44a6349e2a994a1812e4723d1e2 "${ONNXRUNTIME_INCLUDE}/onnxruntime_c_api.h")
-fetch_file("${ONNXRUNTIME_HEADERS_URL}/onnxruntime_ep_c_api.h" e94ac3490697bdb107844fa9d403952ee7136134132a057eae5c1207b57ce352 "${ONNXRUNTIME_INCLUDE}/onnxruntime_ep_c_api.h")
-fetch_file("https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.4/include/onnxruntime/core/providers/dml/dml_provider_factory.h" 893ddb645545bddad8c3f24bb768e97651c9ce45ec22076b435439889e4228c8 "${ONNXRUNTIME_INCLUDE}/dml_provider_factory.h")
+# ONNX Runtime's headers come from its NuGet package for DirectML, whose three files are the ones of ONNX Runtime 1.24.4
+# with Windows line endings. The package is the one download whose hash is checked, and only the headers leave it.
+set(ONNXRUNTIME_DIR "${CMAKE_BINARY_DIR}/onnxruntime")
+set(ONNXRUNTIME_INCLUDE "${ONNXRUNTIME_DIR}/build/native/include")
+if(NOT EXISTS "${ONNXRUNTIME_INCLUDE}/dml_provider_factory.h")
+    fetch_file("https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/1.24.4/microsoft.ml.onnxruntime.directml.1.24.4.nupkg"
+        57e9f11b73437bef7a309496135d4c1f96b1a8e9ddba60013fa27bfc1d788681 "${CMAKE_BINARY_DIR}/onnxruntime-directml-1.24.4.zip")
+    file(ARCHIVE_EXTRACT INPUT "${CMAKE_BINARY_DIR}/onnxruntime-directml-1.24.4.zip" DESTINATION "${ONNXRUNTIME_DIR}"
+        PATTERNS build/native/include/onnxruntime_c_api.h build/native/include/onnxruntime_ep_c_api.h build/native/include/dml_provider_factory.h)
+endif()
 
 # Depth estimation as an add-on of the Vulkan host, Depth.dll. Its model and ONNX Runtime go in Addons/Depth.
 add_library(depth_addon SHARED src/depth/depth_addon.cpp src/depth/depth_model.cpp)
