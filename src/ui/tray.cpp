@@ -1027,7 +1027,7 @@ float AddSheet(Frame& f, ImVec2 min, float width, float space)
                               draw->AddRectFilled(at, at + size, hovered ? kWellHover : kWell, S(17.6f));
                               const float right = at.x + size.x - S(51.2f);
                               Line(draw, at.x + S(16), right, at.y + size.y / 2 - S(9), effect->name, kInk, kTextBody, true);
-                              Line(draw, at.x + S(16), right, at.y + size.y / 2 + S(11), effect->failed ? "failed" : effect->file,
+                              Line(draw, at.x + S(16), right, at.y + size.y / 2 + S(11), effect->failed ? "Could not start on the graphics card" : effect->file,
                                    effect->failed ? kDanger : Alpha(kInk, 0.65f), kTextSmall);
                               // A plus that turns into a check in the tile's color once it is added.
                               const ImVec2 center(at.x + size.x - S(11.2f) - S(16), at.y + size.y / 2);
@@ -2057,10 +2057,12 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
 
         TileLook look;
         look.name = effect.name;
-        look.detail = effect.failed ? "failed" : "";
+        look.detail = effect.failed ? "Failed" : "";
         look.color = TileColor(tile.key);
         look.reveal = Animate(ImGui::GetID("reveal"), effect.on ? 1.0f : 0.0f, 0.55f, Curve::Out);
         look.ink = Animate(ImGui::GetID("ink"), effect.on ? 1.0f : 0.0f, 0.35f, Curve::Out);
+        // Red does not show on a tile's color, so it is black there.
+        look.detailColor = Mix(kDanger, kInk, look.ink);
         look.gray = Animate(ImGui::GetID("gray"), f.effects->on ? 0.0f : 1.0f, 0.4f, Curve::Out, 0.03f * static_cast<float>(i));
         look.dot = Animate(ImGui::GetID("dot"), effect.on ? 1.0f : 0.0f, 0.3f, Curve::Out);
         look.spot = std::max(0.0f, Animate(ImGui::GetID("spot"), effect.on ? 1.0f : 0.0f, 0.4f, Curve::Spring));
