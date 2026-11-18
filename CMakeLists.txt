@@ -122,9 +122,12 @@ add_executable(installer WIN32 EXCLUDE_FROM_ALL
     installer/main.cpp
     installer/install.cpp
     src/net.cpp
+    # The launcher's look and its font, so Setup's window is drawn as Unishade's is.
+    src/ui/kit.cpp
+    "${FONTS_SOURCE}"
     installer/setup.rc)
 # setup.rc embeds Unishade.exe, found through the include path.
-target_include_directories(installer PRIVATE "$<TARGET_FILE_DIR:Unishade>")
+target_include_directories(installer PRIVATE src "$<TARGET_FILE_DIR:Unishade>")
 target_compile_definitions(installer PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_definitions(installer PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
 target_compile_definitions(installer PRIVATE UNISHADE_USER_AGENT="Unishade-Setup/${PROJECT_VERSION}")

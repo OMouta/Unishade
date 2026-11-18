@@ -5,7 +5,7 @@
 #include "install.h"
 #include "resource.h"
 #include "../src/text.h"
-#include "../src/theme.h"
+#include "../src/ui/kit.h"
 
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
@@ -31,34 +31,30 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT mes
 namespace fs = std::filesystem;
 using Microsoft::WRL::ComPtr;
 
+// The launcher's font, which the build puts into the program.
+extern const unsigned char kBricolageRegular[];
+extern const unsigned kBricolageRegularSize;
+extern const unsigned char kBricolageSemiBold[];
+extern const unsigned kBricolageSemiBoldSize;
+extern const unsigned char kBricolageExtraBold[];
+extern const unsigned kBricolageExtraBoldSize;
+
 namespace
 {
+using namespace kit;
+using namespace kit::spectrum;
+
 // Layout in pixels at 100% scaling.
 constexpr float kWindowWidth = 900;
 constexpr float kWindowHeight = 640;
-constexpr float kStrip = 3;
 constexpr float kSidebar = 236;
-constexpr float kFooter = 74;
-
-constexpr ImU32 Color(unsigned rgb, int alpha = 255)
-{
-    return IM_COL32((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF, alpha);
-}
-
-constexpr ImU32 kBackground = Color(theme::kBackground);
-constexpr ImU32 kSidebarColor = Color(theme::kSidebar);
-constexpr ImU32 kCard = Color(theme::kCard);
-constexpr ImU32 kCardHover = Color(theme::kCardHover);
-constexpr ImU32 kBorder = Color(theme::kBorder);
-constexpr ImU32 kBorderStrong = Color(theme::kBorderStrong);
-constexpr ImU32 kText = Color(theme::kText);
-constexpr ImU32 kDim = Color(theme::kDim);
-constexpr ImU32 kAccent = Color(theme::kAccent);
-constexpr ImU32 kAccentHover = Color(theme::kAccentHover);
-constexpr ImU32 kWarning = Color(theme::kWarning);
-constexpr ImU32 kError = Color(theme::kError);
-constexpr ImU32 kSuccess = Color(theme::kSuccess);
-
+constexpr float kMargin = 12; // the black around the block
+constexpr float kBlockRounding = 35.2f;
+constexpr float kPad = 36;
+constexpr float kRowRounding = 17.6f;
+constexpr float kButton = 41.6f;
+constexpr float kFooterPad = 24;
+constexpr float kFooter = kFooterPad + kButton + 12; // the buttons at the bottom of the block
 // Exit codes of a silent run. 1 is also used when the command line is invalid.
 constexpr int kExitFailed = 1;
 // Installed, but an effect package, a preset or the requested add-on was left out. The setup log says which.
@@ -173,18 +169,10 @@ struct Ui
     ComPtr<IDXGISwapChain1> swapchain;
     ComPtr<ID3D11RenderTargetView> target;
     ComPtr<ID3D11ShaderResourceView> logo;
-    ImFont* regular = nullptr;
-    ImFont* semibold = nullptr;
-    float scale = 1;
     UINT resizeWidth = 0;
     UINT resizeHeight = 0;
 };
 Ui ui;
-
-float S(float value)
-{
-    return value * ui.scale;
-}
 
 fs::path Directory()
 {
@@ -274,192 +262,77 @@ void OpenFile(const fs::path& path)
     ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
-// Drawing helpers.
+// Drawing helpers, on the launcher's kit: its colors, its type and its controls.
 
 void Spacing(float height)
 {
     ImGui::Dummy(ImVec2(0, S(height)));
 }
 
-void Text(const std::string& text, ImU32 color = kText, float size = 15.5f, ImFont* font = nullptr)
-{
-    ImGui::PushFont(font ? font : ui.regular, size);
-    ImGui::PushStyleColor(ImGuiCol_Text, color);
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextUnformatted(text.c_str(), text.c_str() + text.size());
-    ImGui::PopTextWrapPos();
-    ImGui::PopStyleColor();
-    ImGui::PopFont();
-}
-
 void Title(const std::string& text)
 {
-    Text(text, kText, 27, ui.semibold);
-    Spacing(2);
+    Text(text, kInk, kTextTitle, 0.0f, true);
+    Spacing(4);
 }
 
-void Rainbow(ImDrawList* draw, ImVec2 min, ImVec2 max)
-{
-    constexpr int count = IM_ARRAYSIZE(theme::kRainbow);
-    for (int i = 0; i + 1 < count; ++i)
-    {
-        const float left = min.x + (max.x - min.x) * i / (count - 1);
-        const float right = min.x + (max.x - min.x) * (i + 1) / (count - 1);
-        const ImU32 from = Color(theme::kRainbow[i]);
-        const ImU32 to = Color(theme::kRainbow[i + 1]);
-        draw->AddRectFilledMultiColor(ImVec2(left, min.y), ImVec2(right, max.y), from, to, to, from);
-    }
-}
-
-void CheckBox(ImDrawList* draw, ImVec2 position, bool checked)
-{
-    const float size = S(20);
-    if (checked)
-    {
-        draw->AddRectFilled(position, position + ImVec2(size, size), kAccent, S(5));
-        const ImVec2 points[] = { position + ImVec2(size * 0.26f, size * 0.52f), position + ImVec2(size * 0.44f, size * 0.70f),
-                                  position + ImVec2(size * 0.76f, size * 0.32f) };
-        draw->AddPolyline(points, 3, IM_COL32_WHITE, S(2.2f));
-    }
-    else
-        draw->AddRect(position, position + ImVec2(size, size), kBorderStrong, S(5), S(1.5f));
-}
-
-void Pill(const char* text, ImU32 color)
+// A grey row with a title and a line under it, and an arrow at its right. Returns true when clicked.
+bool ActionRow(const char* id, const char* title, const std::string& description)
 {
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    ImGui::PushFont(ui.semibold, 12);
-    const ImVec2 size = ImGui::CalcTextSize(text) + ImVec2(S(16), S(6));
-    const ImVec2 position = ImGui::GetCursorScreenPos() + ImVec2(0, S(2));
-    draw->AddRectFilled(position, position + size, (color & 0x00FFFFFF) | 0x2E000000, size.y / 2);
-    draw->AddText(position + ImVec2(S(8), S(3)), color, text);
-    ImGui::Dummy(size);
-    ImGui::PopFont();
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const float width = ImGui::GetContentRegionAvail().x, pad = S(19.2f);
+    const float right = min.x + width - pad - S(36);
+    const float titled = Measure(title, kTextBody, true).y;
+    const float described = Measure(description, kTextSmall, false, right - min.x - pad).y;
+    const ImVec2 size(width, pad * 2 + titled + S(4) + described);
+    const bool clicked = ImGui::InvisibleButton(id, size);
+    const bool hovered = ImGui::IsItemHovered();
+    HandOnHover();
+    draw->AddRectFilled(min, min + size, hovered ? kWellHover : kWell, S(kRowRounding));
+    Line(draw, min.x + pad, right, min.y + pad + titled / 2, title, kInk, kTextBody, true);
+    Paragraph(draw, ImVec2(min.x + pad, min.y + pad + titled + S(4)), right, description, kMist, kTextSmall);
+    DrawIcon(draw, Icon::Right, ImVec2(min.x + width - pad - S(8), min.y + size.y / 2), S(17.6f), hovered ? kInk : kMist);
+    return clicked;
 }
 
-enum class CardKind
+// A grey row with a switch at its right.
+void SwitchRow(const char* label, bool& value)
 {
-    Static,
-    Toggle, // with a checkbox
-    Action, // with an arrow
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const float width = ImGui::GetContentRegionAvail().x, height = S(52.8f);
+    const float left = min.x + width - S(11.2f) - S(kSwitchWidth);
+    draw->AddRectFilled(min, min + ImVec2(width, height), kWell, S(kRowRounding));
+    Line(draw, min.x + S(19.2f), left - S(12), min.y + height / 2, label, kInk, kTextBody);
+    ImGui::PushID(label);
+    if (SwitchButton("switch", ImVec2(left, min.y + (height - S(kSwitchHeight)) / 2), value))
+        value = !value;
+    ImGui::PopID();
+    ImGui::SetCursorScreenPos(min);
+    ImGui::Dummy(ImVec2(width, height));
+}
+
+// The block's buttons, from its right corner leftwards.
+struct Footer
+{
+    float right;
+    float top;
+
+    bool Button(const char* label, PillStyle style, bool enabled = true)
+    {
+        right -= PillWidth(label, style);
+        const bool clicked = PillButton(label, ImVec2(right, top), S(kButton), style, enabled);
+        right -= S(8.8f);
+        return clicked;
+    }
 };
 
-// A card with a title, an optional tag and a description. Returns true when a toggle or action card is clicked.
-bool Card(const char* id, const char* title, const char* tag, ImU32 tagColor, const std::string& description, CardKind kind, bool checked = false)
+bool Link(const char* label, ImU32 color, float size)
 {
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    const ImVec2 start = ImGui::GetCursorScreenPos();
-    const float width = ImGui::GetContentRegionAvail().x;
-    const float padding = S(16);
-    const float indent = kind == CardKind::Toggle ? S(34) : 0;
-    const float arrow = kind == CardKind::Action ? S(30) : 0;
-    const bool interactive = kind != CardKind::Static;
-    checked &= kind == CardKind::Toggle;
-
-    // The content goes on top, so the background can be sized to it afterwards.
-    draw->ChannelsSplit(2);
-    draw->ChannelsSetCurrent(1);
-    ImGui::SetCursorScreenPos(start + ImVec2(padding + indent, padding));
-    ImGui::BeginGroup();
-    ImGui::PushFont(ui.semibold, 16.5f);
-    ImGui::TextUnformatted(title);
-    ImGui::PopFont();
-    if (tag)
-    {
-        ImGui::SameLine(0, S(10));
-        Pill(tag, tagColor);
-    }
-    ImGui::PushFont(ui.regular, 14.5f);
-    ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-    ImGui::PushTextWrapPos(start.x + width - padding - arrow - ImGui::GetWindowPos().x + ImGui::GetScrollX());
-    ImGui::TextUnformatted(description.c_str(), description.c_str() + description.size());
-    ImGui::PopTextWrapPos();
-    ImGui::PopStyleColor();
-    ImGui::PopFont();
-    ImGui::EndGroup();
-    const ImVec2 size(width, ImGui::GetItemRectMax().y - start.y + padding);
-
-    ImGui::SetCursorScreenPos(start);
-    bool clicked = false;
-    bool hovered = false;
-    if (interactive)
-    {
-        clicked = ImGui::InvisibleButton(id, size);
-        hovered = ImGui::IsItemHovered();
-        if (hovered)
-            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    }
-    else
-        ImGui::Dummy(size);
-
-    draw->ChannelsSetCurrent(0);
-    draw->AddRectFilled(start, start + size, hovered ? kCardHover : kCard, S(10));
-    draw->AddRect(start, start + size, checked ? kAccent : kBorder, S(10), checked ? S(1.5f) : S(1));
-    if (kind == CardKind::Toggle)
-        CheckBox(draw, start + ImVec2(padding, padding + S(1)), checked);
-    if (kind == CardKind::Action)
-    {
-        const ImVec2 tip(start.x + width - padding - S(6), start.y + size.y / 2);
-        const ImVec2 points[] = { tip + ImVec2(-S(5), -S(6)), tip, tip + ImVec2(-S(5), S(6)) };
-        draw->AddPolyline(points, 3, hovered ? kText : kDim, S(1.8f));
-    }
-    draw->ChannelsMerge();
-    return clicked;
-}
-
-// A checkbox drawn like the ones on cards.
-void CheckLine(const char* label, bool& value)
-{
-    ImGui::PushFont(ui.regular, 15.5f);
-    const ImVec2 start = ImGui::GetCursorScreenPos();
-    const ImVec2 size(S(30) + ImGui::CalcTextSize(label).x, S(24));
-    if (ImGui::InvisibleButton(label, size))
-        value = !value;
-    const bool hovered = ImGui::IsItemHovered();
-    if (hovered)
-        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    CheckBox(draw, start + ImVec2(0, S(2)), value);
-    draw->AddText(start + ImVec2(S(30), (size.y - ImGui::GetFontSize()) / 2), hovered ? IM_COL32_WHITE : kText, label);
-    ImGui::PopFont();
-}
-
-bool Button(const char* label, ImVec2 size, bool primary, bool enabled = true)
-{
-    ImGui::PushFont(ui.semibold, 15);
-    ImGui::PushStyleColor(ImGuiCol_Button, primary ? Color(theme::kPrimary) : kCard);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, primary ? Color(theme::kPrimaryHover) : kCardHover);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, primary ? Color(theme::kPrimaryActive) : kBorder);
-    ImGui::PushStyleColor(ImGuiCol_Border, primary ? Color(theme::kPrimary) : kBorder);
-    ImGui::PushStyleColor(ImGuiCol_Text, primary ? Color(theme::kOnPrimary) : kText);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(8));
-    ImGui::BeginDisabled(!enabled);
-    const bool clicked = ImGui::Button(label, size);
-    if (enabled && ImGui::IsItemHovered())
-        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    ImGui::EndDisabled();
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor(5);
-    ImGui::PopFont();
-    return clicked;
-}
-
-// Footer buttons are numbered from the right.
-bool FooterButton(int slot, const char* label, bool primary, bool enabled = true)
-{
-    const ImVec2 size(S(124), S(38));
-    const ImVec2 window = ImGui::GetWindowSize();
-    ImGui::SetCursorPos(ImVec2(window.x - S(28) - (slot + 1) * size.x - slot * S(10), window.y - (S(kFooter) + size.y) / 2));
-    return Button(label, size, primary, enabled);
-}
-
-bool Link(const char* label, ImU32 color = kDim, float size = 14)
-{
-    ImGui::PushFont(ui.regular, size);
+    PushSize(size);
     ImGui::PushStyleColor(ImGuiCol_TextLink, color);
     const bool clicked = ImGui::TextLink(label);
-    if (ImGui::IsItemHovered())
-        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    HandOnHover();
     ImGui::PopStyleColor();
     ImGui::PopFont();
     return clicked;
@@ -471,133 +344,130 @@ void Spinner(float radius)
     const ImVec2 center = ImGui::GetCursorScreenPos() + ImVec2(radius, radius);
     const float start = static_cast<float>(ImGui::GetTime()) * 5.0f;
     draw->PathArcTo(center, radius - S(2), start, start + 4.2f, 32);
-    draw->PathStroke(kAccent, S(3));
+    draw->PathStroke(kInk, S(3));
     ImGui::Dummy(ImVec2(radius * 2, radius * 2));
 }
 
+// The ring's colors, as far as the installation is.
 void ProgressLine(float fraction)
 {
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    const ImVec2 start = ImGui::GetCursorScreenPos();
-    const ImVec2 end = start + ImVec2(ImGui::GetContentRegionAvail().x, S(6));
-    draw->AddRectFilled(start, end, kCard, S(3));
-    draw->PushClipRect(start, ImVec2(start.x + (end.x - start.x) * std::clamp(fraction, 0.0f, 1.0f), end.y), true);
-    Rainbow(draw, start, end);
-    draw->PopClipRect();
-    ImGui::Dummy(end - start);
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const ImVec2 max = min + ImVec2(ImGui::GetContentRegionAvail().x, S(8));
+    draw->AddRectFilled(min, max, kWell, S(4));
+    RainbowLine(draw, min, max, std::clamp(Animate(ImGui::GetID("progress"), fraction, 0.2f, Curve::Linear), 0.0f, 1.0f), 1);
+    ImGui::Dummy(max - min);
 }
 
+// On the black of the window, beside the block: the logo, the steps and the links.
 void Sidebar(std::initializer_list<const char*> steps, int current)
 {
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    const ImVec2 origin = ImGui::GetWindowPos() + ImVec2(0, S(kStrip));
+    const ImVec2 origin = ImGui::GetWindowPos();
     const float height = ImGui::GetWindowSize().y;
-    draw->AddRectFilled(origin, ImVec2(origin.x + S(kSidebar), origin.y + height), kSidebarColor);
-    draw->AddLine(ImVec2(origin.x + S(kSidebar), origin.y), ImVec2(origin.x + S(kSidebar), origin.y + height), kBorder);
-
-    const float x = origin.x + S(30);
+    const float x = origin.x + S(30), right = origin.x + S(kSidebar) - S(12);
     float y = origin.y + S(30);
     if (ui.logo)
         draw->AddImage(ImTextureID(reinterpret_cast<uintptr_t>(ui.logo.Get())), ImVec2(x - S(8), y), ImVec2(x - S(8) + S(80), y + S(80)));
-    y += S(92);
-    draw->AddText(ui.semibold, S(18), ImVec2(x, y), kText, "Unishade");
-    y += S(25);
-    draw->AddText(ui.regular, S(13.5f), ImVec2(x, y), kDim, "Setup " UNISHADE_VERSION);
-    y += S(48);
+    y += S(104);
+    Line(draw, x, right, y, "Unishade", kText, kTextName, true);
+    y += S(26);
+    Line(draw, x, right, y, "Setup " UNISHADE_VERSION, kDim, kTextSmall);
+    y += S(52);
 
     int index = 0;
     for (const char* step : steps)
     {
-        const ImVec2 dot(x + S(7), y + S(11));
+        const ImVec2 dot(x + S(7), y);
         if (index + 1 < static_cast<int>(steps.size()))
-            draw->AddLine(dot + ImVec2(0, S(9)), dot + ImVec2(0, S(27)), kBorder, S(1.5f));
+            draw->AddLine(dot + ImVec2(0, S(10)), dot + ImVec2(0, S(26)), kBorderStrong, S(1.5f));
         if (index < current)
-        {
-            draw->AddCircleFilled(dot, S(7), Color(theme::kSuccess, 40));
-            const ImVec2 check[] = { dot + ImVec2(-S(3.2f), 0), dot + ImVec2(-S(0.8f), S(2.5f)), dot + ImVec2(S(3.5f), -S(2.5f)) };
-            draw->AddPolyline(check, 3, kSuccess, S(1.8f));
-        }
+            DrawIcon(draw, Icon::Check, dot, S(14), kDim);
         else if (index == current)
-        {
-            draw->AddCircleFilled(dot, S(9), Color(theme::kAccent, 60));
-            draw->AddCircleFilled(dot, S(5), kAccent);
-        }
+            draw->AddCircleFilled(dot, S(5), kText);
         else
             draw->AddCircle(dot, S(5), kBorderStrong, 0, S(1.5f));
-        draw->AddText(index == current ? ui.semibold : ui.regular, S(15), ImVec2(x + S(24), y + S(1)), index == current ? kText : kDim, step);
+        Line(draw, x + S(24), right, y, step, index == current ? kText : kDim, kTextBody, index == current);
         y += S(36);
         ++index;
     }
 
-    ImGui::SetCursorPos(ImVec2(S(30), height - S(70)));
-    if (Link("Privacy policy", kDim, 13.5f))
+    ImGui::SetCursorPos(ImVec2(S(30), height - S(74)));
+    if (Link("Privacy policy", kDim, kTextSmall))
         ShellExecuteW(nullptr, L"open", L"https://unishade.me/privacy/", nullptr, nullptr, SW_SHOWNORMAL);
-    ImGui::SetCursorPos(ImVec2(S(30), height - S(46)));
-    if (Link("Credits and licenses", kDim, 13.5f))
+    ImGui::SetCursorPos(ImVec2(S(30), height - S(48)));
+    if (Link("Credits and licenses", kDim, kTextSmall))
         ImGui::OpenPopup("Credits");
 }
 
 void CreditsPopup()
 {
     const ImVec2 window = ImGui::GetWindowSize();
+    const float pad = S(28);
     ImGui::SetNextWindowPos(ImGui::GetWindowPos() + window / 2, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(S(640), S(470)));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(24), S(20)));
+    ImGui::SetNextWindowSize(ImVec2(S(640), S(480)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, S(24)));
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, S(kBlockRounding));
     if (ImGui::BeginPopupModal("Credits", nullptr,
                                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar))
     {
-        Text("Credits and licenses", kText, 20, ui.semibold);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(16), S(12)));
-        ImGui::BeginChild("text", ImVec2(0, ImGui::GetContentRegionAvail().y - S(36) - ImGui::GetStyle().ItemSpacing.y), ImGuiChildFlags_Borders);
-        ImGui::PopStyleVar();
-        const std::string_view credits = Resource(IDR_CREDITS);
-        Text(std::string(credits), kDim, 14);
+        Text("Credits and licenses", kInk, kTextName, 0.0f, true);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(19.2f), S(16)));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(kRowRounding));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, kWell);
+        ImGui::BeginChild("text", ImVec2(0, ImGui::GetContentRegionAvail().y - S(kButton) - ImGui::GetStyle().ItemSpacing.y),
+                          ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
+        Text(std::string(Resource(IDR_CREDITS)), kMist, kTextSmall);
         ImGui::EndChild();
-        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - S(24) - S(124));
-        if (Button("Close", ImVec2(S(124), S(36)), false))
+        const ImVec2 close(ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - pad - PillWidth("Close", PillStyle::Black), ImGui::GetCursorScreenPos().y);
+        if (PillButton("Close", close, S(kButton), PillStyle::Black))
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
 }
 
-// Pages. Each draws its content, then its footer buttons.
+// Pages. Each draws its content. DrawUi draws their buttons.
 
 void WelcomePage()
 {
     Title("Install Unishade");
-    Text("Universal post-processing without injection.");
-    Text("Your frame rate will be lower while it runs.", kDim, 15);
+    Text("Universal post-processing without injection.", kInk, kTextBody);
+    Text("Your frame rate will be lower while it runs.", kMist, kTextSmall);
     Spacing(18);
-    Text("Install folder", kText, 15, ui.semibold);
-    ImGui::PushFont(ui.regular, 15);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - S(124) - S(10));
+    Text("Install folder", kInk, kTextHeading, 0.0f, true);
+    const ImVec2 field = ImGui::GetCursorScreenPos();
+    const float width = ImGui::GetContentRegionAvail().x, browse = PillWidth("Browse", PillStyle::Well);
+    PushSize(kTextBody);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(16), (S(kButton) - ImGui::GetFontSize()) / 2));
+    ImGui::SetNextItemWidth(width - browse - S(8.8f));
     if (ImGui::InputText("##directory", app.directory, sizeof(app.directory), ImGuiInputTextFlags_ElideLeft))
         app.directoryError.clear();
+    ImGui::PopStyleVar();
     ImGui::PopFont();
-    ImGui::SameLine(0, S(10));
-    if (Button("Browse", ImVec2(S(124), 0), false))
+    if (PillButton("Browse", ImVec2(field.x + width - browse, field.y), S(kButton), PillStyle::Well))
         if (auto folder = BrowseFolder(Directory()))
         {
             strncpy_s(app.directory, Utf8(folder->wstring()).c_str(), _TRUNCATE);
             app.directoryError.clear();
         }
     if (!app.directoryError.empty())
-        Text(app.directoryError, kError, 14.5f);
+        Text(app.directoryError, kDanger, kTextSmall);
 }
 
 void ManagePage()
 {
     Title("Unishade is installed");
     std::string version = app.installation && !app.installation->version.empty() ? "Version " + app.installation->version : "Unishade";
-    Text(version + " is installed in " + app.directory + ".", kDim, 15);
+    Text(version + " is installed in " + app.directory + ".", kMist, kTextSmall);
     if (app.installation && app.installation->version != UNISHADE_VERSION)
-        Text("This setup installs version " UNISHADE_VERSION ".", kDim, 15);
+        Text("This setup installs version " UNISHADE_VERSION ".", kMist, kTextSmall);
     Spacing(14);
-    if (Card("update", "Update", nullptr, 0, "Install Unishade " UNISHADE_VERSION " and get the newest effects. Your settings and presets stay.",
-             CardKind::Action))
+    if (ActionRow("update", "Update", "Install Unishade " UNISHADE_VERSION " and get the newest effects. Your settings and presets stay."))
         StartInstall();
-    if (Card("uninstall", "Uninstall", nullptr, 0, "Remove Unishade and the effects from this PC.", CardKind::Action))
+    if (ActionRow("uninstall", "Uninstall", "Remove Unishade and the effects from this PC."))
         app.page = Page::Uninstall;
 }
 
@@ -606,13 +476,13 @@ void InstallingPage()
     const Progress::State state = app.progress->Read();
     Title(app.progress->cancel ? "Cancelling..." : "Installing");
     Spacing(4);
-    Text(state.status.empty() ? "Starting..." : state.status, kText, 15.5f, ui.semibold);
+    Text(state.status.empty() ? "Starting..." : state.status, kInk, kTextBody, 0.0f, true);
     ProgressLine(state.fraction);
-    Text(state.detail.empty() ? " " : state.detail, kDim, 14);
+    Text(state.detail.empty() ? " " : state.detail, kMist, kTextSmall);
     Spacing(8);
     ImGui::BeginChild("history", ImVec2(0, 0));
     for (size_t i = 0; i + 1 < state.history.size(); ++i)
-        Text(state.history[i], kDim, 14);
+        Text(state.history[i], kMist, kTextSmall);
     if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
         ImGui::SetScrollHereY(1.0f);
     ImGui::EndChild();
@@ -623,38 +493,38 @@ void FailedPage()
     const bool cancelled = app.installTask.cancelled;
     Title(cancelled ? "Installation cancelled" : "Setup could not finish");
     if (!cancelled)
-        Text(app.installTask.error, kError, 15);
+        Text(app.installTask.error, kDanger, kTextBody);
     Spacing(6);
-    Text("Go back to try again.", kDim, 15);
+    Text("Go back to try again.", kMist, kTextBody);
     Spacing(6);
-    if (Link("Open the setup log", kAccentHover, 15))
+    if (Link("Open the setup log", kInk, kTextBody))
         OpenFile(SetupLogPath());
 }
 
 void FinishedPage()
 {
     Title("Unishade is ready");
-    Text("Start Unishade and open your game. Roblox is detected automatically. Add other games in the Unishade window.", kDim, 15);
+    Text("Start Unishade and open your game. Add games in the Unishade window.", kMist, kTextBody);
     for (const auto& note : app.notes)
     {
         Spacing(4);
-        Text(note, kWarning, 14.5f);
+        Text(note, kCaution, kTextSmall);
     }
     Spacing(14);
-    CheckLine("Run Unishade on the high-performance GPU", app.highPerformanceGpu);
+    SwitchRow("Run Unishade on the high-performance GPU", app.highPerformanceGpu);
     if (!app.hostRunning)
-        CheckLine("Start Unishade now", app.launch);
+        SwitchRow("Start Unishade now", app.launch);
 }
 
 void UninstallPage()
 {
     Title("Uninstall Unishade");
-    Text("Removes Unishade and the effects from " + std::string(app.directory) + ", and its Start menu shortcuts.", kDim, 15);
+    Text("Removes Unishade and the effects from " + std::string(app.directory) + ", and its Start menu shortcuts.", kMist, kTextBody);
     Spacing(10);
-    CheckLine("Also delete my presets, settings, game list and add-ons", app.deleteUserFiles);
+    SwitchRow("Also delete my presets, settings, game list and add-ons", app.deleteUserFiles);
     Text("That deletes Unishade.ini and games.ini, the settings of Unishade 0.6.3 and earlier, and the presets, reshade-shaders and "
          "Addons folders with everything in them. Other files in the folder, such as screenshots, stay.",
-         kDim, 14);
+         kMist, kTextSmall);
     if (app.uninstallTask.Running())
     {
         Spacing(10);
@@ -668,14 +538,14 @@ void UninstalledPage()
     {
         Title("Unishade was uninstalled");
         if (!app.deleteUserFiles)
-            Text("Your presets and settings are still in " + std::string(app.directory) + ".", kDim, 15);
+            Text("Your presets and settings are still in " + std::string(app.directory) + ".", kMist, kTextBody);
         else if (app.folderLeft)
-            Text("Files Setup did not create, such as screenshots, are still in " + std::string(app.directory) + ".", kDim, 15);
+            Text("Files Setup did not create, such as screenshots, are still in " + std::string(app.directory) + ".", kMist, kTextBody);
     }
     else
     {
         Title("Uninstall could not finish");
-        Text(app.uninstallTask.error, kError, 15);
+        Text(app.uninstallTask.error, kDanger, kTextBody);
     }
 }
 
@@ -718,7 +588,6 @@ void DrawUi()
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 origin = ImGui::GetWindowPos();
     const ImVec2 size = ImGui::GetWindowSize();
-    Rainbow(draw, origin, origin + ImVec2(size.x, S(kStrip)));
 
     const Page page = app.page;
     if (page == Page::Uninstall || page == Page::Uninstalled)
@@ -736,12 +605,13 @@ void DrawUi()
         Sidebar({ "Welcome", "Install", "Done" }, step);
     }
 
-    // Content, above a footer separated by a line.
-    const float left = S(kSidebar) + 1;
-    draw->AddLine(origin + ImVec2(left, size.y - S(kFooter)), origin + ImVec2(size.x, size.y - S(kFooter)), kBorder);
-    ImGui::SetCursorPos(ImVec2(left, S(kStrip)));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(44), S(34)));
-    ImGui::BeginChild("content", ImVec2(size.x - left, size.y - S(kStrip) - S(kFooter)), ImGuiChildFlags_AlwaysUseWindowPadding);
+    // The page in a block, as the launcher's are, with its buttons in the block's bottom right corner.
+    const ImVec2 blockMin = origin + ImVec2(S(kSidebar), S(kMargin)), blockMax = origin + size - ImVec2(S(kMargin), S(kMargin));
+    draw->AddRectFilled(blockMin, blockMax, kPaper, S(kBlockRounding));
+    draw->AddRect(blockMin + ImVec2(0.5f, 0.5f), blockMax - ImVec2(0.5f, 0.5f), kEdge, S(kBlockRounding), 1.0f);
+    ImGui::SetCursorScreenPos(blockMin);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(kPad), S(kPad)));
+    ImGui::BeginChild("content", ImVec2(blockMax.x - blockMin.x, blockMax.y - blockMin.y - S(kFooter)), ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
     switch (page)
     {
@@ -755,10 +625,11 @@ void DrawUi()
     }
     ImGui::EndChild();
 
+    Footer footer{ blockMax.x - S(kFooterPad), blockMax.y - S(kFooterPad) - S(kButton) };
     switch (page)
     {
     case Page::Welcome:
-        if (FooterButton(0, "Install", true))
+        if (footer.Button("Install", PillStyle::Black))
         {
             app.directoryError = CheckDirectory(Directory());
             if (app.directoryError.empty())
@@ -766,21 +637,21 @@ void DrawUi()
         }
         break;
     case Page::Manage:
-        if (FooterButton(0, "Close", false))
+        if (footer.Button("Close", PillStyle::Well))
             DestroyWindow(ui.window);
         break;
     case Page::Installing:
-        if (FooterButton(0, "Cancel", false, !app.progress->cancel))
+        if (footer.Button("Cancel", PillStyle::Well, !app.progress->cancel))
             app.progress->cancel = true;
         break;
     case Page::Failed:
-        if (FooterButton(0, "Back", true))
+        if (footer.Button("Back", PillStyle::Black))
             app.page = app.installation ? Page::Manage : Page::Welcome;
-        if (FooterButton(1, "Close", false))
+        if (footer.Button("Close", PillStyle::Well))
             DestroyWindow(ui.window);
         break;
     case Page::Finished:
-        if (FooterButton(0, "Finish", true))
+        if (footer.Button("Finish", PillStyle::Black))
         {
             // Before starting Unishade, which picks its GPU when it starts.
             if (app.highPerformanceGpu)
@@ -791,9 +662,9 @@ void DrawUi()
         }
         break;
     case Page::Uninstall:
-        if (FooterButton(0, "Uninstall", true, !app.uninstallTask.Running()))
+        if (footer.Button("Uninstall", PillStyle::Black, !app.uninstallTask.Running()))
             StartUninstall();
-        if (FooterButton(1, app.installation ? "Back" : "Cancel", false, !app.uninstallTask.Running()))
+        if (footer.Button(app.installation ? "Back" : "Cancel", PillStyle::Well, !app.uninstallTask.Running()))
         {
             if (app.installation)
                 app.page = Page::Manage;
@@ -802,7 +673,7 @@ void DrawUi()
         }
         break;
     case Page::Uninstalled:
-        if (FooterButton(0, "Close", true))
+        if (footer.Button("Close", PillStyle::Black))
             DestroyWindow(ui.window);
         break;
     }
@@ -851,52 +722,16 @@ ComPtr<ID3D11ShaderResourceView> LoadLogo(UINT size)
     return view;
 }
 
-void ApplyScale(float scale)
+void ApplyScale(float windowScale)
 {
-    ui.scale = scale;
+    kit::scale = windowScale;
+    // The launcher's dark theme, which Unishade starts with.
+    SetDark(true);
     ImGuiStyle style;
-    ImGui::StyleColorsDark(&style);
-    style.WindowPadding = ImVec2(0, 0);
-    style.WindowBorderSize = 0;
+    spectrum::ApplyStyle(style);
     style.WindowRounding = 0;
-    style.PopupRounding = 12;
-    style.PopupBorderSize = 1;
-    style.ChildRounding = 8;
-    style.ChildBorderSize = 1;
-    style.FramePadding = ImVec2(12, 9);
-    style.FrameRounding = 7;
-    style.FrameBorderSize = 1;
-    style.ItemSpacing = ImVec2(10, 10);
-    style.ItemInnerSpacing = ImVec2(10, 6);
-    style.ScrollbarSize = 10;
-    style.ScrollbarRounding = 5;
-    style.GrabRounding = 5;
-    style.FontSizeBase = 15.5f;
-
-    const auto color = [&](ImGuiCol index, ImU32 value) { style.Colors[index] = ImGui::ColorConvertU32ToFloat4(value); };
-    color(ImGuiCol_Text, kText);
-    color(ImGuiCol_TextDisabled, kDim);
-    color(ImGuiCol_WindowBg, kBackground);
-    color(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
-    color(ImGuiCol_PopupBg, Color(theme::kPopup));
-    color(ImGuiCol_ModalWindowDimBg, IM_COL32(0, 0, 0, 150));
-    color(ImGuiCol_Border, kBorder);
-    color(ImGuiCol_FrameBg, kCard);
-    color(ImGuiCol_FrameBgHovered, kCardHover);
-    color(ImGuiCol_FrameBgActive, kCardHover);
-    color(ImGuiCol_CheckMark, IM_COL32_WHITE);
-    color(ImGuiCol_Button, kCard);
-    color(ImGuiCol_ButtonHovered, kCardHover);
-    color(ImGuiCol_ButtonActive, kBorder);
-    color(ImGuiCol_ScrollbarBg, IM_COL32(0, 0, 0, 0));
-    color(ImGuiCol_ScrollbarGrab, kBorder);
-    color(ImGuiCol_ScrollbarGrabHovered, kBorderStrong);
-    color(ImGuiCol_ScrollbarGrabActive, kBorderStrong);
-    color(ImGuiCol_TextSelectedBg, Color(theme::kAccent, 90));
-    color(ImGuiCol_NavCursor, kAccent);
-    color(ImGuiCol_TextLink, kAccentHover);
-    style.ScaleAllSizes(scale);
-    style.FontScaleDpi = scale;
+    style.WindowBorderSize = 0;
+    style.Colors[ImGuiCol_ModalWindowDimBg] = ImGui::ColorConvertU32ToFloat4(IM_COL32(0, 0, 0, 150));
     ImGui::GetStyle() = style;
 
     if (ui.device)
@@ -979,19 +814,15 @@ bool CreateDeviceAndSwapchain()
     return true;
 }
 
+// Bricolage Grotesque, as in Unishade, then Segoe UI for what it lacks, such as a folder named in Cyrillic.
 void AddFonts()
 {
     wchar_t windows[MAX_PATH]{};
     GetWindowsDirectoryW(windows, MAX_PATH);
-    ImFontConfig config;
-    config.Flags |= ImFontFlags_NoLoadError;
-    ImGuiIO& io = ImGui::GetIO();
-    ui.regular = io.Fonts->AddFontFromFileTTF((Utf8(windows) + "\\Fonts\\segoeui.ttf").c_str(), 0.0f, &config);
-    ui.semibold = io.Fonts->AddFontFromFileTTF((Utf8(windows) + "\\Fonts\\seguisb.ttf").c_str(), 0.0f, &config);
-    if (!ui.regular)
-        ui.regular = io.Fonts->AddFontDefault();
-    if (!ui.semibold)
-        ui.semibold = ui.regular;
+    const std::string fonts = Utf8(windows) + "\\Fonts\\";
+    LoadFonts({ .data = { kBricolageRegular, kBricolageRegularSize } }, { { .path = fonts + "segoeui.ttf" } },
+              { .data = { kBricolageSemiBold, kBricolageSemiBoldSize } }, { { .path = fonts + "seguisb.ttf" } },
+              { .data = { kBricolageExtraBold, kBricolageExtraBoldSize } });
 }
 
 
@@ -1082,14 +913,14 @@ int RunWindow(const Arguments& arguments)
         ImGui::NewFrame();
         DrawUi();
         ImGui::Render();
-        const float clear[] = { 17 / 255.0f, 18 / 255.0f, 23 / 255.0f, 1.0f };
+        const float clear[] = { 0, 0, 0, 1 };
         ID3D11RenderTargetView* targets[] = { ui.target.Get() };
         ui.context->OMSetRenderTargets(1, targets, nullptr);
         ui.context->ClearRenderTargetView(ui.target.Get(), clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         ui.swapchain->Present(1, 0);
 
-        const bool animating = app.installTask.Running() || app.uninstallTask.Running();
+        const bool animating = app.installTask.Running() || app.uninstallTask.Running() || Animating();
         if (!animating && --framesLeft <= 0)
             MsgWaitForMultipleObjects(0, nullptr, FALSE, 500, QS_ALLINPUT);
     }
