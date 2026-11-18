@@ -647,6 +647,18 @@ void Tip(const std::string& text)
     ImGui::PopStyleVar();
 }
 
+void ScrollCue(const ImGuiWindow* child, ImU32 color)
+{
+    if (!child || child->ScrollMax.y < 1)
+        return;
+    const ImRect box = child->Rect();
+    const float width = S(3.2f), inset = S(1.6f);
+    const float track = box.GetHeight() - inset * 2;
+    const float thumb = std::max(track * box.GetHeight() / (box.GetHeight() + child->ScrollMax.y), std::min(S(24), track));
+    const float top = box.Min.y + inset + (track - thumb) * std::clamp(child->Scroll.y / child->ScrollMax.y, 0.0f, 1.0f);
+    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(box.Max.x - width, top), ImVec2(box.Max.x, top + thumb), color, width / 2);
+}
+
 void DrawIcon(ImDrawList* draw, Icon icon, ImVec2 center, float size, ImU32 color, float angle)
 {
     // The design's icons are 24 units wide, drawn with lines 2 units thick.

@@ -1451,6 +1451,7 @@ void WindowView(const Model& model, Host& host)
     MoveWindow(page, origin, 1, ImVec2(0, S(24) * (1 - enter)));
     FadeWindow(page, enter);
     ImGui::EndChild();
+    ScrollCue(page, Alpha(kWhite, 0.3f));
     ImGui::End();
 }
 
@@ -2146,6 +2147,7 @@ void Modals(const Model& model, Host& host)
         ImGui::SetCursorScreenPos(origin + ImVec2(0, used));
         ImGui::Dummy(ImVec2(1, 0));
         ImGui::EndChild();
+        ScrollCue(bodyWindow);
         state->body = used / s;
         state->measured = state->shown;
     }

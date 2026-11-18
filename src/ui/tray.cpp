@@ -475,7 +475,9 @@ float Fields(const char* id, const std::vector<Field>& fields, const Grid& grid,
         fields[i].draw(origin + places[i], ImVec2(widths[i], fields[i].height));
     ImGui::SetCursorScreenPos(origin + ImVec2(0, total + pad));
     ImGui::Dummy(ImVec2(1, 0));
+    const ImGuiWindow* child = ImGui::GetCurrentWindow();
     ImGui::EndChild();
+    ScrollCue(child);
     return height;
 }
 

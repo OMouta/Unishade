@@ -175,6 +175,9 @@ ImU32 Mix(ImU32 from, ImU32 to, float t);
 void ApplyStyle(ImGuiStyle& style);
 // A tip in the tray's colors, once the mouse rests on the last item.
 void Tip(const std::string& text);
+// A thin bar at the right edge of a child window that just ended, where it is and how much there is, while its
+// contents do not fit. The windows scroll without Dear ImGui's bars, so this is what says there is more.
+void ScrollCue(const ImGuiWindow* child, ImU32 color = kFaint);
 
 enum class Icon
 {
