@@ -2625,6 +2625,34 @@ void Runtime::GenerateMipmaps(VkCommandBuffer commands, const GpuImage& image)
     }
 }
 
+namespace
+{
+// A shader's code declares every global variable of its effect, also the ones a compute shader shares between its
+// threads. Only compute shaders may have those, and Metal refuses a vertex or pixel shader that declares one, so they
+// become ordinary variables there. Shaders made from the cache are changed too, since this runs on the way to the
+// graphics card.
+void MakeSharedVariablesPrivate(std::vector<uint32_t>& code)
+{
+    constexpr uint32_t kEntryPoint = 15, kTypePointer = 32, kVariable = 59, kCompute = 5, kWorkgroup = 4, kPrivate = 6;
+    std::vector<size_t> classes;
+    for (size_t at = 5; at < code.size();)
+    {
+        const uint32_t op = code[at] & 0xFFFF, words = code[at] >> 16;
+        if (words == 0 || at + words > code.size())
+            return;
+        if (op == kEntryPoint && words > 1 && code[at + 1] == kCompute)
+            return;
+        if (op == kTypePointer && words > 2 && code[at + 2] == kWorkgroup)
+            classes.push_back(at + 2);
+        if (op == kVariable && words > 3 && code[at + 3] == kWorkgroup)
+            classes.push_back(at + 3);
+        at += words;
+    }
+    for (const size_t at : classes)
+        code[at] = kPrivate;
+}
+} // namespace
+
 bool Runtime::CreateGpu(Effect& effect)
 {
     auto result = std::make_shared<EffectGpu>();
@@ -2641,8 +2669,10 @@ bool Runtime::CreateGpu(Effect& effect)
     if (!gpu.CreateBuffer(g.uniforms, std::max<VkDeviceSize>(16, effect.uniformData.size()), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true))
         return fail("no memory for its variables", effect.file);
 
-    for (const auto& [name, code] : effect.spirv)
+    for (const auto& [name, compiled] : effect.spirv)
     {
+        std::vector<uint32_t> code = compiled;
+        MakeSharedVariablesPrivate(code);
         VkShaderModuleCreateInfo info{ VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
         info.codeSize = code.size() * 4;
         info.pCode = code.data();
