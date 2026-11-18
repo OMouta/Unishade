@@ -380,6 +380,7 @@ Settings LoadSettings()
     if (ini.Get("HOST", "MenuOpacity", value))
         settings.menuOpacity = std::clamp(std::round(std::strtof(value.c_str(), nullptr) * 100) / 100, 0.6f, 1.0f);
     settings.smallTiles = ini.Get("HOST", "SmallTiles", value) && value == "1";
+    settings.menuHints = !ini.Get("HOST", "MenuHints", value) || value != "0";
 
     if ((ini.Changed() || !existed) && !WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
@@ -412,6 +413,7 @@ bool SaveSettings(const Settings& settings)
     std::snprintf(opacity, sizeof(opacity), "%.2f", settings.menuOpacity);
     ini.Set("HOST", "MenuOpacity", opacity);
     ini.Set("HOST", "SmallTiles", settings.smallTiles ? "1" : "0");
+    ini.Set("HOST", "MenuHints", settings.menuHints ? "1" : "0");
 #ifdef __APPLE__
     ini.Set("HOST", "SkipTitleBar", settings.skipTitleBar ? "1" : "0");
 #endif

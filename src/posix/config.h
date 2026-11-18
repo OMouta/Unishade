@@ -71,6 +71,7 @@ struct Settings
     // As launcher::Settings::menuOpacity and smallTiles.
     float menuOpacity = 1;
     bool smallTiles = false;
+    bool menuHints = true;
     fs::path preset;
     // Searched recursively, like ReShade's paths ending in \**.
     std::vector<fs::path> effectPaths;

@@ -322,6 +322,12 @@ bool EffectsTests(Host& host)
     launcher::Model model = EffectsModel();
     Settle(host, model);
     ok &= Check(Count("effect") == 2, "the effects that are on have tiles, and the others wait in Add effect");
+    ok &= Check(!Find("Got it"), "the tray says nothing about its tiles once the user has it");
+    model.settings.menuHints = true;
+    Settle(host, model);
+    ok &= Check(Find("Got it").has_value(), "the tray says how its tiles work until then");
+    model.settings.menuHints = false;
+    Settle(host, model);
     ok &= Check(Click(host, model, "on"), "each tile has a dot");
     ok &= Check(host.calls == std::vector<std::string>{ "effect 0 off" }, "the dot turns the effect off");
     model.effects->list[0].on = false;

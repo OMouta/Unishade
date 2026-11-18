@@ -226,6 +226,8 @@ struct Settings
     // The tray's white, from 0.6 to 1, and whether its tiles are small.
     float menuOpacity = 1;
     bool smallTiles = false;
+    // The tray says how its tiles work, until the user says they have it.
+    bool menuHints = false;
     std::optional<bool> keepEffectsVisible;
     std::optional<bool> updateChecks;
     std::optional<Performance> performance; // for every game without its own
@@ -339,6 +341,7 @@ enum class Switch
     DiscordPresence,
     SkipTitleBar,
     SmallTiles,
+    MenuHints,
     Effects, // the effects of the game being played, without stopping the overlay
 };
 

@@ -56,6 +56,7 @@ constexpr int kSmallestSize = 75;
 constexpr int kLargestSize = 200;
 // The frame rate choice that is typed in a box.
 constexpr int kCustom = static_cast<int>(std::size(kFrameRates));
+constexpr char kHint[] = "Click a tile for its settings. The dot in its corner turns it off, and dragging it changes the order effects run in.";
 
 enum class Sheet
 {
@@ -1931,8 +1932,10 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         const ImVec2 dot = TileDot(slotMin, slotMin + slotSize, small);
         const float radius = TileDotRadius(small);
-        ImGui::SetCursorScreenPos(dot - ImVec2(radius, radius));
-        const bool dotClicked = ImGui::InvisibleButton("on", ImVec2(radius * 2, radius * 2));
+        // The dot takes clicks in the whole corner around it, which is easier to hit than the dot.
+        const float reach = (slotMin.x + slotSize.x - dot.x) * 2;
+        ImGui::SetCursorScreenPos(ImVec2(slotMin.x + slotSize.x - reach, slotMin.y));
+        const bool dotClicked = ImGui::InvisibleButton("on", ImVec2(reach, reach));
         const bool dotHovered = ImGui::IsItemHovered();
         if (dotHovered)
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -2001,8 +2004,10 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         const ImVec2 dot = TileDot(slotMin, slotMin + slotSize, small);
         const float radius = TileDotRadius(small);
-        ImGui::SetCursorScreenPos(dot - ImVec2(radius, radius));
-        const bool dotClicked = ImGui::InvisibleButton("on", ImVec2(radius * 2, radius * 2));
+        // The dot takes clicks in the whole corner around it, which is easier to hit than the dot.
+        const float reach = (slotMin.x + slotSize.x - dot.x) * 2;
+        ImGui::SetCursorScreenPos(ImVec2(slotMin.x + slotSize.x - reach, slotMin.y));
+        const bool dotClicked = ImGui::InvisibleButton("on", ImVec2(reach, reach));
         const bool dotHovered = ImGui::IsItemHovered() && !cooking;
         if (dotHovered)
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -2484,6 +2489,13 @@ float Tray(Frame& f, std::optional<ImVec2> place, float pageWidth, bool& compari
     const float tiles = std::max(0.0f, Animate(Key("tiles height"), tilesTarget, 0.52f, Curve::Spring));
     const float gap = count ? kTilesGap : 0;
 
+    // How the tiles work, beside them until the user has it, while no sheet is open.
+    const bool hinting = f.model.settings.menuHints && f.tileCount > 0 && state->sheet == Sheet::None;
+    const float gotIt = PillWidth("Got it", PillStyle::Text);
+    const float hintText = Measure(kHint, kTextSmall, false, f.width - gotIt - S(17.6f)).y;
+    const float hintFull = (std::max(hintText, S(kButton)) + S(8)) / s;
+    const float hint = std::max(0.0f, Animate(Key("hint height"), hinting ? hintFull : 0.0f, 0.4f, Curve::Out));
+
     // The sheet grows to its contents' height, measured in the frame before, and shrinks away when it closes.
     if (state->sheet != Sheet::None)
     {
@@ -2500,7 +2512,7 @@ float Tray(Frame& f, std::optional<ImVec2> place, float pageWidth, bool& compari
 
     const float top = page ? kPad : f.down ? kPad : kGrab;
     const float bottom = page ? kPad : f.down ? kGrab : kPad;
-    f.trayHeight = S(top + bottom + sheet + tiles + gap) + f.rows;
+    f.trayHeight = S(top + bottom + sheet + hint + tiles + gap) + f.rows;
 
     ImVec2 min;
     if (place)
@@ -2582,21 +2594,36 @@ float Tray(Frame& f, std::optional<ImVec2> place, float pageWidth, bool& compari
     }
 
     // From the anchored edge: the buttons, the tiles beyond them, then the sheet.
-    float sheetTop, tilesTop, controlsTop;
+    float sheetTop, hintTop, tilesTop, controlsTop;
     if (f.down)
     {
         controlsTop = min.y + S(kPad);
         tilesTop = controlsTop + f.rows + S(gap);
-        sheetTop = tilesTop + S(tiles);
+        hintTop = tilesTop + S(tiles);
+        sheetTop = hintTop + S(hint);
     }
     else
     {
         sheetTop = min.y + S(top);
-        tilesTop = sheetTop + S(sheet);
+        hintTop = sheetTop + S(sheet);
+        tilesTop = hintTop + S(hint);
         controlsTop = tilesTop + S(tiles) + S(gap);
     }
+    if (hint > 0.5f)
+    {
+        const ImVec2 at(min.x + S(kPad), hintTop);
+        draw->PushClipRect(at, at + ImVec2(f.width, S(hint)), true);
+        const int start = draw->VtxBuffer.Size;
+        Paragraph(draw, at + ImVec2(S(4.8f), (S(hintFull) - hintText) / 2), at.x + f.width - gotIt - S(12.8f), kHint, kMist, kTextSmall);
+        ImGui::BeginDisabled(!hinting);
+        if (PillButton("Got it", ImVec2(at.x + f.width - gotIt, at.y + (S(hintFull) - S(kButton)) / 2), S(kButton), PillStyle::Text))
+            f.host.SetSwitch(Switch::MenuHints, false);
+        ImGui::EndDisabled();
+        Transform(draw, start, at, 1, 0, ImVec2(0, 0), std::clamp(hint / hintFull, 0.0f, 1.0f));
+        draw->PopClipRect();
+    }
     // The room the sheet has before it would leave the game.
-    const float room = place ? display.y * 0.6f : f.down ? display.y - S(8) - S(kGrab) - sheetTop : tilesTop - S(kGrab) - S(8);
+    const float room = place ? display.y * 0.6f : f.down ? display.y - S(8) - S(kGrab) - sheetTop : hintTop - S(kGrab) - S(8);
     if (state->drawn != Sheet::None)
         DrawSheet(f, ImVec2(min.x + S(kPad), sheetTop), std::max(S(sheet), 1.0f), room);
 
