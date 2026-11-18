@@ -64,6 +64,12 @@ bool IsDrmDevice(VkPhysicalDevice device, int64_t major, int64_t minor)
 
 bool Gpu::Init(bool headless, std::string& error)
 {
+    // On Windows the loader loads on first use, which would end Unishade where the graphics driver installed none.
+    if (!platform::VulkanInstalled())
+    {
+        error = "Vulkan is not installed. Update the graphics driver.";
+        return false;
+    }
     if (vkEnumerateInstanceVersion(&apiVersion) != VK_SUCCESS || apiVersion < VK_API_VERSION_1_1)
     {
         error = "Vulkan 1.1 is not available. Update the graphics driver.";

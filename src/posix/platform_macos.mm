@@ -1593,6 +1593,11 @@ bool MoveToTrash(const std::string& path)
     }
 }
 
+bool VulkanInstalled()
+{
+    return true;
+}
+
 std::string UiFont(bool bold)
 {
     if (bold)

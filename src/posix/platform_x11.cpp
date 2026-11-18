@@ -1945,6 +1945,11 @@ bool MoveToTrash(const std::string& path)
     return false;
 }
 
+bool VulkanInstalled()
+{
+    return true;
+}
+
 std::string UiFont(bool bold)
 {
     const char* match = bold ? "fc-match -f '%{file}' 'sans-serif:bold' 2>/dev/null" : "fc-match -f '%{file}' 'sans-serif:style=Regular' 2>/dev/null";

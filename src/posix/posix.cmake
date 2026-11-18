@@ -412,6 +412,11 @@ elseif(WIN32)
         UNISHADE_VERSION_RESOURCE=${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0)
     # A program without a console window that still starts at main.
     target_link_options(Unishade PRIVATE /ENTRY:mainCRTStartup)
+    # vulkan-1.dll comes with the graphics driver. It loads when Vulkan is first used instead of with the program, so
+    # Unishade starts without it: Setup has it download the effects, which needs no graphics card, and where Vulkan is
+    # missing Unishade says so itself instead of Windows showing an error about a DLL.
+    target_link_options(Unishade PRIVATE /DELAYLOAD:vulkan-1.dll)
+    target_link_libraries(Unishade PRIVATE delayimp)
 else()
     add_executable(unishade "${POSIX_DIR}/main.cpp")
     set_target_properties(unishade PROPERTIES OUTPUT_NAME unishade)

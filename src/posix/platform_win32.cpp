@@ -1805,6 +1805,12 @@ bool DisplayDrmDevice(int64_t&, int64_t&)
     return false;
 }
 
+// Loaded for good, so the first Vulkan call finds it. Looked for as Windows looks for a program's own DLLs.
+bool VulkanInstalled()
+{
+    return LoadLibraryW(L"vulkan-1.dll") != nullptr;
+}
+
 // The fonts of the ReShade host's launcher.
 std::string UiFont(bool bold)
 {

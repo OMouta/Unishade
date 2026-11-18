@@ -232,6 +232,10 @@ bool MoveToTrash(const std::string& path);
 // the Vulkan device can be the same GPU. False when unknown, as on macOS.
 bool DisplayDrmDevice(int64_t& major, int64_t& minor);
 
+// Whether Vulkan can be called at all. Windows has its loader, vulkan-1.dll, from the graphics driver, and Unishade
+// loads it on first use, so this loads it and says whether it was there. The other systems link theirs.
+bool VulkanInstalled();
+
 // A sans-serif font for the launcher and the menu, regular or bold, or empty when the system has none.
 std::string UiFont(bool bold);
 // Fonts for what that font lacks, such as Chinese, Japanese and Korean, the user's own language first: each file with
