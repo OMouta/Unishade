@@ -2732,7 +2732,7 @@ float Tray(Frame& f, std::optional<ImVec2> place, float pageWidth, bool& compari
             draw->AddImageRounded(frost, min, max, min / display, max / display, IM_COL32_WHITE, rounding);
     }
     draw->AddRectFilled(min, max, Alpha(kTray, state->opacity), rounding);
-    draw->AddRect(min + ImVec2(0.5f, 0.5f), max - ImVec2(0.5f, 0.5f), kEdge, rounding, 1.0f);
+    draw->AddRect(min + ImVec2(0.5f, 0.5f), max - ImVec2(0.5f, 0.5f), spectrum::kEdge, rounding, 1.0f);
     // First, so it wins over the grab handle.
     SizeCorner(f, min, max);
 
