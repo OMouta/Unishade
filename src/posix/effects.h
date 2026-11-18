@@ -244,6 +244,9 @@ public:
     void ReloadKeepingChanges();
     // Includes the loader's final results until Update takes them and prepares the enabled effects.
     bool Loading() const { return loaderRunning || summaryPending || PresetLoading(); }
+    // Every effect that was found has arrived. False until effects were looked for, which waits for the game's
+    // first picture.
+    bool EffectsComplete() const { return effectsComplete; }
     // The same for the effects the preset uses, which are done before the rest. Presets can be saved meanwhile:
     // techniques and sections of effects not loaded yet stay as they are.
     bool PresetLoading() const

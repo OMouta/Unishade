@@ -1704,12 +1704,14 @@ void DescribeAddons(App& app, launcher::Model& model)
 std::vector<std::string> MissingEffects(App& app)
 {
     std::vector<std::string>& files = launcherState.missing;
-    const std::tuple<fs::path, size_t, bool, bool> now{ app.runtime.PresetPath(), app.runtime.Effects().size(), app.runtime.Loading(), app.runtime.Dirty() };
+    // Effects load with the game's first picture. Until then none has arrived, which says nothing about the preset's.
+    const bool loading = app.runtime.Loading() || !app.runtime.EffectsComplete();
+    const std::tuple<fs::path, size_t, bool, bool> now{ app.runtime.PresetPath(), app.runtime.Effects().size(), loading, app.runtime.Dirty() };
     if (now == launcherState.missingChecked)
         return files;
     launcherState.missingChecked = now;
     files.clear();
-    if (app.runtime.Loading())
+    if (loading)
         return files;
     for (const std::string& key : app.runtime.MissingTechniques())
     {
