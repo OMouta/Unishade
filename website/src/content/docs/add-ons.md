@@ -1,35 +1,26 @@
 ---
 title: Add-ons
-description: Depth estimation and DLSS5, and how to add, change or remove them.
+description: Depth estimation and DLSS5, and add-ons from other people.
 order: 4
 ---
 
-Setup offers two optional add-ons. To add, change or remove one, open **Unishade Setup** from the Start menu and choose **Update or change add-ons**.
+Add-ons change the game's picture before effects run. **Add-ons** at the top of the Unishade window lists them.
 
-## Depth estimation
+![The Add-ons window](./images/add-ons.png)
 
-Ambient occlusion, depth of field, fog and other effects that need depth only work with this add-on. It works out depth from the picture with an AI model on your GPU.
+Unishade has two of its own, for Windows:
 
-It costs some frame rate. Once it's running, the Unishade window shows **Depth estimation ready**.
+- **Depth** estimates how far everything in the picture is. Ambient occlusion, depth of field, fog and other effects that use depth need it. It costs some frame rate.
+- **DLSS5** runs NVIDIA's DLSS neural rendering on the picture. It needs an NVIDIA RTX graphics card.
 
-## DLSS5
+Click **Install** on one to download it, then use its switch to turn it on or off.
 
-NVIDIA DLSS5 through RenoDX's add-on, for RTX cards. Its settings are in the menu's **DLSS5** tab.
+## Settings
 
-The Unishade window shows which GPU it runs on. If that isn't your RTX card, or DLSS5 stays on "waiting", follow these steps.
+An add-on that is on gets a tile in the menu, next to the effects. Click it for its settings, which each preset keeps.
 
-### 1. Turn off Require DLSS
+![Depth and DLSS5 settings](./images/addon-settings.png)
 
-In the Unishade menu, click the **DLSS5** tab, then turn off **Require DLSS**.
+## Add-ons from other people
 
-![Require DLSS turned off](./images/dlss5-require-dlss.png)
-
-### 2. Run Unishade on your RTX card
-
-Open Windows **Settings > System > Display > Graphics**, click **Add desktop app** and add `Unishade.exe` from your install folder. Unless you picked another folder in Setup, that's `%LOCALAPPDATA%\Programs\Unishade`: paste it into the address bar at the top of the file picker and press **Enter**.
-
-![Adding a desktop app in Windows' graphics settings](./images/dlss5-exe-graphics.png)
-
-Open its options and set **GPU preference** to your NVIDIA RTX card. Check the GPU name before saving, then restart Unishade.
-
-![GPU preference set to the RTX card](./images/dlss5-gpu-preference.png)
+**Open folder** opens the Addons folder. Put an add-on's file there and Unishade asks whether to load it. An add-on runs as part of Unishade, so only load ones you trust.

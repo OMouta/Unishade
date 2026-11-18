@@ -1,61 +1,75 @@
 ---
-title: Menu and presets
-description: Open the menu over the game, switch presets, change effects and take screenshots.
+title: The menu
+description: Open the menu over the game, change effects and presets, compare and take screenshots.
 order: 3
 ---
 
-Click into the game and press **Home**. The menu opens right over the game. Press **Home** or **Escape** to go back to playing.
+Click into the game and press **Home**, or **Cmd+Shift+U** on a Mac. Press it again, or **Escape**, to go back to playing.
 
-![The menu's Presets tab over the game](./images/menu-presets.jpg)
+![The menu over a game](./images/in-game.jpg)
 
-The switch at the top turns all effects off and on.
-
-## Presets
-
-The **Presets** tab groups your presets by game. The game you're playing comes first, then **All games**, then your other games and folders. Click a group to open or close it, and click a preset to switch to it. Presets from other games work too.
-
-Each game remembers the preset you last used in it and switches back to it when you play that game again.
-
-**New preset** starts an empty one, and **Import** copies preset files in. Both go to the game you're playing. The **...** button on a preset duplicates, renames, moves or deletes it. **Move to** puts it in another game, in **All games** or in a new folder. Deleted presets go to the Recycle Bin.
-
-In the presets folder, presets for all games sit in the folder itself, and each game or folder is a folder inside it, named after the game. Unishade saves each game's icon in its folder as `logo.png`. Put a `logo.png` in any folder to show it next to that folder's name.
-
-Changes save to the preset as you make them. To try changes before keeping them, turn off **Save changes automatically** in **Settings**. The preset's name then gets a dot when it has unsaved changes, the save icon at the top saves them, and **Save as new** puts them in a new preset. Switching presets with unsaved changes asks whether to save them.
-
-If a preset uses effects that aren't installed, the Presets tab names them.
-
-**Ctrl+PageDown** and **Ctrl+PageUp** switch to the next and previous preset while you play. They skip closed groups, so other games' presets stay out of the way until you open them.
-
-People share presets on [Discord](links:discord).
+Drag the menu to move it, or to a side of the game to dock it there. Drag its corner to make everything bigger or smaller.
 
 ## Effects
 
-The **Effects** tab lists every installed effect with a switch. Click an effect to change its settings, and search at the top to find one. Right-click a setting to reset it, or click **Reset all** to reset the effect.
+Each tile is one effect of the preset.
 
-Effects that are on run in the order **Active** lists them. Drag one onto another to move it there.
+- Click a tile for its settings.
+- Click the dot in its corner to turn it off or on.
+- Drag a tile to change the order effects run in.
 
-![An effect's settings in the Effects tab](./images/menu-effects.jpg)
+The round button with the ring turns every effect off and on.
 
-**ReShade** at the bottom of the menu opens ReShade's own menu.
+![The settings of Curves](./images/effect-settings.png)
+
+Drag a bar to change a value, or double-click it to type one. Right-click resets it. **Remove** takes the effect out of the preset.
+
+**Add effect** lists every installed effect. Search, or pick a pack, and click **+**.
+
+![Searching for bloom in Add an effect](./images/add-effect.png)
+
+## Presets
+
+Click the preset's name to see every preset, or use the arrows beside it to step through them. Each game starts with the preset you left it on.
+
+![The presets list](./images/presets.png)
+
+**New preset** starts with every effect off, and **New preset from this one** starts from a copy. The **...** on a preset duplicates, renames, moves or deletes it. Switch to another preset first to rename, move or delete the one in use.
+
+Changes save as you make them. To try changes first, turn off **Save changes automatically** in the menu's settings, then save or discard them yourself.
+
+People share presets on [Discord](links:discord). **Open folder** shows where to put them.
 
 ## Compare
 
-Hold **Compare** at the bottom of the menu, or hold **F7** in the game, to see the game without effects.
+Hold **Hold to compare**, or hold **F7** in the game, to see the game without effects.
 
 ## Screenshots
 
-**Ctrl+F9** saves a screenshot, and **Ctrl+F10** saves a before and after pair from the same frame. The camera button at the bottom of the menu does both and opens the screenshots folder. Screenshots never show the menu. New installs save them in `Pictures\Unishade`, and installs from before the rename keep `Pictures\RobloxShadeHost`.
+The camera button saves a screenshot, without the menu in it. Screenshots go to `Unishade` in your pictures folder.
+
+The sliders button opens the menu's settings, where **Menu** has **Before and after, side by side**, which saves the same moment with and without effects.
+
+## Look
+
+The same **Menu** tab sets the menu's opacity, a light or dark theme and smaller tiles.
+
+![The Menu tab](./images/menu-settings.png)
 
 ## Shortcuts
 
-| Shortcut | What it does |
-| --- | --- |
-| Home | Opens and closes the menu |
-| Ctrl+F8 | Turns effects off and on |
-| F7 | Shows the game without effects while held |
-| Ctrl+F9 | Saves a screenshot |
-| Ctrl+F10 | Saves a before and after pair |
-| Ctrl+PageDown | Switches to the next preset |
-| Ctrl+PageUp | Switches to the previous preset |
+| Does | Windows and Linux | macOS |
+| --- | --- | --- |
+| Opens and closes the menu | Home | Cmd+Shift+U |
+| Turns effects on or off | Ctrl+F8 | Ctrl+Cmd+O |
+| Shows the game without effects while held | F7 | Cmd+Shift+C |
+| Saves a screenshot | Ctrl+F9 | Cmd+Shift+P |
+| Saves a before and after screenshot | Ctrl+F10 | Cmd+Shift+B |
+| Next preset | Ctrl+PageDown | Cmd+Shift+Right |
+| Previous preset | Ctrl+PageUp | Cmd+Shift+Left |
 
-Change them in **Settings**: click a shortcut, then press the keys you want. They work right away. Ctrl+F8 works everywhere while Unishade runs. The others only work while the game or the menu is in front, so other programs keep those keys.
+To change one, open **Settings > Shortcuts**, click it and press the keys you want. The **×** leaves it without keys.
+
+![Settings > Shortcuts](./images/shortcuts.png)
+
+The shortcut that turns effects on or off works everywhere while Unishade runs. The others only work while the game or the menu is in front, so other programs keep those keys.
