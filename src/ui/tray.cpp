@@ -1558,6 +1558,10 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
 
     const Grid grid = GridOf(width, f.side ? width : S(kFieldWidth));
     std::vector<Field> fields;
+    const auto debugInfo = [&] {
+        return Choices("debug", "Show debug info", { "Off", "On" }, *settings.debugInfo ? 1 : 0,
+                       [&f](int choice) { f.host.SetSwitch(Switch::DebugInfo, choice == 1); }, "Captured game FPS, output FPS and frame loss.", grid);
+    };
     switch (state->tab)
     {
     case Tab::Performance:
@@ -1620,6 +1624,8 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
             fields.push_back(Note("Effects run on a smaller picture that FSR upscales to the game's size. Lower is faster and softer, and screenshots get smaller.",
                                   kMist, width));
         }
+        if (settings.debugInfo)
+            fields.push_back(debugInfo());
         break;
     }
     case Tab::Menu:
@@ -1638,6 +1644,7 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
             opens.push_back(Open::Messages);
             fields.push_back(Actions("launcher", "Unishade", places, [opens](int pressed) { requested = opens[static_cast<size_t>(pressed)]; }, width));
         }
+        fields.push_back(Heading("Menu"));
         if (settings.menuSize && !page)
             fields.push_back({ S(kField), 1, [&f](ImVec2 at, ImVec2 size) {
                                   // The tray takes the new size when the bar is let go, so it does not grow under the mouse.
@@ -1689,26 +1696,26 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
                                      f.host.SetSwitch(Switch::SmallTiles, choice == 1);
                                  },
                                  {}, grid));
+        // Without a Performance tab, the debug info is here.
+        if (settings.debugInfo && !(f.game && f.game->performance))
+            fields.push_back(debugInfo());
+        fields.push_back(Heading("Presets"));
         fields.push_back(Choices("autosave", "Save changes automatically", { "Off", "On" }, settings.autoSavePresets ? 1 : 0,
                                  [&f](int choice) { f.host.SetSwitch(Switch::AutoSavePresets, choice == 1); },
                                  "Turn off to try changes first, then save or discard them.", grid));
-        if (settings.debugInfo)
-            fields.push_back(Choices("debug", "Show debug info", { "Off", "On" }, *settings.debugInfo ? 1 : 0,
-                                     [&f](int choice) { f.host.SetSwitch(Switch::DebugInfo, choice == 1); }, "Captured game FPS, output FPS and frame loss.", grid));
-        if (!page)
-            fields.push_back(Actions("screenshots", "Screenshots", { { "Before and after", PillStyle::Text }, { "Open folder", PillStyle::Text } },
-                                     [&f](int pressed) {
-                                         if (pressed == 0)
-                                         {
-                                             f.host.TakeScreenshot(true);
-                                             state->shot = ImGui::GetTime();
-                                         }
-                                         else
-                                             f.host.OpenScreenshots();
-                                     },
-                                     width));
         if (settings.reloadEffects)
             fields.push_back(Actions("reload", "Reload effects", { { "Reload", PillStyle::Text } }, [&f](int) { f.host.ReloadEffects(); }, width));
+        if (!page)
+        {
+            fields.push_back(Heading("Screenshots"));
+            fields.push_back(Actions("before and after", "Before and after, side by side", { { "Take", PillStyle::Text } },
+                                     [&f](int) {
+                                         f.host.TakeScreenshot(true);
+                                         state->shot = ImGui::GetTime();
+                                     },
+                                     width));
+            fields.push_back(Actions("screenshots", "Saved screenshots", { { "Open folder", PillStyle::Text } }, [&f](int) { f.host.OpenScreenshots(); }, width));
+        }
         break;
     }
     case Tab::Shortcuts:
