@@ -71,6 +71,7 @@ enum class Sheet
 enum class Question
 {
     Unsaved,
+    Discard,
     Delete,
     ResetEffect,
     ResetShortcuts,
@@ -107,6 +108,8 @@ struct Ghost
     Memo memo;
     double since = 0;
 };
+
+struct Frame;
 
 struct State
 {
@@ -162,6 +165,9 @@ struct State
     bool recordingHere = false;
     bool savedShown = false;
     bool comparing = false;
+    // What was just done, and how to take it back, offered at the tray's edge for a few seconds.
+    std::string undoText;
+    std::function<void(Frame&)> undo;
 
     // Where the tray is over the game, as Settings::menuX and menuY, and the menu size while it changes.
     float x = -1;
@@ -346,6 +352,14 @@ void Back()
         OpenSheet(state->back);
 }
 
+// Offers to take back what was just done.
+void Offer(std::string text, std::function<void(Frame&)> undo)
+{
+    state->undoText = std::move(text);
+    state->undo = std::move(undo);
+    Snap(Key("undo"), 1);
+}
+
 // Switches to a preset, asking first about the changes to the one in use. direction is the side its name comes from.
 void Use(Frame& f, const std::string& preset, int direction)
 {
@@ -385,6 +399,7 @@ void Follow(Frame& f)
         state->dragging = false;
         state->held.clear();
         state->addedHere.clear();
+        state->undo = nullptr;
         if (state->sheet == Sheet::Tune)
             CloseSheet();
     }
@@ -892,6 +907,10 @@ float TuneSheet(Frame& f, ImVec2 min, float width, float space)
     else if (action == 1)
     {
         f.host.RemoveEffect(index);
+        Offer("Removed " + effect.name, [key = effect.key](Frame& frame) {
+            if (const std::optional<size_t> at = frame.effects ? IndexOf(*frame.effects, key) : std::nullopt)
+                frame.host.SetEffect(*at, true);
+        });
         CloseSheet();
     }
     else if (action == 2)
@@ -938,7 +957,14 @@ float TuneSheet(Frame& f, ImVec2 min, float width, float space)
                 fields.push_back(Note(setting.text, kMist, width));
             fields.push_back(SettingField(
                 "", setting, i, color, grid, [&f, index, i](const EffectSetting& value) { f.host.SetSetting(index, i, value); },
-                [&f, index, i] { f.host.ResetSettings(index, i); }, &active, &hovered));
+                [&f, index, i, &setting, key = effect.key] {
+                    Offer("Reset " + setting.label, [key, i, previous = setting](Frame& frame) {
+                        if (const std::optional<size_t> at = frame.effects ? IndexOf(*frame.effects, key) : std::nullopt)
+                            frame.host.SetSetting(*at, i, previous);
+                    });
+                    f.host.ResetSettings(index, i);
+                },
+                &active, &hovered));
         }
     }
     // The preprocessor definitions the effect checks. A change compiles the effects again, so it applies on Enter, as
@@ -1346,6 +1372,17 @@ float AskSheet(Frame& f, ImVec2 min, float width)
             state->swapDirection = state->pendingDirection;
             f.host.UsePreset(f.gameIndex, state->pendingPreset);
         }
+        if (clicked >= 0)
+            Back();
+        break;
+    }
+    case Question::Discard:
+    {
+        const int clicked = Header(f, min, width, "Discard your changes to " + presetName(f.game ? f.game->preset : std::string()) + "?",
+                                   "The preset goes back to how it was last saved.", { { "Cancel", PillStyle::Text }, { "Discard", PillStyle::Black } },
+                                   height, true);
+        if (clicked == 1)
+            f.host.DiscardChanges();
         if (clicked >= 0)
             Back();
         break;
@@ -2383,8 +2420,9 @@ bool Controls(Frame& f, ImVec2 origin, const std::vector<Placed>& placed)
             break;
         }
         case Control::Discard:
-            if (PillButton("Discard", at, S(kRoundSize), PillStyle::Text))
-                f.host.DiscardChanges();
+            // Nothing brings the changes back, so it asks first.
+            if (PillButton("Discard", at, S(kRoundSize), PillStyle::Text) && state->sheet != Sheet::Ask)
+                Ask(Question::Discard, state->sheet);
             break;
         case Control::Compare:
             // Effects stay off while it is held.
@@ -2415,6 +2453,53 @@ bool Controls(Frame& f, ImVec2 origin, const std::vector<Placed>& placed)
         }
     }
     return comparing;
+}
+
+// What can be taken back, in a black pill across the tray's far edge, for a few seconds.
+void UndoPill(Frame& f, ImVec2 min, ImVec2 max)
+{
+    if (!state->undo)
+        return;
+    const float shown = Animate(Key("undo"), 0, 0.3f, Curve::Linear, 6);
+    if (shown <= 0.01f)
+    {
+        state->undo = nullptr;
+        return;
+    }
+    const float height = S(kButton), pad = S(17.6f), gap = S(6.4f), inset = S(4);
+    const float button = Measure("Undo", kTextBody, true).x + S(14.4f) * 2;
+    const float text = std::min(Measure(state->undoText, kTextBody, true).x, std::max(max.x - min.x - S(64) - pad - gap - button - inset, S(40)));
+    const ImVec2 size(pad + text + gap + button + inset, height);
+    const ImVec2 at(std::round((min.x + max.x - size.x) / 2), std::round((f.down ? max.y : min.y) - height / 2));
+    ImGui::SetNextWindowPos(at);
+    ImGui::SetNextWindowSize(size);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(1, 1));
+    ImGui::Begin(page ? "##undo page" : "##undo", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar(3);
+    // The tray comes to the front when it is clicked, and this stays over it.
+    ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(at, at + size, kInk, height / 2);
+    Line(draw, at.x + pad, at.x + pad + text + 1, at.y + height / 2, state->undoText, IM_COL32_WHITE, kTextBody, true);
+    const ImVec2 buttonMin(at.x + size.x - inset - button, at.y + inset), buttonSize(button, height - inset * 2);
+    ImGui::SetCursorScreenPos(buttonMin);
+    const bool clicked = ImGui::InvisibleButton("Undo", buttonSize);
+    const bool hovered = ImGui::IsItemHovered();
+    HandOnHover();
+    draw->AddRectFilled(buttonMin, buttonMin + buttonSize, hovered ? Color(0x4A4A58) : Color(0x2A2A33), buttonSize.y / 2);
+    Line(draw, buttonMin.x, buttonMin.x + button, at.y + height / 2, "Undo", IM_COL32_WHITE, kTextBody, true, true);
+    FadeWindow(ImGui::GetCurrentWindow(), shown);
+    ImGui::End();
+    if (clicked)
+    {
+        const std::function<void(Frame&)> undo = std::move(state->undo);
+        state->undo = nullptr;
+        undo(f);
+    }
 }
 
 // The tray
@@ -2676,6 +2761,8 @@ float Tray(Frame& f, std::optional<ImVec2> place, float pageWidth, bool& compari
         ImGui::EndChild();
     else
         ImGui::End();
+    if (!f.model.closing)
+        UndoPill(f, min, max);
     return f.trayHeight;
 }
 

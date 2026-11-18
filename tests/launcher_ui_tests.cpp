@@ -341,6 +341,10 @@ bool EffectsTests(Host& host)
     Settle(host, model);
     ok &= Check(Click(host, model, "Remove"), "the settings offer to remove the effect");
     ok &= Check(host.calls == std::vector<std::string>{ "effect 0 removed" }, "removing is not turning off");
+    host.calls.clear();
+    Settle(host, model);
+    ok &= Check(Click(host, model, "Undo"), "removing offers to take it back");
+    ok &= Check(host.calls == std::vector<std::string>{ "effect 0 on" }, "Undo turns the effect back on");
     model.effects->list[0].kept = false;
     Settle(host, model);
     ok &= Check(Count("effect") == 1, "an effect that was removed has no tile");
