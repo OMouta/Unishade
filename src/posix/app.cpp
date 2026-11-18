@@ -9,6 +9,7 @@
 #endif
 
 #include <GLFW/glfw3.h>
+#include "image.h"
 #include <stb_image_write.h>
 
 #include <algorithm>
@@ -1078,10 +1079,11 @@ void App::FollowGame()
     if (game.empty())
         return;
 
-    // Games saved by filename, like Roblox, can only be found while they run, so their icon is kept.
+    // Games saved by filename, like Roblox, can only be found while they run, so their icon is kept. A small one, as
+    // Steam keeps for the games it installed, gives way to the program's own.
     const fs::path logo = NewPresetFolder() / "logo.png";
     std::error_code error;
-    if (!fs::exists(logo, error))
+    if (!fs::exists(logo, error) || image::Read(logo).width < 64)
     {
         fs::create_directories(logo.parent_path(), error);
         platform::SaveWindowIcon(*active, logo.string());

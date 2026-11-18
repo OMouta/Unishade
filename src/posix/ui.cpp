@@ -23,6 +23,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 #include <stb_image.h>
+#include <stb_image_write.h>
 #ifdef _WIN32
 #define strcasecmp _stricmp
 #else
@@ -998,8 +999,23 @@ public:
     void AddFoundGames(const std::vector<size_t>& games) override
     {
         for (const size_t game : games)
-            if (game < app.foundGames.size())
-                app.autoGames.push_back(app.foundGames[game].game);
+        {
+            if (game >= app.foundGames.size())
+                continue;
+            const FoundGame& found = app.foundGames[game];
+            app.autoGames.push_back(found.game);
+            // Its icon goes where a game's is kept, so it shows before the game was ever played.
+            const std::string folder = FolderName(found.game.name);
+            int width = 0, height = 0;
+            const std::vector<uint8_t> icon = found.picture.empty() || folder.empty() ? std::vector<uint8_t>() : ReadPicture(found.picture, width, height);
+            const fs::path logo = GameFolder(folder) / "logo.png";
+            std::error_code error;
+            if (!icon.empty() && !fs::exists(logo, error))
+            {
+                fs::create_directories(logo.parent_path(), error);
+                stbi_write_png(logo.string().c_str(), width, height, 4, icon.data(), width * 4);
+            }
+        }
         app.foundGames.clear();
         // Saved even when empty, so the list is not offered again.
         app.SaveGames();
