@@ -8,119 +8,88 @@ import { requirements, steps } from '../site';
 
 const released = release.date?.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
 // ", 2.1 MB", or nothing for a link to the Releases page.
-const size = (file: Download) => (file.size ? `, ${megabytes(file.size)}` : '');
+const size = (file: Download | undefined) => (file?.size ? `, ${megabytes(file.size)}` : '');
 
 // The site describes the version in CMakeLists.txt, which may not be out yet.
 const note = release.upcoming
   ? `Unishade ${release.upcoming} isn't out yet, so this is ${release.version}${release.oldName ? ', from when Unishade was still called RobloxShadeHost' : ''}. Some of what the docs describe comes with ${release.upcoming}.`
   : release.oldName && `This release is from before the new name, so its files are still called RobloxShadeHost.`;
 
-const others = [
-  { name: 'macOS', file: release.macos, needs: requirements.macos },
-  { name: 'Linux', file: release.linux, needs: requirements.linux },
+// Each system in one of the ring's colors, like the home page's bands.
+const platforms = [
+  {
+    id: 'windows',
+    name: 'Windows',
+    file: release.setup.name ? release.setup : undefined,
+    needs: requirements.windows,
+    guide: '/docs/#windows',
+  },
+  { id: 'macos', name: 'macOS', file: release.macos, needs: requirements.macos, guide: '/docs/#macos' },
+  { id: 'linux', name: 'Linux', file: release.linux, needs: requirements.linux, guide: '/docs/#linux' },
 ];
 ---
 
-<Base title="Download | Unishade" description="Download Unishade Setup for Windows 10 and 11, or Unishade for macOS and Linux.">
+<Base title="Download | Unishade" description="Download Unishade for Windows, macOS and Linux.">
   <main class="download-page">
-    <div class="top">
-      <header>
-        <h1>Download Unishade</h1>
-        <p class="lede">Unishade, ReShade and every official effect in one installer. Depth estimation and DLSS5 are optional.</p>
-      </header>
-
-      <!-- Framed like Unishade's own windows. -->
-      <section class="windows">
-        <div class="windows-head">
-          <h2>Windows</h2>
-          <a class="button button-primary" href={release.setup.url}>
-            {release.setup.name ? `Download Setup ${release.version}` : 'Download from GitHub Releases'}
-          </a>
-        </div>
-        <dl>
-          {
-            release.version && (
-              <div>
-                <dt>Version</dt>
-                <dd>
-                  {release.version}, released {released}
-                </dd>
-              </div>
-            )
-          }
-          {
-            release.setup.name && (
-              <div>
-                <dt>File</dt>
-                <dd>{release.setup.name}{size(release.setup)}. ReShade and the effects download during install.</dd>
-              </div>
-            )
-          }
-          <div>
-            <dt>Needs</dt>
-            <dd>{requirements.windows}</dd>
-          </div>
-        </dl>
-        {note && <p>{note}</p>}
-        <p class="dim">
-          Setup isn't code-signed yet, so the first time Windows may say <strong>Windows protected your PC</strong>.{' '}
-          Click <strong>More info</strong>, then <strong>Run anyway</strong>.
-        </p>
-        <p class="release-links">
-          {
-            release.version && (
-              <>
-                <a href={release.notes}>What's new in {release.version}</a> ·{' '}
-              </>
-            )
-          }
-          <a href={links.releases}>{release.version ? 'Older versions' : 'All versions'}</a>
-        </p>
-        <p class="signing dim">
-          <Image src={signpath} alt="" width={28} layout="fixed" class="signing-logo" />
-          <span>
-            Free code signing provided by <a href={links.signpath}>SignPath.io</a>, certificate by{' '}
-            <a href={links.signpathFoundation}>SignPath Foundation</a>. <a href="/code-signing/">Code signing policy</a>
-          </span>
-        </p>
-      </section>
-    </div>
-
-    <section class="others">
-      <h2 id="macos-and-linux">macOS and Linux (experimental)</h2>
-      <p>
-        ReShade only runs on Windows, so these run ReShade's effects themselves, with the same presets. They're new, so
-        expect bugs.
-      </p>
-      <div class="platforms">
+    <header>
+      <h1>Download Unishade</h1>
+      <p class="lede">
         {
-          others.map(({ name, file, needs }) => (
-            <div class="platform">
-              <h3>{name}</h3>
-              <p>
-                {file ? (
-                  <>
-                    <a href={file.url}>Download for {name}</a> ({file.name}{size(file)})
-                  </>
-                ) : release.version ? (
-                  <>
-                    Not in {release.version} yet. Look on <a href={links.releases}>GitHub Releases</a>, or{' '}
-                    <a href={links.build}>build it yourself</a>.
-                  </>
-                ) : (
-                  <a href={links.releases}>Download from GitHub Releases</a>
-                )}
-              </p>
-              <p class="dim">Needs {needs}.</p>
-            </div>
-          ))
+          release.version ? (
+            <>
+              Version {release.version}, released {released}. <a href={release.notes}>What's new</a>
+            </>
+          ) : (
+            <>Free and open source, for Windows, macOS and Linux.</>
+          )
         }
-      </div>
-      <a href="/docs/macos-linux/">How to set them up</a>
-    </section>
+      </p>
+      {note && <p class="note">{note}</p>}
+    </header>
+
+    <ul class="platforms">
+      {
+        platforms.map(({ id, name, file, needs, guide }) => (
+          <li class="platform" id={id}>
+            <h2>{name}</h2>
+            <p>Needs {needs}.</p>
+            {file ? (
+              <a class="button" href={file.url}>
+                Download for {name}
+              </a>
+            ) : release.version ? (
+              <a class="button" href={links.releases}>
+                Look on GitHub Releases
+              </a>
+            ) : (
+              <a class="button" href={links.releases}>
+                Download from GitHub Releases
+              </a>
+            )}
+            <p class="file">
+              {file ? (
+                <>
+                  {file.name}
+                  {size(file)}
+                </>
+              ) : (
+                release.version && (
+                  <>
+                    Not in {release.version} yet. You can also <a href={links.build}>build it yourself</a>.
+                  </>
+                )
+              )}
+            </p>
+            <a class="guide" href={guide}>
+              How to install it
+            </a>
+          </li>
+        ))
+      }
+    </ul>
 
     <section>
-      <h2>After downloading</h2>
+      <h2>After installing</h2>
       <ol>
         {steps.map((step) => <li>{step}</li>)}
       </ol>
@@ -130,28 +99,36 @@ const others = [
     <section>
       <h2>Updating</h2>
       <p>
-        Run the new Setup. Your presets, settings and games stay. Coming from RobloxShadeHost? Setup upgrades it the same
-        way.
+        Install the new version over the old one. Your presets, settings and games stay. Coming from RobloxShadeHost? Setup upgrades it
+        the same way.
       </p>
+      <p><a href={links.releases}>{release.version ? 'Older versions' : 'All versions'}</a></p>
     </section>
 
+    {
+      release.host && (
+        <section>
+          <h2>Windows without Setup</h2>
+          <p>
+            <a href={release.host.url}>{release.host.name}</a> on its own ({megabytes(release.host.size ?? 0)}).{' '}
+            <a href="/docs/#windows-without-setup">How to install it</a>
+          </p>
+        </section>
+      )
+    }
+
     <section>
-      <h2>Without Setup</h2>
+      <h2>Code signing</h2>
       <p>
-        {
-          release.host ? (
-            <>
-              <a href={release.host.url}>{release.host.name}</a> on its own ({megabytes(release.host.size ?? 0)}), if you'd rather install
-              ReShade yourself.
-            </>
-          ) : (
-            <>
-              The program on its own is on <a href={links.releases}>GitHub Releases</a>, if you'd rather install ReShade
-              yourself.
-            </>
-          )
-        }{' '}
-        The add-ons need Setup. <a href="/docs/#installing-without-setup">How to install it</a>
+        Setup isn't code-signed yet, so the first time Windows may say <strong>Windows protected your PC</strong>. Click{' '}
+        <strong>More info</strong>, then <strong>Run anyway</strong>.
+      </p>
+      <p class="signing dim">
+        <Image src={signpath} alt="" width={28} layout="fixed" class="signing-logo" />
+        <span>
+          Free code signing provided by <a href={links.signpath}>SignPath.io</a>, certificate by{' '}
+          <a href={links.signpathFoundation}>SignPath Foundation</a>. <a href="/code-signing/">Code signing policy</a>
+        </span>
       </p>
     </section>
   </main>
@@ -161,13 +138,8 @@ const others = [
   .download-page {
     display: grid;
     gap: clamp(56px, 8vw, 96px);
-    width: min(820px, 100% - 2 * var(--gutter));
+    width: var(--page);
     margin: clamp(40px, 7vw, 88px) auto 0;
-  }
-
-  .top {
-    display: grid;
-    gap: 36px;
   }
 
   header {
@@ -176,79 +148,94 @@ const others = [
   }
 
   .lede {
-    max-width: 50ch;
     color: var(--haze);
     font-size: 1.25rem;
   }
 
+  .note {
+    max-width: 60ch;
+    padding: 16px 20px;
+    border-radius: var(--radius);
+    background: var(--night-raised);
+  }
+
+  /* Three tiles in the ring's colors, as the effects are in the menu. */
+  .platforms {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .platform {
+    display: grid;
+    align-content: start;
+    justify-items: start;
+    gap: 14px;
+    padding: clamp(22px, 2.6vw, 34px);
+    border-radius: var(--block);
+    color: #000;
+    font-weight: 600;
+    scroll-margin-top: calc(var(--nav-height) + 16px);
+  }
+
+  .platform:nth-child(1) {
+    background: var(--cyan);
+  }
+
+  .platform:nth-child(2) {
+    background: var(--yellow);
+  }
+
+  .platform:nth-child(3) {
+    background: var(--green);
+  }
+
+  .platform h2 {
+    font-size: clamp(2.2rem, 4vw, 3.4rem);
+  }
+
+  .platform > p:first-of-type {
+    min-height: 4.6em;
+  }
+
+  .platform .button {
+    color: #fff;
+    background: #000;
+  }
+
+  .platform .button:hover {
+    background: #2a2a33;
+  }
+
+  .platform a:not(.button) {
+    color: inherit;
+  }
+
+  .file {
+    min-height: 1.5em;
+    font-size: 0.92rem;
+    font-weight: 400;
+    overflow-wrap: anywhere;
+  }
+
   section {
     display: grid;
-    gap: 20px;
+    gap: 18px;
     justify-items: start;
+    max-width: 68ch;
   }
 
-  h2 {
+  section h2 {
     font-size: clamp(1.6rem, 3vw, 2.2rem);
-  }
-
-  .windows {
-    position: relative;
-    padding: clamp(24px, 4vw, 40px);
-    overflow: hidden;
-    border: 1px solid var(--line);
-    border-radius: 18px;
-    background: var(--night-raised);
-    box-shadow: 0 40px 100px -50px rgb(84 110 255 / 0.5);
-  }
-
-  .windows::before {
-    content: '';
-    position: absolute;
-    inset: 0 0 auto;
-    height: 2px;
-    background: linear-gradient(90deg, var(--spectrum));
-  }
-
-  .windows-head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px 24px;
-    width: 100%;
-  }
-
-  dl {
-    display: grid;
-    gap: 10px;
-    width: 100%;
-    margin: 4px 0 0;
-    padding-top: 20px;
-    border-top: 1px solid var(--line);
-  }
-
-  dl div {
-    display: grid;
-    grid-template-columns: 90px minmax(0, 1fr);
-    gap: 16px;
-  }
-
-  dt {
-    color: var(--haze);
-  }
-
-  dd {
-    margin: 0;
-    overflow-wrap: anywhere;
   }
 
   .signing {
     display: flex;
     align-items: center;
     gap: 12px;
-    width: 100%;
-    padding-top: 20px;
-    border-top: 1px solid var(--line);
     font-size: 0.95rem;
   }
 
@@ -256,26 +243,6 @@ const others = [
     flex: none;
     width: 28px;
     height: auto;
-  }
-
-  .platforms {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 16px;
-    width: 100%;
-  }
-
-  .platform {
-    display: grid;
-    align-content: start;
-    gap: 10px;
-    padding: 22px 24px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-  }
-
-  .platform .dim {
-    font-size: 0.95rem;
   }
 
   ol {
@@ -286,13 +253,17 @@ const others = [
   }
 
   li::marker {
-    color: var(--accent);
-    font-weight: 700;
+    color: var(--haze);
+    font-weight: 600;
   }
 
-  @media (max-width: 640px) {
+  @media (max-width: 860px) {
     .platforms {
       grid-template-columns: minmax(0, 1fr);
+    }
+
+    .platform > p:first-of-type {
+      min-height: 0;
     }
   }
 </style>

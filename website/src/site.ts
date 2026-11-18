@@ -10,5 +10,5 @@ export const requirements = {
   linuxShort: 'x64, X11 or XWayland',
 };
 
-// What to do after downloading Setup.
-export const steps = ['Run Setup and pick your add-ons.', 'Open your game and add it in Unishade.', 'Press Home in the game.'];
+// What to do after installing.
+export const steps = ['Start Unishade and pick your games.', 'Open a game.', 'Press Home in the game, or Cmd+Shift+U on a Mac.'];
