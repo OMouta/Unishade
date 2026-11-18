@@ -347,6 +347,8 @@ void DrawToast(App& app)
     const double left = app.toastUntil - glfwGetTime();
     if (app.toast.empty() || left <= 0)
         return;
+    // The first message can come before the launcher has drawn, which is what sets the theme otherwise.
+    spectrum::SetDark(app.settings.darkMenu);
     // When this message came up, which the host does not keep.
     static double since = 0, until = 0;
     static std::string shownText;
@@ -356,7 +358,7 @@ void DrawToast(App& app)
         until = app.toastUntil;
         shownText = app.toast;
     }
-    // A black pill that springs up over half a second and sinks away over the last 0.3, as the design's toast. It
+    // A pill of the theme's ink that springs up over half a second and sinks away over the last 0.3, as the design's toast. It
     // stands at the top while the menu is open, whose tray opens at the bottom.
     const float in = Ease(Curve::Spring, std::clamp(static_cast<float>((glfwGetTime() - since) / 0.5), 0.0f, 1.0f));
     const float out = 1 - std::clamp(static_cast<float>(left / 0.3), 0.0f, 1.0f);
@@ -378,11 +380,11 @@ void DrawToast(App& app)
     {
         x -= S(8);
         const float keyHeight = S(28.8f);
-        draw->AddRectFilled(ImVec2(x, middle - keyHeight / 2), ImVec2(x + keyWidth, middle + keyHeight / 2), IM_COL32(255, 255, 255, 46), S(9.6f));
-        Line(draw, x, x + keyWidth, middle, app.toastKey, IM_COL32_WHITE, spectrum::kTextSmall, true, true);
+        draw->AddRectFilled(ImVec2(x, middle - keyHeight / 2), ImVec2(x + keyWidth, middle + keyHeight / 2), spectrum::Alpha(spectrum::kOnInk, 0.18f), S(9.6f));
+        Line(draw, x, x + keyWidth, middle, app.toastKey, spectrum::kOnInk, spectrum::kTextSmall, true, true);
         x += keyWidth + gap;
     }
-    Line(draw, x, x + textWidth + 1, middle, app.toast, IM_COL32_WHITE, spectrum::kTextBody, true);
+    Line(draw, x, x + textWidth + 1, middle, app.toast, spectrum::kOnInk, spectrum::kTextBody, true);
     const float away = S(24) * (1 - in) + S(9.6f) * out;
     Transform(draw, start, min + size * 0.5f, 0.8f + 0.2f * in, 0, ImVec2(0, top ? -away : away), std::min(in, 1.0f) * (1 - out));
 }
