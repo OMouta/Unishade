@@ -20,7 +20,7 @@ Unishade is an open-source project for universal post-processing without injecti
 2. Open your game, click **Add game** in Unishade and pick its window.
 3. Press **Home** in the game and pick a preset.
 
-Games need to run windowed or borderless. Unishade also runs on [macOS and Linux](https://unishade.me/docs/macos-linux/) (experimental), where ReShade itself doesn't.
+Games need to run windowed or borderless. Unishade runs on Windows, macOS and Linux.
 
 If regular ReShade already works in your game, use that.
 

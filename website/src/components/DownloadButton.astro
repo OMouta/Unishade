@@ -19,21 +19,21 @@ const windows = {
   label: release.setup.name ? 'Download for Windows' : 'Download from GitHub Releases',
   href: release.setup.url,
   details: details(release.setup, requirements.windowsShort),
-  other: { label: 'macOS and Linux', href: '/download/#macos-and-linux' },
+  other: { label: 'macOS and Linux', href: '/download/' },
 };
 
 // When the newest release has no file for them, macOS and Linux visitors go to the download page, which says why.
 const platforms = {
   macos: {
     label: release.macos ? 'Download for macOS' : 'Unishade for macOS',
-    href: release.macos?.url ?? '/download/#macos-and-linux',
-    details: `Experimental · ${details(release.macos, requirements.macosShort)}`,
+    href: release.macos?.url ?? '/download/#macos',
+    details: details(release.macos, requirements.macosShort),
     other: { label: 'Other platforms', href: '/download/' },
   },
   linux: {
     label: release.linux ? 'Download for Linux' : 'Unishade for Linux',
-    href: release.linux?.url ?? '/download/#macos-and-linux',
-    details: `Experimental · ${details(release.linux, requirements.linuxShort)}`,
+    href: release.linux?.url ?? '/download/#linux',
+    details: details(release.linux, requirements.linuxShort),
     other: { label: 'Other platforms', href: '/download/' },
   },
 };
