@@ -2015,7 +2015,7 @@ void ModalHeader(const Model& model, Host& host, ImVec2 min, float width, float&
                 CloseModal();
         }
         else
-            switch (Header(min, width, "Messages", "", { { "Dismiss", PillStyle::Text }, { "Done", PillStyle::Black } }, height))
+            switch (Header(min, width, "Messages", "", { { "Clear all", PillStyle::Text }, { "Done", PillStyle::Black } }, height))
             {
             case 0: host.DismissNotices(); break;
             case 1: CloseModal(); break;

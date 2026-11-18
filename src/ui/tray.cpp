@@ -990,6 +990,8 @@ float TuneSheet(Frame& f, ImVec2 min, float width, float space)
         const ImGuiID key = ImGui::GetID("##definitions");
         const bool open = storage->GetBool(key, false);
         fields.push_back(Category("Preprocessor definitions", storage, key, open));
+        if (open)
+            fields.push_back(Note("Enter applies a value, and the effects compile again. Right-click one to go back to the effect's own.", kMist, width));
         for (size_t i = 0; open && i < settings->definitions.size(); ++i)
         {
             const EffectDefinition* definition = &settings->definitions[i];
