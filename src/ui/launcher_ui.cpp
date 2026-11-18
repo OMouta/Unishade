@@ -474,16 +474,6 @@ struct Action
     bool enabled = true;
 };
 
-// A tip on a row's label, once the mouse rests on it.
-void LabelTip(ImVec2 min, float right, float height, const std::string& tip)
-{
-    if (tip.empty())
-        return;
-    ImGui::SetCursorScreenPos(min);
-    ImGui::InvisibleButton("##label", ImVec2(std::max(right - min.x, 1.0f), height));
-    Tip(tip);
-}
-
 void Heading(Flow& flow, const std::string& text, float height = 30)
 {
     const ImRect at = flow.Next(S(height), 0);
@@ -496,9 +486,28 @@ void Note(Flow& flow, const std::string& text, ImU32 color = kMist)
     Paragraph(ImGui::GetWindowDrawList(), at.Min + ImVec2(S(4.8f), S(2)), at.Max.x - S(4.8f), text, color, kTextBody);
 }
 
+// A grey row as wide as the flow: a label with what it does under it, and room on its right for controls that wide.
+// Draws the text and returns the row, which grows with it.
+ImRect Described(Flow& flow, const std::string& label, const std::string& description, float controls)
+{
+    const float pad = S(17.6f), vertical = S(11.2f);
+    const float textWidth = std::max(flow.width - pad - S(12.8f) - controls - S(11.2f), S(120));
+    const float title = Measure(label, kTextBody, true, textWidth).y;
+    const float detail = description.empty() ? 0 : S(2) + Measure(description, kTextSmall, false, textWidth).y;
+    const ImRect at = flow.Next(std::max(S(kField), title + detail + vertical * 2), 0);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(at.Min, at.Max, kWell, S(kRowRounding));
+    const float left = at.Min.x + pad;
+    float y = at.Min.y + (at.GetHeight() - title - detail) / 2;
+    y += Paragraph(draw, ImVec2(left, y), left + textWidth, label, kInk, kTextBody, true);
+    if (!description.empty())
+        Paragraph(draw, ImVec2(left, y + S(2)), left + textWidth, description, kMist, kTextSmall);
+    return at;
+}
+
 // A grey row with a label on its left and choices on its right: one column where they fit beside the label, the whole
 // width otherwise. Returns the choice clicked when it is not the selected one, or -1.
-int Choices(Flow& flow, const char* id, const std::string& label, std::span<const char* const> choices, int selected, const std::string& tip = {})
+int Choices(Flow& flow, const char* id, const std::string& label, std::span<const char* const> choices, int selected)
 {
     const float width = SegmentsWidth(choices);
     const float need = S(17.6f) + Measure(label, kTextBody, true).x + S(9.6f) + width + S(5.6f);
@@ -508,16 +517,26 @@ int Choices(Flow& flow, const char* id, const std::string& label, std::span<cons
     draw->AddRectFilled(at.Min, at.Max, kWell, S(kRowRounding));
     const ImVec2 spot(at.Max.x - S(5.6f) - width, at.Min.y + (S(kField) - S(kSegmentHeight)) / 2);
     Line(draw, at.Min.x + S(17.6f), spot.x - S(9.6f), at.GetCenter().y, label, kInk, kTextBody, true);
-    LabelTip(at.Min, spot.x - S(9.6f), S(kField), tip);
     const int clicked = Segments("choices", spot, choices, selected);
     ImGui::PopID();
     return clicked >= 0 && clicked != selected ? clicked : -1;
 }
 
-// A grey row with a label and a switch. Returns what a click turns it to, or nothing.
-std::optional<bool> OnOff(Flow& flow, const char* id, const std::string& label, bool on, const std::string& tip = {})
+// A grey row with a label and a switch, and what the switch does under the label when given. Returns what a click
+// turns it to, or nothing.
+std::optional<bool> OnOff(Flow& flow, const char* id, const std::string& label, bool on, const std::string& description = {})
 {
     const float width = S(kSwitchWidth);
+    if (!description.empty())
+    {
+        const ImRect at = Described(flow, label, description, width);
+        ImGui::PushID(id);
+        const bool clicked = SwitchButton("switch", ImVec2(at.Max.x - S(11.2f) - width, at.Min.y + (at.GetHeight() - S(kSwitchHeight)) / 2), on);
+        ImGui::PopID();
+        if (!clicked)
+            return std::nullopt;
+        return !on;
+    }
     const float need = S(17.6f) + Measure(label, kTextBody, true).x + S(9.6f) + width + S(11.2f);
     const ImRect at = flow.Next(S(kField), need <= flow.column ? 1 : 0);
     ImGui::PushID(id);
@@ -525,7 +544,6 @@ std::optional<bool> OnOff(Flow& flow, const char* id, const std::string& label, 
     draw->AddRectFilled(at.Min, at.Max, kWell, S(kRowRounding));
     const ImVec2 spot(at.Max.x - S(11.2f) - width, at.Min.y + (S(kField) - S(kSwitchHeight)) / 2);
     Line(draw, at.Min.x + S(17.6f), spot.x - S(9.6f), at.GetCenter().y, label, kInk, kTextBody, true);
-    LabelTip(at.Min, spot.x - S(9.6f), S(kField), tip);
     const bool clicked = SwitchButton("switch", spot, on);
     ImGui::PopID();
     if (!clicked)
@@ -533,13 +551,28 @@ std::optional<bool> OnOff(Flow& flow, const char* id, const std::string& label, 
     return !on;
 }
 
-// A grey row with a label and buttons on its right, or under the label where they do not fit beside it. Returns the
-// index of the button clicked, or -1.
-int Buttons(Flow& flow, const char* id, const std::string& label, const std::vector<Action>& actions, const std::string& tip = {})
+// A grey row with a label and buttons on its right, or under the label where they do not fit beside it. With what the
+// buttons do, that goes under the label and the buttons stay beside it. Returns the index of the button clicked, or -1.
+int Buttons(Flow& flow, const char* id, const std::string& label, const std::vector<Action>& actions, const std::string& description = {})
 {
     float buttons = 0;
     for (const Action& action : actions)
         buttons += PillWidth(action.label, action.style) + S(6.4f);
+    if (!description.empty())
+    {
+        const ImRect at = Described(flow, label, description, buttons);
+        ImGui::PushID(id);
+        float x = at.Max.x - buttons;
+        int clicked = -1;
+        for (size_t i = 0; i < actions.size(); ++i)
+        {
+            if (PillButton(actions[i].label, ImVec2(x, at.Min.y + (at.GetHeight() - S(kButton)) / 2), S(kButton), actions[i].style, actions[i].enabled))
+                clicked = static_cast<int>(i);
+            x += PillWidth(actions[i].label, actions[i].style) + S(6.4f);
+        }
+        ImGui::PopID();
+        return clicked;
+    }
     const float need = S(17.6f) + (label.empty() ? 0 : Measure(label, kTextBody, true).x) + S(9.6f) + buttons;
     const bool beside = need <= flow.width;
     const ImRect at = flow.Next(beside ? S(kField) : S(kField) + S(kButton) + S(4), beside && need <= flow.column ? 1 : 0);
@@ -548,10 +581,7 @@ int Buttons(Flow& flow, const char* id, const std::string& label, const std::vec
     draw->AddRectFilled(at.Min, at.Max, kWell, S(kRowRounding));
     const float labelRight = at.Max.x - (beside ? buttons : 0) - S(9.6f);
     if (!label.empty())
-    {
         Line(draw, at.Min.x + S(17.6f), labelRight, at.Min.y + S(kField) / 2, label, kInk, kTextBody, true);
-        LabelTip(at.Min, labelRight, S(kField), tip);
-    }
     float x = beside ? at.Max.x - buttons : at.Min.x + S(5.6f);
     const float y = beside ? at.Min.y + (S(kField) - S(kButton)) / 2 : at.Min.y + S(kField) - S(4);
     int clicked = -1;
@@ -602,13 +632,13 @@ void RateBox(Flow& flow, Host& host, const Performance& performance, std::option
 }
 
 // Frame rate and effect resolution, for a game by its index or the defaults. owner is the game's id, or empty for the
-// defaults. Without notes, what they do shows as tips.
-void PerformanceFields(Flow& flow, Host& host, const Performance& performance, std::optional<size_t> game, const std::string& owner, bool notes)
+// defaults.
+void PerformanceFields(Flow& flow, Host& host, const Performance& performance, std::optional<size_t> game, const std::string& owner)
 {
     const int preset = ChoiceOf(kFrameRates, performance.frameRate);
     // A limit that is none of the choices is a custom one, typed in the box, which also shows while Custom is picked.
     const bool custom = state->rateFor == owner || preset >= kCustom;
-    const int rate = Choices(flow, "rate", "Frame rate", kRates, custom ? kCustom : preset, notes ? std::string() : kRateNote);
+    const int rate = Choices(flow, "rate", "Frame rate", kRates, custom ? kCustom : preset);
     if (rate >= 0 && rate < kCustom)
     {
         state->rateFor.reset();
@@ -621,16 +651,13 @@ void PerformanceFields(Flow& flow, Host& host, const Performance& performance, s
     }
     if ((custom && rate < 0) || rate == kCustom)
         RateBox(flow, host, performance, game);
-    if (notes)
-        Note(flow, kRateNote);
+    Note(flow, kRateNote);
     if (!performance.effectResolution)
         return;
-    const int resolution = Choices(flow, "resolution", "Effect resolution", kResolutions, ChoiceOf(kEffectResolutions, *performance.effectResolution),
-                                   notes ? std::string() : kResolutionNote);
+    const int resolution = Choices(flow, "resolution", "Effect resolution", kResolutions, ChoiceOf(kEffectResolutions, *performance.effectResolution));
     if (resolution >= 0)
         host.SetPerformance(game, PerformanceSetting::EffectResolution, kEffectResolutions[resolution]);
-    if (notes)
-        Note(flow, kResolutionNote);
+    Note(flow, kResolutionNote);
 }
 
 void ShortcutFields(Flow& flow, Host& host, const Settings& settings)
@@ -641,16 +668,13 @@ void ShortcutFields(Flow& flow, Host& host, const Settings& settings)
     for (size_t i = 0; i < settings.shortcuts.size(); ++i)
     {
         const Shortcut& shortcut = settings.shortcuts[i];
-        const ImRect at = flow.Next(S(kField), 0);
-        ImGui::PushID(static_cast<int>(i));
-        draw->AddRectFilled(at.Min, at.Max, kWell, S(kRowRounding));
         const bool recording = settings.recording == static_cast<int>(i);
         const bool clearable = !shortcut.required && !shortcut.keys.empty();
         const float clear = clearable ? S(32) + S(6.4f) : 0;
         const ImVec2 keySize(S(170), S(40));
-        const ImVec2 keyMin(at.Max.x - S(5.6f) - clear - keySize.x, at.Min.y + (S(kField) - keySize.y) / 2);
-        Line(draw, at.Min.x + S(17.6f), keyMin.x - S(9.6f), at.GetCenter().y, shortcut.title, kInk, kTextBody, true);
-        LabelTip(at.Min, keyMin.x - S(9.6f), S(kField), shortcut.description);
+        const ImRect at = Described(flow, shortcut.title, shortcut.description, keySize.x + clear);
+        ImGui::PushID(static_cast<int>(i));
+        const ImVec2 keyMin(at.Max.x - S(5.6f) - clear - keySize.x, at.Min.y + (at.GetHeight() - keySize.y) / 2);
         ImGui::SetCursorScreenPos(keyMin);
         if (ImGui::InvisibleButton("keys", keySize, ImGuiButtonFlags_EnableNav))
         {
@@ -674,7 +698,7 @@ void ShortcutFields(Flow& flow, Host& host, const Settings& settings)
             const float t = static_cast<float>(std::fmod(ImGui::GetTime(), 1.8) / 1.8);
             Transform(draw, start, keyMin + keySize * 0.5f, 1 + 0.03f * (1 - std::cos(2 * IM_PI * t)));
         }
-        if (clearable && RoundButton("clear", ImVec2(at.Max.x - S(5.6f) - S(32), at.Min.y + (S(kField) - S(32)) / 2), Icon::Close, "Leave unassigned", false, 32))
+        if (clearable && RoundButton("clear", ImVec2(at.Max.x - S(5.6f) - S(32), at.Min.y + (at.GetHeight() - S(32)) / 2), Icon::Close, "Leave unassigned", false, 32))
             host.ClearShortcut(i);
         ImGui::PopID();
     }
@@ -1002,7 +1026,7 @@ float GameFields(const Model& model, Host& host, size_t index, ImVec2 min, float
         if (const std::optional<bool> on = OnOff(rows, "enabled", "Use Unishade", game.enabled, "Unishade skips it while it's off."))
             host.SetGameEnabled(index, *on);
     if (!played && game.performance)
-        PerformanceFields(rows, host, *game.performance, index, game.id, false);
+        PerformanceFields(rows, host, *game.performance, index, game.id);
     ExecutableRow(rows, model, host, index);
     return y + rows.Height();
 }
@@ -1567,15 +1591,11 @@ void MenuSizeRow(Flow& flow, Host& host, const Settings& settings)
 {
     const float minus = PillWidth("-##menu", PillStyle::Well), plus = PillWidth("+##menu", PillStyle::Well), value = S(72);
     const float controls = minus + value + plus;
-    const float need = S(17.6f) + Measure("Menu size", kTextBody, true).x + S(9.6f) + controls + S(5.6f);
-    const ImRect at = flow.Next(S(kField), need <= flow.column ? 1 : 0);
+    const ImRect at = Described(flow, "Menu size", "On top of the size that follows the game's window. Changes right away.", controls);
     ImGui::PushID("menu size");
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    draw->AddRectFilled(at.Min, at.Max, kWell, S(kRowRounding));
     const float left = at.Max.x - S(5.6f) - controls;
-    Line(draw, at.Min.x + S(17.6f), left - S(9.6f), at.GetCenter().y, "Menu size", kInk, kTextBody, true);
-    LabelTip(at.Min, left - S(9.6f), S(kField), "On top of the size that follows the game's window. Changes right away.");
-    const float top = at.Min.y + (S(kField) - S(kButton)) / 2;
+    const float top = at.Min.y + (at.GetHeight() - S(kButton)) / 2;
     if (PillButton("-##menu", ImVec2(left, top), S(kButton), PillStyle::Well, settings.canShrinkMenu))
         host.StepMenuSize(-1);
     Line(draw, left + minus, left + minus + value, at.GetCenter().y, std::to_string(*settings.menuSize) + "%", kInk, kTextBody, true, true);
@@ -1654,7 +1674,7 @@ float SettingsBody(const Model& model, Host& host, ImVec2 min, float width)
     case Tab::Performance:
         Note(flow, "For every game without its own settings. A game's page changes its own.");
         if (settings.performance)
-            PerformanceFields(flow, host, *settings.performance, std::nullopt, {}, true);
+            PerformanceFields(flow, host, *settings.performance, std::nullopt, {});
         if (settings.debugInfo)
             if (const std::optional<bool> on = OnOff(flow, "debug", "Show debug info", *settings.debugInfo, "Captured game FPS, output FPS and frame loss."))
                 host.SetSwitch(Switch::DebugInfo, *on);
