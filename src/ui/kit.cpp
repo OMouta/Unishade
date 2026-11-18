@@ -292,7 +292,7 @@ void Chevron(ImDrawList* draw, ImVec2 center, bool open, ImU32 color)
 
 std::string Initial(const std::string& name)
 {
-    // The first letter or digit, so a name in quotes or brackets still shows one.
+    // From the first letter or digit, so a name in quotes or brackets still shows one.
     size_t start = 0;
     while (start < name.size() && static_cast<unsigned char>(name[start]) < 0x80 && !std::isalnum(static_cast<unsigned char>(name[start])))
         ++start;
@@ -301,7 +301,17 @@ std::string Initial(const std::string& name)
     size_t length = 1;
     while (start + length < name.size() && (static_cast<unsigned char>(name[start + length]) & 0xC0) == 0x80)
         ++length;
-    return length == 1 ? std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(name[start])))) : name.substr(start, length);
+    if (length > 1)
+        return name.substr(start, length);
+    // With the letter or digit after it, so Roblox and R.E.P.O. are Ro and RE rather than both R.
+    std::string initial(1, static_cast<char>(std::toupper(static_cast<unsigned char>(name[start]))));
+    for (size_t next = start + 1; next < name.size() && static_cast<unsigned char>(name[next]) < 0x80; ++next)
+        if (std::isalnum(static_cast<unsigned char>(name[next])))
+        {
+            initial += name[next];
+            break;
+        }
+    return initial;
 }
 
 void Line(ImDrawList* draw, float left, float right, float middle, const std::string& text, ImU32 color, float size, bool bold, bool centered)

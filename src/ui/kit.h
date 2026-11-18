@@ -71,7 +71,7 @@ void HandOnHover();
 void KeyCap(const std::string& key, float size = 13);
 // Points down when open and right when closed.
 void Chevron(ImDrawList* draw, ImVec2 center, bool open, ImU32 color);
-// The first letter of a name, which stands in for a missing icon.
+// The first two letters or digits of a name, which stand in for a missing icon.
 std::string Initial(const std::string& name);
 
 // One line of text between left and right, cut off at right, centered up and down around middle.
