@@ -58,6 +58,7 @@ struct Status
     std::string picture;  // the game's picture, or empty for its first letter
     bool canPick = false;   // offers Pick a window
     bool canDetect = false; // offers Detect automatically
+    bool canDownload = false; // offers Download effects and presets, since none are installed
     bool effectsShown = true;
 };
 

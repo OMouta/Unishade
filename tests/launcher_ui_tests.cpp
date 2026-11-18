@@ -113,7 +113,7 @@ public:
     void Compare(bool) override {}
     void TakeScreenshot(bool) override {}
     void OpenScreenshots() override {}
-    void DownloadEffects() override {}
+    void DownloadEffects() override { calls.push_back("download"); }
     void ReloadEffects() override {}
     void OpenAddonsFolder() override {}
 
@@ -241,6 +241,21 @@ bool PickerTests(Host& host)
     ok &= Check(!host.picking && host.closed == 1 && !host.chosen, "clicking outside dismisses the picker");
     io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
     Frame(host);
+    return ok;
+}
+
+// Without effects nothing shows in a game, so the status offers the download where a new user looks first.
+bool StatusTests(Host& host)
+{
+    bool ok = true;
+    launcher::Model model;
+    model.status.title = "Waiting for a game";
+    Frame(host, model);
+    ok &= Check(!Find("Download effects and presets"), "the status offers no download while effects are installed");
+    model.status.canDownload = true;
+    Frame(host, model);
+    ok &= Check(Click(host, model, "Download effects and presets"), "the status offers the download when no effects are installed");
+    ok &= Check(host.calls == std::vector<std::string>{ "download" }, "its button starts the download");
     return ok;
 }
 
@@ -586,6 +601,10 @@ int main()
     {
         Host host;
         ok &= PickerTests(host);
+    }
+    {
+        Host host;
+        ok &= StatusTests(host);
     }
     {
         Host host;

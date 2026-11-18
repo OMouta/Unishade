@@ -1412,6 +1412,17 @@ launcher::Status DescribeStatus(App& app)
     }
     status.canPick = !app.selected || windowClosed;
     status.canDetect = app.selected.has_value();
+    // A new installation outside Windows has no effects, and without them nothing shows in a game. Messages has the
+    // same download as a card, which few would look for there first.
+    if (!app.setup.Read().running && !app.EffectsInstalled())
+    {
+        status.canDownload = true;
+        if (!app.active && !app.selected && app.captureEnabled)
+        {
+            status.title = "Effects are not installed yet";
+            status.detail = "Unishade runs ReShade's effects. Download them and the presets made for Unishade.";
+        }
+    }
     return status;
 }
 

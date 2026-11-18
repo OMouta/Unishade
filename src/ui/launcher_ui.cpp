@@ -997,12 +997,12 @@ float GameFields(const Model& model, Host& host, size_t index, ImVec2 min, float
     return y + rows.Height();
 }
 
-// Unishade's state where it asks something of the user: effects turned off, a window used for now, a problem with the
-// game's window, or no game to run on.
+// Unishade's state where it asks something of the user: effects turned off, a window used for now, no effects
+// installed, a problem with the game's window, or no game to run on.
 bool StatusShown(const Model& model)
 {
     const Status& status = model.status;
-    return status.tone == Tone::Off || status.canDetect || !status.warning.empty() || !Played(model);
+    return status.tone == Tone::Off || status.canDetect || status.canDownload || !status.warning.empty() || !Played(model);
 }
 
 // Returns its height.
@@ -1011,6 +1011,7 @@ float StatusBlock(const Model& model, Host& host, ImVec2 min, float width, ImU32
     enum class Do
     {
         Show,
+        Download,
         Pick,
         Detect,
     };
@@ -1018,6 +1019,8 @@ float StatusBlock(const Model& model, Host& host, ImVec2 min, float width, ImU32
     std::vector<std::pair<Action, Do>> buttons;
     if (status.tone == Tone::Off)
         buttons.push_back({ { "Show effects", PillStyle::Black }, Do::Show });
+    if (status.canDownload)
+        buttons.push_back({ { "Download effects and presets", PillStyle::Black }, Do::Download });
     if (status.canPick)
         buttons.push_back({ { "Pick a window", PillStyle::Well }, Do::Pick });
     if (status.canDetect)
@@ -1058,6 +1061,7 @@ float StatusBlock(const Model& model, Host& host, ImVec2 min, float width, ImU32
             switch (what)
             {
             case Do::Show: host.SetSwitch(Switch::EffectsShown, true); break;
+            case Do::Download: host.DownloadEffects(); break;
             case Do::Pick: host.OpenPicker(false); break;
             case Do::Detect: host.DetectAutomatically(); break;
             }
