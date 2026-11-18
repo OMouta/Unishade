@@ -1610,8 +1610,9 @@ void LookForAddons(App& app)
     std::error_code error;
     for (fs::directory_iterator it(DataDirectory() / "Addons", error), end; !error && it != end; it.increment(error))
         if (it->is_regular_file(error))
+            // libc++ counts file times in a 128-bit integer, which std::to_string does not take.
             files += it->path().filename().string() + ' ' + std::to_string(it->file_size(error)) + ' ' +
-                     std::to_string(it->last_write_time(error).time_since_epoch().count()) + '\n';
+                     std::to_string(static_cast<long long>(it->last_write_time(error).time_since_epoch().count())) + '\n';
     if (files != launcherState.addonsFolder)
     {
         launcherState.addonsFolder = std::move(files);
