@@ -104,7 +104,8 @@ void FindEpicGames(Scan& scan)
         const std::string text = ReadFile(entry->path());
         const std::optional<std::string> name = game_scan::JsonString(text, "DisplayName"), folder = game_scan::JsonString(text, "InstallLocation"),
                                          app = game_scan::JsonString(text, "AppName"), main = game_scan::JsonString(text, "MainGameAppName");
-        if (!name || !folder || (app && main && *app != *main))
+        // An add-on names the game it belongs to. The game itself names itself there, or nothing.
+        if (!name || !folder || (app && main && !main->empty() && *app != *main))
             continue;
         scan.Add(fs::path(Wide(*folder)), *name, "Epic Games");
     }
