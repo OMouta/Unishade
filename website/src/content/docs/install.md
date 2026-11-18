@@ -16,11 +16,28 @@ Pick your system:
 
 You need 64-bit Windows 10 version 2004 or newer, or Windows 11.
 
-1. [Download Setup](/download/#windows) and run it.
-2. Setup isn't code-signed yet, so Windows may say **Windows protected your PC**. Click **More info**, then **Run anyway**.
-3. Keep the suggested folder, `%LOCALAPPDATA%\Programs\Unishade`, or pick your own. It can't be Roblox's folder.
-4. Click **Install**. Setup downloads every official ReShade effect and the Unishade presets.
-5. Leave **Start Unishade now** checked and click **Finish**.
+### 1. Run Setup
+
+[Download Setup](/download/#windows) and run it. Setup isn't code-signed yet, so Windows may say **Windows protected your PC**. Click **More info**, then **Run anyway**.
+
+Keep the suggested folder, or click **Browse** to pick your own. It can't be Roblox's folder. Then click **Install**.
+
+![Setup's first page, with the install folder](./images/setup-welcome.png)
+
+### 2. Wait for the effects
+
+Setup downloads every official ReShade effect and the Unishade presets.
+
+![Setup downloading effects](./images/setup-installing.png)
+
+### 3. Finish
+
+Leave both switches on and click **Finish**.
+
+- **Run Unishade on the high-performance GPU** matters on a PC with two graphics cards.
+- **Start Unishade now** opens Unishade when Setup closes.
+
+![Setup's last page](./images/setup-done.png)
 
 Next time, start **Unishade** from the Start menu.
 
