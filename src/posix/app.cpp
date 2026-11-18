@@ -64,6 +64,10 @@ bool App::Init(std::string& error)
         Log(LogLevel::Info, "Shortcut: %s=%s.", shortcut.label, FormatHotkey(settings.hotkeys.*shortcut.member).c_str());
     try
     {
+        // Without a list of games, this is the first start, and the launcher offers the ones installed.
+        std::error_code missing;
+        if (!fs::exists(DataDirectory() / "games.ini", missing))
+            foundGames = FindInstalledGames();
         autoGames = LoadAutoGames(DataDirectory() / "games.ini");
     }
     catch (const std::exception& e)

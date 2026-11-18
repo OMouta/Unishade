@@ -70,6 +70,13 @@ public:
     void OpenPicker(bool adding) override { picking = true; add = adding; }
     void ChooseWindow(size_t window) override { chosen = window; picking = false; }
     void ClosePicker() override { ++closed; picking = false; }
+    void AddFoundGames(const std::vector<size_t>& games) override
+    {
+        std::string call = "found";
+        for (const size_t game : games)
+            call += " " + std::to_string(game);
+        calls.push_back(call);
+    }
 
     void UsePreset(size_t game, std::string_view preset) override { calls.push_back("use " + std::to_string(game) + " " + std::string(preset)); }
     void SaveChanges() override { calls.push_back("save"); }
@@ -426,6 +433,38 @@ bool PanelTests(Host& host)
     ok &= Check(Count("game") == 0 && host.calls.empty(), "Escape closes them and leaves the menu open");
     return ok;
 }
+// The first time Unishade starts, the window offers the games found installed.
+bool FoundTests(Host& host)
+{
+    bool ok = true;
+    launcher::Model model;
+    Settle(host, model);
+    ok &= Check(Count("found") == 0, "nothing is offered when no games were found");
+    model.found = { { "First", "Steam" }, { "Second", "Epic Games" }, { "Third", "" } };
+    Settle(host, model);
+    ok &= Check(Count("found") == 3, "each game found is offered");
+    Click(host, model, "Add");
+    ok &= Check(host.calls.empty(), "Add waits for a game to be picked");
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(4, 4);
+    Frame(host, model);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    Frame(host, model);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    Frame(host, model);
+    ok &= Check(host.calls.empty() && Count("found") == 3, "a click beside the list does not answer it");
+    ok &= Check(Click(host, model, "found", 1) && Click(host, model, "found", 2) && Click(host, model, "found", 2) && Click(host, model, "Add"),
+                "games are picked and unpicked with a click");
+    ok &= Check(host.calls == std::vector<std::string>{ "found 1" }, "Add adds the ones picked");
+    host.calls.clear();
+    ok &= Check(Click(host, model, "Skip"), "the list can be skipped");
+    ok &= Check(host.calls == std::vector<std::string>{ "found" }, "which adds none");
+    model.found.clear();
+    Settle(host, model);
+    ok &= Check(Count("found") == 0, "the list goes once it is answered");
+    launcher::Reset(launcher::Place::Window);
+    return ok;
+}
 // Settings stays where it is and as large as it is when its tab changes.
 bool SettingsTests(Host& host)
 {
@@ -681,6 +720,10 @@ int main()
     {
         Host host;
         ok &= DarkTests(host);
+    }
+    {
+        Host host;
+        ok &= FoundTests(host);
     }
     {
         Host host;

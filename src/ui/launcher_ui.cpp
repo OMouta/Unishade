@@ -85,6 +85,7 @@ enum class Modal
     Addons,
     Messages,
     Picker,
+    Found,
     Question,
     Quit,
 };
@@ -128,6 +129,8 @@ struct State
     float body = 0;
     Modal measured = Modal::None;
     std::optional<Picker> picker; // kept while the picker fades away
+    std::vector<FoundGame> found; // kept while the list of them fades away
+    std::set<size_t> chosen;      // the found games picked to add
     std::string quitting;
     Tab tab = Tab::General;
     Question question = Question::DeletePreset;
@@ -1982,6 +1985,48 @@ float PickerBody(const Picker& picker, Host& host, ImVec2 min, float width)
     return flow.Height();
 }
 
+// The games found installed, each picked or not with a click.
+float FoundBody(ImVec2 min, float width)
+{
+    Flow flow(min, width, kCardWidth);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    for (size_t i = 0; i < state->found.size(); ++i)
+    {
+        const FoundGame& game = state->found[i];
+        const bool chosen = state->chosen.count(i) > 0;
+        const ImRect at = flow.Next(S(64));
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::SetCursorScreenPos(at.Min);
+        const bool clicked = ImGui::InvisibleButton("found", at.GetSize(), ImGuiButtonFlags_EnableNav);
+        const ImGuiID key = ImGui::GetItemID();
+        const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+        HandOnHover();
+        const int start = draw->VtxBuffer.Size;
+        draw->AddRectFilled(at.Min, at.Max, hovered ? kWellHover : kWell, S(kRowRounding));
+        const float icon = S(36);
+        const ImVec2 iconMin(at.Min.x + S(14), at.GetCenter().y - icon / 2);
+        GameSquare(draw, iconMin, icon, S(9.6f), game.name, {}, game.name);
+        const float left = iconMin.x + icon + S(12), right = at.Max.x - S(48);
+        Line(draw, left, right, at.GetCenter().y - (game.store.empty() ? 0 : S(9)), game.name, kInk, kTextBody, true);
+        if (!game.store.empty())
+            Line(draw, left, right, at.GetCenter().y + S(11), game.store, kMist, kTextSmall);
+        // A ring that fills with a check once the game is picked.
+        const ImVec2 mark(at.Max.x - S(14) - S(12), at.GetCenter().y);
+        const float fill = Animate(SubId(key, "fill"), chosen ? 1.0f : 0.0f, 0.25f, Curve::Out);
+        draw->AddCircle(mark, S(11), kFaint, 0, S(2));
+        if (fill > 0.01f)
+        {
+            draw->AddCircleFilled(mark, S(12) * fill, kInk);
+            DrawIcon(draw, Icon::Check, mark, S(14), Alpha(kOnInk, fill));
+        }
+        Transform(draw, start, at.GetCenter(), Animate(SubId(key, "press"), held ? 0.96f : 1.0f, 0.25f, Curve::Spring));
+        if (clicked && !state->chosen.erase(i))
+            state->chosen.insert(i);
+        ImGui::PopID();
+    }
+    return flow.Height();
+}
+
 // The games, as on the window's shelf, with what can be set for the one picked on it.
 float GamesBody(const Model& model, Host& host, ImVec2 min, float width)
 {
@@ -2034,6 +2079,18 @@ void ModalHeader(const Model& model, Host& host, ImVec2 min, float width, float&
             host.ClosePicker();
         break;
     }
+    case Modal::Found:
+    {
+        const int clicked = Header(min, width, "Pick your games",
+                                   "Unishade found these on this PC, and turns on when one you pick starts. The + adds any other game later.",
+                                   { { "Skip", PillStyle::Text }, { "Add", PillStyle::Black, !state->chosen.empty() } }, height);
+        if (clicked >= 0)
+        {
+            host.AddFoundGames(clicked == 1 ? std::vector<size_t>(state->chosen.begin(), state->chosen.end()) : std::vector<size_t>());
+            state->chosen.clear();
+        }
+        break;
+    }
     case Modal::Question:
     {
         int clicked = -1;
@@ -2083,6 +2140,7 @@ float ModalBody(const Model& model, Host& host, ImVec2 min, float width)
     case Modal::Addons: return AddonsBody(model, host, min, width);
     case Modal::Messages: return MessagesBody(model, host, min, width);
     case Modal::Picker: return state->picker ? PickerBody(*state->picker, host, min, width) : 0;
+    case Modal::Found: return FoundBody(min, width);
     case Modal::Question:
     case Modal::Quit:
     case Modal::None: break;
@@ -2099,6 +2157,9 @@ Modal Wanted(const Model& model)
         return Modal::Quit;
     if (model.picker)
         return Modal::Picker;
+    // The first thing a new user sees, in the launcher's window.
+    if (place == Place::Window && !model.found.empty())
+        return Modal::Found;
     return state->modal;
 }
 
@@ -2109,6 +2170,8 @@ void Modals(const Model& model, Host& host)
     const Modal want = Wanted(model);
     if (model.picker)
         state->picker = *model.picker;
+    if (!model.found.empty())
+        state->found = model.found;
     if (!model.quitting.empty())
         state->quitting = model.quitting;
     // A shortcut left waiting for keys when its page went would take the next keys pressed.
@@ -2210,6 +2273,8 @@ void Modals(const Model& model, Host& host)
         switch (state->shown)
         {
         case Modal::Picker: host.ClosePicker(); break;
+        // A stray click would answer for good, so only Skip and Add do.
+        case Modal::Found: break;
         case Modal::Quit: host.KeepRunning(); break;
         case Modal::Question: state->modal = state->back; break;
         default: CloseModal(); break;

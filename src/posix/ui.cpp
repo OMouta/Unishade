@@ -966,6 +966,17 @@ public:
         app.Select(std::nullopt);
     }
 
+    void AddFoundGames(const std::vector<size_t>& games) override
+    {
+        for (const size_t game : games)
+            if (game < app.foundGames.size())
+                app.autoGames.push_back(app.foundGames[game].game);
+        app.foundGames.clear();
+        // Saved even when empty, so the list is not offered again.
+        app.SaveGames();
+        launcherState.gamesStale = true;
+    }
+
     void SetGameEnabled(size_t game, bool enabled) override
     {
         if (game >= app.autoGames.size())
@@ -1917,6 +1928,8 @@ launcher::Model DescribeLauncher(App& app)
     model.settings.menuOpacity = app.settings.menuOpacity;
     model.settings.smallTiles = app.settings.smallTiles;
     model.settings.menuHints = app.settings.menuHints;
+    for (const FoundGame& found : app.foundGames)
+        model.found.push_back({ found.game.name, found.store });
     model.settings.darkMenu = app.settings.darkMenu;
     model.settings.reloadEffects = true;
     model.settings.performance = launcherState.defaults;

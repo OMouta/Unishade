@@ -313,6 +313,7 @@ set(POSIX_SOURCES
     "${POSIX_DIR}/backdrop.cpp"
     "${POSIX_DIR}/config.cpp"
     "${POSIX_DIR}/effects.cpp"
+    "${POSIX_DIR}/game_scan.cpp"
     "${POSIX_DIR}/games.cpp"
     "${POSIX_DIR}/gpu.cpp"
     "${POSIX_DIR}/hotkeys.cpp"

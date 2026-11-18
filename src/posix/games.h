@@ -12,19 +12,32 @@
 // The same games.ini as on Windows.
 struct AutoGame
 {
-    std::string executable; // a filename such as RobloxPlayer, or a full path
+    // A filename such as RobloxPlayer, a full path, or a folder, which ends in a slash.
+    std::string executable;
     std::string name;
     bool enabled = true;
 };
 
-// The games found automatically when games.ini does not exist yet.
+// The games Unishade starts with when games.ini does not exist yet. None on Windows, where it offers the ones it finds
+// installed.
 std::vector<AutoGame> DefaultAutoGames();
+
+// A game found installed, and the store that installed it, or nothing for one that installs itself.
+struct FoundGame
+{
+    AutoGame game;
+    std::string store;
+};
+// The games Steam and Epic installed, and Roblox, by name. Empty where Unishade does not know how to look.
+std::vector<FoundGame> FindInstalledGames();
 // Throws std::runtime_error when the file is damaged, after keeping a copy as games.ini.damaged, since the next
 // save replaces it. The message says where the copy is.
 std::vector<AutoGame> LoadAutoGames(const std::filesystem::path& path);
 bool SaveAutoGames(const std::filesystem::path& path, std::span<const AutoGame> games);
 
-// Games saved with a folder match that exact executable. Games saved by filename match it in any folder, and
+// Games saved as a folder match every executable in it, since a store names the folder it installed a game in and not
+// the file that runs. Games saved with a folder match that exact executable. Games saved by filename match it in any
+// folder, and
 // also match the first argument of the command line, which names the .exe of games that run through Wine or
 // Proton. Filenames are compared without case.
 bool MatchesProcess(const AutoGame& game, const std::string& executable, const std::string& command);

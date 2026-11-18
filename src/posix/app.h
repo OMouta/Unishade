@@ -108,6 +108,8 @@ public:
     Addons addons;
     EffectSetup setup;
     std::vector<AutoGame> autoGames;
+    // The games found installed, which the launcher offers the first time Unishade starts, until it has an answer.
+    std::vector<FoundGame> foundGames;
     std::optional<platform::Window> selected;
     std::optional<platform::Window> active;
     // How the active window's process was started, read once for matching saved games.

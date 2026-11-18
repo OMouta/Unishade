@@ -293,6 +293,13 @@ struct Window
     std::string picture;
 };
 
+// A game found installed on this computer, offered the first time Unishade starts.
+struct FoundGame
+{
+    std::string name;
+    std::string store; // such as Steam, or empty
+};
+
 struct Picker
 {
     bool add = true; // adds the window's game, or uses the window until Detect automatically
@@ -328,6 +335,8 @@ struct Model
     // The Add-ons page shows, where the host has add-ons. Official ones first.
     std::optional<std::vector<Addon>> addons;
     std::optional<Picker> picker;
+    // The games found installed, which the window offers to add until AddFoundGames answers.
+    std::vector<FoundGame> found;
     // Why the last name given to RenameGame was not taken.
     std::string renameProblem;
     // Goes up when pictures may have changed, such as when a game's icon was found.
@@ -364,6 +373,8 @@ public:
     virtual void ChooseWindow(size_t window) = 0;
     virtual void ClosePicker() = 0;
     virtual void DetectAutomatically() = 0;
+    // The answer to Model::found: the ones to add by their place in it, or none.
+    virtual void AddFoundGames(const std::vector<size_t>& games) = 0;
 
     virtual void SetGameEnabled(size_t game, bool enabled) = 0;
     // Returns false when the name is not taken, with the reason in the next model.
