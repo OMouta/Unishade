@@ -456,8 +456,12 @@ bool InstallEffects(const fs::path& directory, Progress& progress)
     startup.hStdOutput = write;
     startup.hStdError = write;
     PROCESS_INFORMATION process{};
+    // A program that cannot start, as for a missing DLL, would wait behind an error box of Windows that a silent
+    // install shows to nobody. With this error mode, which it inherits, it ends with an error code instead.
+    const UINT errorMode = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     const bool started = CreateProcessW(nullptr, command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, directory.c_str(), &startup, &process);
     const DWORD startError = GetLastError();
+    SetErrorMode(errorMode);
     CloseHandle(write);
     if (!started)
         throw std::runtime_error("Could not start Unishade to download effects: " + SystemError(startError) + ".");
