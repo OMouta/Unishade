@@ -151,6 +151,7 @@ struct State
     std::string resetting;
     char search[128] = {};
     bool focusSearch = false;
+    std::string pack; // the pack Add effect lists, or empty for every one
     std::set<std::string> addedHere; // added with the add sheet open, which can take them back out
     std::string shownErrors;
     Naming naming = Naming::None;
@@ -1017,7 +1018,48 @@ float AddSheet(Frame& f, ImVec2 min, float width, float space)
     if (!f.effects)
         return y;
     const Effects& effects = *f.effects;
-    SearchField("##search", "Search effects", state->search, sizeof(state->search), min + ImVec2(0, y), width, std::exchange(state->focusSearch, false));
+    // The packs the effects came in, to list one at a time, beside the search box.
+    std::set<std::string> packs;
+    for (const Effect& effect : effects.list)
+        if (!effect.pack.empty())
+            packs.insert(effect.pack);
+    if (!packs.count(state->pack))
+        state->pack.clear();
+    const std::string packLabel = (state->pack.empty() ? std::string("All packs") : state->pack) + "##packs";
+    const float packWidth = packs.empty() ? 0 : PillWidth(packLabel.c_str(), PillStyle::Well) + S(8);
+    SearchField("##search", "Search effects", state->search, sizeof(state->search), min + ImVec2(0, y), width - packWidth,
+                std::exchange(state->focusSearch, false));
+    // Enter adds the first effect found, and the box is ready for the next.
+    const bool entered = ImGui::IsItemDeactivated() && (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter));
+    if (!packs.empty())
+    {
+        if (PillButton(packLabel.c_str(), ImVec2(min.x + width - packWidth + S(8), min.y + y + (S(kSearchHeight) - S(kButton)) / 2), S(kButton), PillStyle::Well))
+            ImGui::OpenPopup("packs");
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, S(326)));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(6.4f), S(6.4f)));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, S(1.6f)));
+        if (ImGui::BeginPopup("packs"))
+        {
+            if (MenuRow("All packs"))
+            {
+                state->pack.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            for (const std::string& pack : packs)
+            {
+                ImGui::PushID(pack.c_str());
+                if (MenuRow(pack.c_str()))
+                {
+                    state->pack = pack;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::PopID();
+            }
+            MenuAppear();
+            ImGui::EndPopup();
+        }
+        ImGui::PopStyleVar(2);
+    }
     y += S(kSearchHeight) + S(9.6f);
 
     const std::string filter = Lower(state->search);
@@ -1027,10 +1069,20 @@ float AddSheet(Frame& f, ImVec2 min, float width, float space)
         const Effect& effect = effects.list[i];
         if (state->members.count(effect.key) && !state->addedHere.count(effect.key))
             continue;
-        if (filter.empty() || Lower(effect.name).find(filter) != std::string::npos || Lower(effect.file).find(filter) != std::string::npos)
+        if (!state->pack.empty() && effect.pack != state->pack)
+            continue;
+        if (filter.empty() || Lower(effect.name).find(filter) != std::string::npos || Lower(effect.file).find(filter) != std::string::npos ||
+            Lower(effect.description).find(filter) != std::string::npos)
             listed.push_back(i);
     }
     std::sort(listed.begin(), listed.end(), [&](size_t a, size_t b) { return Lower(effects.list[a].name) < Lower(effects.list[b].name); });
+    if (entered && !filter.empty() && !listed.empty() && !state->members.count(effects.list[listed.front()].key))
+    {
+        f.host.SetEffect(listed.front(), true);
+        state->addedHere.insert(effects.list[listed.front()].key);
+        state->search[0] = 0;
+        state->focusSearch = true;
+    }
 
     const Grid grid = GridOf(width, f.side ? width : S(kCardWidth));
     std::vector<Field> fields;
@@ -1056,7 +1108,8 @@ float AddSheet(Frame& f, ImVec2 min, float width, float space)
                               draw->AddRectFilled(at, at + size, hovered ? kWellHover : kWell, S(17.6f));
                               const float right = at.x + size.x - S(51.2f);
                               Line(draw, at.x + S(16), right, at.y + size.y / 2 - S(9), effect->name, kInk, kTextBody, true);
-                              Line(draw, at.x + S(16), right, at.y + size.y / 2 + S(11), effect->failed ? "Could not start on the graphics card" : effect->file,
+                              Line(draw, at.x + S(16), right, at.y + size.y / 2 + S(11),
+                                   effect->failed ? "Could not start on the graphics card" : effect->description.empty() ? effect->file : effect->description,
                                    effect->failed ? kDanger : Alpha(kInk, 0.65f), kTextSmall);
                               // A plus that turns into a check in the tile's color once it is added.
                               const ImVec2 center(at.x + size.x - S(11.2f) - S(16), at.y + size.y / 2);

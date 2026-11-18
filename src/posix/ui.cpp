@@ -763,6 +763,10 @@ launcher::Effects DescribeEffects(App& app)
                 continue;
             const fx::Effect& effect = effects[technique.effect];
             list.push_back({ fx::TechniqueKey(technique, effect), name(technique), effect.file, false, effect.gpuFailed });
+            list.back().description = technique.tooltip.substr(0, technique.tooltip.find_first_of("\r\n"));
+            // Packages install into a folder each, beside the effects that came with Unishade.
+            const std::string folder = effect.path.parent_path().filename().string();
+            list.back().pack = folder == "Shaders" ? std::string() : folder;
             indices.push_back(i);
         }
         ++launcherState.effectsRevision;
