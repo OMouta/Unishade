@@ -2221,7 +2221,8 @@ std::pair<std::string, ImU32> Subtitle(const Frame& f)
         return { "Changes are not saved", kMist };
     if (f.game && !f.game->missing.empty())
         return { "Uses effects that are not installed", kCaution };
-    if (f.effects)
+    // Nothing to count before the game's first picture, when no effect has loaded yet, or in an empty preset.
+    if (f.effects && f.tileCount)
         return { std::to_string(f.onCount) + " of " + std::to_string(f.tileCount) + " effects on", kMist };
     return { {}, kMist };
 }
