@@ -1269,7 +1269,7 @@ public:
 
     void SetMenuOpacity(float opacity) override
     {
-        app.settings.menuOpacity = std::clamp(opacity, 0.6f, 1.0f);
+        app.settings.menuOpacity = std::clamp(opacity, 0.2f, 1.0f);
         SaveSettings(app.settings);
     }
 

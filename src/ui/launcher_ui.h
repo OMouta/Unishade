@@ -225,7 +225,7 @@ struct Settings
     // downward. Below 0 until the menu is moved.
     float menuX = -1;
     float menuY = -1;
-    // The tray's white, from 0.6 to 1, and whether its tiles are small.
+    // How solid the tray is, from 0.2 to 1, and whether its tiles are small.
     float menuOpacity = 1;
     bool smallTiles = false;
     // The tray, and the launcher's blocks and windows, in near-white type on near-black.

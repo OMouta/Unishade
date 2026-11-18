@@ -69,10 +69,10 @@ struct Settings
     float menuX = -1;
     float menuY = -1;
     // As launcher::Settings::menuOpacity and smallTiles.
-    float menuOpacity = 1;
+    float menuOpacity = 0.6f;
     bool smallTiles = false;
     bool menuHints = true;
-    bool darkMenu = false;
+    bool darkMenu = true;
     fs::path preset;
     // Searched recursively, like ReShade's paths ending in \**.
     std::vector<fs::path> effectPaths;

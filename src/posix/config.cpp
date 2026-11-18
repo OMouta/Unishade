@@ -378,10 +378,10 @@ Settings LoadSettings()
         }
     }
     if (ini.Get("HOST", "MenuOpacity", value))
-        settings.menuOpacity = std::clamp(std::round(std::strtof(value.c_str(), nullptr) * 100) / 100, 0.6f, 1.0f);
+        settings.menuOpacity = std::clamp(std::round(std::strtof(value.c_str(), nullptr) * 100) / 100, 0.2f, 1.0f);
     settings.smallTiles = ini.Get("HOST", "SmallTiles", value) && value == "1";
     settings.menuHints = !ini.Get("HOST", "MenuHints", value) || value != "0";
-    settings.darkMenu = ini.Get("HOST", "DarkMenu", value) && value == "1";
+    settings.darkMenu = !ini.Get("HOST", "DarkMenu", value) || value != "0";
 
     if ((ini.Changed() || !existed) && !WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
