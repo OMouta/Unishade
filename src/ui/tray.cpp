@@ -2045,7 +2045,6 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
         if (hovered)
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         const ImVec2 dot = TileDot(slotMin, slotMin + slotSize, small);
-        const float radius = TileDotRadius(small);
         // The dot takes clicks in the whole corner around it, which is easier to hit than the dot.
         const float reach = (slotMin.x + slotSize.x - dot.x) * 2;
         ImGui::SetCursorScreenPos(ImVec2(slotMin.x + slotSize.x - reach, slotMin.y));
@@ -2117,7 +2116,6 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
         if (hovered)
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         const ImVec2 dot = TileDot(slotMin, slotMin + slotSize, small);
-        const float radius = TileDotRadius(small);
         // The dot takes clicks in the whole corner around it, which is easier to hit than the dot.
         const float reach = (slotMin.x + slotSize.x - dot.x) * 2;
         ImGui::SetCursorScreenPos(ImVec2(slotMin.x + slotSize.x - reach, slotMin.y));
