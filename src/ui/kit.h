@@ -40,12 +40,14 @@ inline float S(float value)
     return value * scale;
 }
 
-// A font file, and which font of a collection (.ttc) to use, or the bytes of a font built into the program.
+// A font file, and which font of a collection (.ttc) to use, or the bytes of a font built into the program, or a
+// loader that draws the characters itself, as for emoji the system only has as pictures.
 struct FontFile
 {
     std::string path;
     int index = 0;
     std::span<const unsigned char> data;
+    const ImFontLoader* loader = nullptr;
 };
 
 // Loads the current Dear ImGui context's fonts, regular and bold, each followed by fallbacks for the characters it

@@ -121,14 +121,19 @@ std::span<const unsigned char> MapFont(const std::string& path)
 // Adds a font, or merges it into the one added before.
 ImFont* AddFont(const FontFile& file, bool merge)
 {
-    const std::span<const unsigned char> data = file.data.empty() ? MapFont(file.path) : file.data;
-    if (data.empty())
-        return nullptr;
     ImFontConfig config;
     config.FontDataOwnedByAtlas = false;
     config.FontNo = static_cast<ImU32>(file.index);
     config.MergeMode = merge;
     config.Flags |= ImFontFlags_NoLoadError;
+    if (file.loader)
+    {
+        config.FontLoader = file.loader;
+        return ImGui::GetIO().Fonts->AddFont(&config);
+    }
+    const std::span<const unsigned char> data = file.data.empty() ? MapFont(file.path) : file.data;
+    if (data.empty())
+        return nullptr;
     // Dear ImGui only reads font data it does not own.
     return ImGui::GetIO().Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(data.data()), static_cast<int>(data.size()), 0.0f, &config);
 }

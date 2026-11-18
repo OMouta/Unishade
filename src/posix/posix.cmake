@@ -324,7 +324,7 @@ set(POSIX_SOURCES
     "${POSIX_DIR}/../ui/launcher_ui.cpp"
     "${POSIX_DIR}/../ui/tray.cpp")
 if(APPLE)
-    list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_macos.mm")
+    list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_macos.mm" "${POSIX_DIR}/emoji_macos.cpp")
 elseif(WIN32)
     # Effects download through WinHTTP, with the same code as Setup.
     list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_win32.cpp" "${POSIX_DIR}/../net.cpp" "${POSIX_DIR}/upscale.cpp" "${FSR_SOURCE}"
@@ -348,7 +348,7 @@ target_link_libraries(unishade_core PUBLIC reshadefx posix_libraries Threads::Th
 if(APPLE)
     target_compile_options(unishade_core PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
     target_link_libraries(unishade_core PUBLIC "-framework AppKit" "-framework Carbon" "-framework CoreGraphics"
-        "-framework CoreMedia" "-framework CoreVideo" "-framework QuartzCore" "-framework ScreenCaptureKit" "-framework Metal"
+        "-framework CoreMedia" "-framework CoreText" "-framework CoreVideo" "-framework QuartzCore" "-framework ScreenCaptureKit" "-framework Metal"
         "-framework IOSurface" "-framework IOKit")
 elseif(WIN32)
     # The standard and POSIX C functions MSVC warns about are used as on the other systems.

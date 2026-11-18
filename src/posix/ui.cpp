@@ -7,6 +7,9 @@
 #include "discord.h"
 #include "update.h"
 #endif
+#ifdef __APPLE__
+#include "emoji_macos.h"
+#endif
 #include "backdrop.h"
 #include "log.h"
 #include "image.h"
@@ -1997,6 +2000,10 @@ bool InitUi(UiWindow& ui, std::string& error)
             fonts.push_back({ std::move(system) });
         for (auto& [path, index] : platform::UiFallbackFonts(bold))
             fonts.push_back({ std::move(path), index });
+#ifdef __APPLE__
+        // macOS has its emoji as pictures, which Core Text draws.
+        fonts.push_back({ .loader = EmojiLoader() });
+#endif
         return fonts;
     };
     kit::LoadFonts({ .data = { kBricolageRegular, kBricolageRegularSize } }, fallbacks(false),

@@ -128,6 +128,7 @@ Set `UNISHADE_VALIDATION=1` to run with the Vulkan validation layers.
 | `effects.cpp` | ReShade effect runtime on Vulkan |
 | `gpu.cpp` | Vulkan device, images and window swapchains |
 | `platform_x11.cpp`, `platform_macos.mm`, `platform_win32.cpp` | Everything in `platform.h` |
+| `emoji_macos.cpp` | Draws emoji with Core Text for the launcher and the menu, since Apple Color Emoji holds pictures that Dear ImGui's font loader cannot read. One character at a time, so joined emoji such as families and flags show as their parts |
 | `macho.h` | Reads the SDK a Mac program was built with from its executable, so the overlay knows whether macOS 26 draws the game with the new look. Plain C++, so tests can check it anywhere |
 | `window_rules.h` | macOS rules for which layers can hold a game, whether a window covers its screen, and which pixels of a frame are the game's. Kept apart so `tests/posix_tests.cpp` can check them without a window |
 | `setup.cpp` | `--install-effects` and the launcher's download button. Downloads over https only, except the sources given with `--effects-url` and `--presets-url`, which tests can point at local files |
