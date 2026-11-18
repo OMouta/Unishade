@@ -1220,6 +1220,15 @@ void Shelf(const Model& model, Host& host, ImVec2 min, float width, bool dark)
     }
     ImGui::SetCursorScreenPos(origin + ImVec2(x * s, 0));
     ImGui::Dummy(ImVec2(1, height));
+    // Games that do not fit fade out at the side they go on to, which the wheel scrolls to.
+    const ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const ImRect box = window->InnerRect;
+    const ImU32 solid = dark ? kBackground : kPaper, clear = Alpha(solid, 0);
+    const float fade = S(36);
+    if (window->Scroll.x > 0.5f)
+        draw->AddRectFilledMultiColor(box.Min, ImVec2(box.Min.x + fade, box.Max.y), solid, clear, clear, solid);
+    if (window->Scroll.x < window->ScrollMax.x - 0.5f)
+        draw->AddRectFilledMultiColor(ImVec2(box.Max.x - fade, box.Min.y), box.Max, clear, solid, solid, clear);
     ImGui::EndChild();
 }
 
@@ -1406,7 +1415,9 @@ void WindowView(const Model& model, Host& host)
     const float left = std::max(side - S(6), caption::bar.inset);
     const float right = captions > 0 ? display.x - captions - S(9.6f) : display.x - side;
     const float buttons = TopButtons(model, right, middle, true);
-    Shelf(model, host, ImVec2(left, S(kShelfTop)), std::max(right - left - buttons - S(30), S(60)), true);
+    // The shelf stops short of the buttons, so the window can be moved by what is between them however many games
+    // there are.
+    Shelf(model, host, ImVec2(left, S(kShelfTop)), std::max(right - left - buttons - S(120), S(60)), true);
     TopButtons(model, right, middle, false);
 
     // The page of the game being played has the game's picture on its right, as the design's .gameview, where the host
