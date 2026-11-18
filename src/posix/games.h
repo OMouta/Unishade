@@ -27,6 +27,7 @@ struct FoundGame
 {
     AutoGame game;
     std::string store;
+    std::string picture; // its icon: a picture's file or the game's own, or nothing
 };
 // The games Steam and Epic installed, and Roblox, by name. Empty where Unishade does not know how to look.
 std::vector<FoundGame> FindInstalledGames();

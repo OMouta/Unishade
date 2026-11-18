@@ -115,6 +115,13 @@ bool TrayIconShown();
 // is turned on again, and while Task Manager's Startup apps turn it off.
 bool StartsWithWindows();
 void SetStartWithWindows(bool start);
+// The icon of a program's file as RGBA, at up to 256 pixels. Empty when it has none.
+struct Icon
+{
+    std::vector<uint8_t> rgba;
+    int width = 0, height = 0;
+};
+Icon FileIcon(const std::string& executable);
 #endif
 
 // Windows ends Unishade at shutdown or sign-out without returning to the main loop, a few seconds after calling this

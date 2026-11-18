@@ -157,7 +157,37 @@ std::vector<uint8_t> Shrink(const uint8_t* rgba, int width, int height, int size
     return result;
 }
 
-// The logo, or a folder's logo.png, at a size in the window's own units. Invalid when the folder has none.
+// The picture a key names as RGBA: the logo, a folder's logo.png, a picture's file, or on Windows the icon of a
+// program's file.
+bool IsProgram(const std::string& file)
+{
+    return file.size() > 4 && (file.ends_with(".exe") || file.ends_with(".EXE"));
+}
+
+std::vector<uint8_t> ReadPicture(const std::string& key, int& width, int& height)
+{
+    const fs::path path(key);
+    std::error_code error;
+#ifdef _WIN32
+    if (IsProgram(key))
+    {
+        platform::Icon icon = platform::FileIcon(key);
+        width = icon.width;
+        height = icon.height;
+        return std::move(icon.rgba);
+    }
+#endif
+    const image::Pixels pixels = key == kLogoPicture ? image::Decode(std::string_view(reinterpret_cast<const char*>(kLogoPng), kLogoPngSize))
+                                 : image::Read(fs::is_directory(path, error) ? path / "logo.png" : path);
+    if (!pixels.data)
+        return {};
+    width = pixels.width;
+    height = pixels.height;
+    const uint8_t* data = static_cast<const uint8_t*>(pixels.data.get());
+    return { data, data + size_t(width) * height * 4 };
+}
+
+// The logo, or the picture a key names, at a size in the window's own units. Invalid when there is none.
 ImTextureID PictureTexture(const std::string& key, float drawn)
 {
     const int size = static_cast<int>(std::round(drawn * ImGui::GetIO().DisplayFramebufferScale.x));
@@ -184,12 +214,11 @@ ImTextureID PictureTexture(const std::string& key, float drawn)
         {
             picture.decoding = std::async(std::launch::async, [key, size] {
                 DecodedPicture result;
-                image::Pixels pixels = key == kLogoPicture
-                    ? image::Decode(std::string_view(reinterpret_cast<const char*>(kLogoPng), kLogoPngSize))
-                    : image::Read(fs::path(key) / "logo.png");
-                if (!pixels.data || !result.memory.Resize(size_t(size) * size * 4))
+                int width = 0, height = 0;
+                const std::vector<uint8_t> pixels = ReadPicture(key, width, height);
+                if (pixels.empty() || !result.memory.Resize(size_t(size) * size * 4))
                     return result;
-                result.rgba = Shrink(static_cast<const uint8_t*>(pixels.data.get()), pixels.width, pixels.height, size);
+                result.rgba = Shrink(pixels.data(), width, height, size);
                 uint64_t sums[3] = {}, weight = 0;
                 for (size_t i = 0; i < result.rgba.size(); i += 4)
                 {
@@ -416,7 +445,7 @@ struct LauncherState
     // The open windows the picker lists, to add a game or use a window until Detect automatically.
     bool picking = false;
     bool pickToAdd = true;
-    std::map<platform::WindowId, std::string> details; // the executable's name for each window listed
+    std::map<platform::WindowId, std::string> details; // the executable of each window listed
     // A removed game, which can be put back for a few seconds.
     std::optional<AutoGame> removed;
     size_t removedIndex = 0;
@@ -1929,7 +1958,7 @@ launcher::Model DescribeLauncher(App& app)
     model.settings.smallTiles = app.settings.smallTiles;
     model.settings.menuHints = app.settings.menuHints;
     for (const FoundGame& found : app.foundGames)
-        model.found.push_back({ found.game.name, found.store });
+        model.found.push_back({ found.game.name, found.store, found.picture });
     model.settings.darkMenu = app.settings.darkMenu;
     model.settings.reloadEffects = true;
     model.settings.performance = launcherState.defaults;
@@ -1949,8 +1978,9 @@ launcher::Model DescribeLauncher(App& app)
         {
             auto detail = launcherState.details.find(window.id);
             if (detail == launcherState.details.end())
-                detail = launcherState.details.emplace(window.id, fs::path(platform::ProcessExecutable(window.pid)).filename().string()).first;
-            picker.windows.push_back({ window.title, detail->second, "" });
+                detail = launcherState.details.emplace(window.id, platform::ProcessExecutable(window.pid)).first;
+            // The program's icon, which Windows keeps in its file.
+            picker.windows.push_back({ window.title, fs::path(detail->second).filename().string(), IsProgram(detail->second) ? detail->second : "" });
         }
         model.picker = std::move(picker);
     }

@@ -298,6 +298,7 @@ struct FoundGame
 {
     std::string name;
     std::string store; // such as Steam, or empty
+    std::string picture;
 };
 
 struct Picker

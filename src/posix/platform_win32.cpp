@@ -964,14 +964,14 @@ VkImage Import(Slot& slot)
     return image;
 }
 
-// An icon as a PNG, from its color bitmap, with the mask for icons that have no alpha.
-bool SaveIcon(HICON icon, const std::string& path)
+// An icon's pixels, from its color bitmap, with the mask for icons that have no alpha.
+Icon IconPixels(HICON icon)
 {
     ICONINFO info{};
     if (!GetIconInfo(icon, &info))
-        return false;
+        return {};
     BITMAP bitmap{};
-    bool saved = false;
+    Icon result;
     if (info.hbmColor && GetObjectW(info.hbmColor, sizeof(bitmap), &bitmap) && bitmap.bmWidth > 0 && bitmap.bmHeight > 0)
     {
         const int width = bitmap.bmWidth, height = bitmap.bmHeight;
@@ -996,13 +996,14 @@ bool SaveIcon(HICON icon, const std::string& path)
             if (masked)
                 pixels[i + 3] = mask[i] ? 0 : 255;
         }
-        saved = read && stbi_write_png(path.c_str(), width, height, 4, pixels.data(), width * 4);
+        if (read)
+            result = { std::move(pixels), width, height };
     }
     if (info.hbmColor)
         DeleteObject(info.hbmColor);
     if (info.hbmMask)
         DeleteObject(info.hbmMask);
-    return saved;
+    return result;
 }
 
 std::string FontsFolder()
@@ -1194,21 +1195,27 @@ std::vector<Process> ListProcesses()
     return processes;
 }
 
-bool SaveWindowIcon(const Window& window, const std::string& path)
+Icon FileIcon(const std::string& executable)
 {
-    const std::wstring executable = Wide(ProcessExecutable(window.pid));
-    if (executable.empty())
-        return false;
-    bool saved = false;
+    const std::wstring file = Wide(executable);
+    Icon result;
+    if (file.empty())
+        return result;
     InSingleThreadedApartment([&] {
         HICON icon = nullptr;
-        if (SHDefExtractIconW(executable.c_str(), 0, 0, &icon, nullptr, 256) == S_OK && icon)
+        if (SHDefExtractIconW(file.c_str(), 0, 0, &icon, nullptr, 256) == S_OK && icon)
         {
-            saved = SaveIcon(icon, path);
+            result = IconPixels(icon);
             DestroyIcon(icon);
         }
     });
-    return saved;
+    return result;
+}
+
+bool SaveWindowIcon(const Window& window, const std::string& path)
+{
+    const Icon icon = FileIcon(ProcessExecutable(window.pid));
+    return !icon.rgba.empty() && stbi_write_png(path.c_str(), icon.width, icon.height, 4, icon.rgba.data(), icon.width * 4);
 }
 
 namespace

@@ -46,16 +46,26 @@ struct Scan
     std::vector<FoundGame> found;
     std::set<std::string> folders; // without case, so a game two stores list is offered once
 
-    void Add(const fs::path& folder, const std::string& name, const char* store)
+    void Add(const fs::path& folder, const std::string& name, const char* store, const fs::path& picture)
     {
         std::error_code error;
         if (name.empty() || !fs::is_directory(folder, error))
             return;
         const std::string key = FolderKey(folder);
         if (folders.insert(Lower(key)).second)
-            found.push_back({ { key, name }, store });
+            found.push_back({ { key, name }, store, Utf8(picture.wstring()) });
     }
 };
+
+// Steam keeps each game's icon in a folder named by the game's number, as a small picture named by its hash.
+fs::path SteamIcon(const fs::path& steam, const std::string& id)
+{
+    std::error_code error;
+    for (fs::directory_iterator entry(steam / "appcache" / "librarycache" / fs::path(Wide(id)), error), end; !error && entry != end; entry.increment(error))
+        if (entry->path().extension() == L".jpg" && entry->path().stem().wstring().size() == 40)
+            return entry->path();
+    return {};
+}
 
 // Steam keeps a manifest for each game beside the folder it installed it in, in every library it has.
 void FindSteamGames(Scan& scan)
@@ -84,7 +94,8 @@ void FindSteamGames(Scan& scan)
             // Steamworks Common Redistributables is in every library and is no game.
             if (names.empty() || folders.empty() || (!ids.empty() && ids.front() == "228980"))
                 continue;
-            scan.Add(library / "steamapps" / "common" / fs::path(Wide(folders.front())), names.front(), "Steam");
+            scan.Add(library / "steamapps" / "common" / fs::path(Wide(folders.front())), names.front(), "Steam",
+                     ids.empty() ? fs::path() : SteamIcon(fs::path(steam), ids.front()));
         }
     }
 }
@@ -103,11 +114,13 @@ void FindEpicGames(Scan& scan)
             continue;
         const std::string text = ReadFile(entry->path());
         const std::optional<std::string> name = game_scan::JsonString(text, "DisplayName"), folder = game_scan::JsonString(text, "InstallLocation"),
-                                         app = game_scan::JsonString(text, "AppName"), main = game_scan::JsonString(text, "MainGameAppName");
+                                         app = game_scan::JsonString(text, "AppName"), main = game_scan::JsonString(text, "MainGameAppName"),
+                                         launch = game_scan::JsonString(text, "LaunchExecutable");
         // An add-on names the game it belongs to. The game itself names itself there, or nothing.
         if (!name || !folder || (app && main && !main->empty() && *app != *main))
             continue;
-        scan.Add(fs::path(Wide(*folder)), *name, "Epic Games");
+        // The file that starts the game has its icon.
+        scan.Add(fs::path(Wide(*folder)), *name, "Epic Games", launch && !launch->empty() ? fs::path(Wide(*folder)) / fs::path(Wide(*launch)) : fs::path());
     }
 }
 
@@ -121,7 +134,7 @@ void FindRoblox(Scan& scan)
     for (fs::directory_iterator entry(fs::path(local) / "Roblox" / "Versions", error), end; !error && entry != end; entry.increment(error))
         if (fs::exists(entry->path() / "RobloxPlayerBeta.exe", error))
         {
-            scan.found.push_back({ { "RobloxPlayerBeta.exe", "Roblox" }, "" });
+            scan.found.push_back({ { "RobloxPlayerBeta.exe", "Roblox" }, "", Utf8((entry->path() / "RobloxPlayerBeta.exe").wstring()) });
             return;
         }
 }

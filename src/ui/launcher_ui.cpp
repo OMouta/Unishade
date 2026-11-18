@@ -2005,7 +2005,7 @@ float FoundBody(ImVec2 min, float width)
         draw->AddRectFilled(at.Min, at.Max, hovered ? kWellHover : kWell, S(kRowRounding));
         const float icon = S(36);
         const ImVec2 iconMin(at.Min.x + S(14), at.GetCenter().y - icon / 2);
-        GameSquare(draw, iconMin, icon, S(9.6f), game.name, {}, game.name);
+        GameSquare(draw, iconMin, icon, S(9.6f), game.name, game.picture, game.name);
         const float left = iconMin.x + icon + S(12), right = at.Max.x - S(48);
         Line(draw, left, right, at.GetCenter().y - (game.store.empty() ? 0 : S(9)), game.name, kInk, kTextBody, true);
         if (!game.store.empty())
