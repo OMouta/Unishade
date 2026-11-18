@@ -464,6 +464,10 @@ if(BUILD_TESTING AND NOT WIN32)
     target_compile_options(names_tests PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
     add_test(NAME names_tests COMMAND names_tests)
 
+    add_executable(game_scan_tests "${CMAKE_SOURCE_DIR}/tests/game_scan_tests.cpp")
+    target_compile_options(game_scan_tests PRIVATE -Wall -Wextra)
+    add_test(NAME game_scan_tests COMMAND game_scan_tests)
+
     add_executable(package_files_tests "${CMAKE_SOURCE_DIR}/tests/package_files_tests.cpp")
     target_link_libraries(package_files_tests PRIVATE posix_libraries)
     target_compile_options(package_files_tests PRIVATE -Wall -Wextra -Wno-missing-field-initializers)

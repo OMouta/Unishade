@@ -192,6 +192,10 @@ if(BUILD_TESTING)
     target_compile_options(names_tests PRIVATE /W4 /permissive- /EHsc)
     add_test(NAME names_tests COMMAND names_tests)
 
+    add_executable(game_scan_tests tests/game_scan_tests.cpp)
+    target_compile_options(game_scan_tests PRIVATE /W4 /permissive- /EHsc)
+    add_test(NAME game_scan_tests COMMAND game_scan_tests)
+
     # Windows only, like the ReShade host whose settings it carries over.
     add_executable(old_settings_tests tests/old_settings_tests.cpp)
     target_compile_definitions(old_settings_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
