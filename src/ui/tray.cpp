@@ -1572,7 +1572,8 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
         fields.push_back({ S(kField), 1, [&f](ImVec2 at, ImVec2 size) {
                               Bar bar;
                               bar.label = "Opacity";
-                              bar.min = 40;
+                              // Below this the tray's black text is lost on a dark game.
+                              bar.min = 60;
                               bar.max = 100;
                               bar.integer = true;
                               bar.format = "%d%%";

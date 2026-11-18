@@ -223,7 +223,7 @@ struct Settings
     // downward. Below 0 until the menu is moved.
     float menuX = -1;
     float menuY = -1;
-    // The tray's white, from 0.4 to 1, and whether its tiles are small.
+    // The tray's white, from 0.6 to 1, and whether its tiles are small.
     float menuOpacity = 1;
     bool smallTiles = false;
     std::optional<bool> keepEffectsVisible;

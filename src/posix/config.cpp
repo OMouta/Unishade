@@ -378,7 +378,7 @@ Settings LoadSettings()
         }
     }
     if (ini.Get("HOST", "MenuOpacity", value))
-        settings.menuOpacity = std::clamp(std::round(std::strtof(value.c_str(), nullptr) * 100) / 100, 0.4f, 1.0f);
+        settings.menuOpacity = std::clamp(std::round(std::strtof(value.c_str(), nullptr) * 100) / 100, 0.6f, 1.0f);
     settings.smallTiles = ini.Get("HOST", "SmallTiles", value) && value == "1";
 
     if ((ini.Changed() || !existed) && !WriteFile(path, ini.Text()))
