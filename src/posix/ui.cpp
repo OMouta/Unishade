@@ -878,6 +878,11 @@ public:
             app.settings.smallTiles = on;
             SaveSettings(app.settings);
         }
+        else if (which == launcher::Switch::DarkMenu)
+        {
+            app.settings.darkMenu = on;
+            SaveSettings(app.settings);
+        }
         else if (which == launcher::Switch::MenuHints)
         {
             app.settings.menuHints = on;
@@ -1910,6 +1915,7 @@ launcher::Model DescribeLauncher(App& app)
     model.settings.menuOpacity = app.settings.menuOpacity;
     model.settings.smallTiles = app.settings.smallTiles;
     model.settings.menuHints = app.settings.menuHints;
+    model.settings.darkMenu = app.settings.darkMenu;
     model.settings.reloadEffects = true;
     model.settings.performance = launcherState.defaults;
 #ifdef __APPLE__

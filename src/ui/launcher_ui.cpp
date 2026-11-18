@@ -68,6 +68,7 @@ constexpr ImU32 kBadge = Color(0xF8E44C);
 
 constexpr const char* kRates[] = { "Follow game", "120 FPS", "60 FPS", "Custom" };
 constexpr const char* kResolutions[] = { "100%", "75%", "50%" };
+constexpr const char* kThemes[] = { "Light", "Dark" };
 // The frame rate choice that is typed in a box.
 constexpr int kCustom = static_cast<int>(std::size(kFrameRates));
 constexpr char kRateNote[] = "The most frames a second Unishade shows. A lower limit leaves more of the GPU to the game.";
@@ -369,7 +370,7 @@ void GameSquare(ImDrawList* draw, ImVec2 min, float size, float rounding, const 
         draw->AddImageRounded(ImTextureRef(texture), min + ImVec2(inset, inset), max - ImVec2(inset, inset), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE,
                               rounding / 2);
     else
-        Line(draw, min.x, max.x, (min.y + max.y) / 2, Initial(name), kInk, size > S(44) ? kTextName : kTextBody, true, true);
+        Line(draw, min.x, max.x, (min.y + max.y) / 2, Initial(name), kOnColor, size > S(44) ? kTextName : kTextBody, true, true);
 }
 
 // A button on the black of the window: grey text, white with a faint white behind it under the mouse.
@@ -411,7 +412,7 @@ bool DarkButton(const char* id, const std::string& label, ImVec2 min, Glyph glyp
         const float badgeWidth = Measure(badge, Css(12), true).x + S(12.8f);
         const ImVec2 badgeMin(x + S(7.2f), middle - S(8.8f));
         draw->AddRectFilled(badgeMin, badgeMin + ImVec2(badgeWidth, S(17.6f)), kBadge, S(8.8f));
-        Line(draw, badgeMin.x, badgeMin.x + badgeWidth, middle, badge, kInk, Css(12), true, true);
+        Line(draw, badgeMin.x, badgeMin.x + badgeWidth, middle, badge, kOnColor, Css(12), true, true);
     }
     return clicked;
 }
@@ -688,10 +689,10 @@ void ShortcutFields(Flow& flow, Host& host, const Settings& settings)
         if (recording)
             RainbowFill(draw, keyMin, keyMin + keySize, S(11.2f), 1);
         else
-            draw->AddRectFilled(keyMin, keyMin + keySize, hovered ? Color(0x2A2A33) : kInk, S(11.2f));
+            draw->AddRectFilled(keyMin, keyMin + keySize, hovered ? kInkHover : kInk, S(11.2f));
         const std::string label = recording ? "Press keys..." : shortcut.keys.empty() ? "Not set" : shortcut.keys;
         Line(draw, keyMin.x + S(8), keyMin.x + keySize.x - S(8), keyMin.y + keySize.y / 2, label,
-             recording ? kInk : shortcut.keys.empty() ? Alpha(IM_COL32_WHITE, 0.6f) : IM_COL32_WHITE, kTextBody, true, true);
+             recording ? kOnColor : shortcut.keys.empty() ? Alpha(kOnInk, 0.6f) : kOnInk, kTextBody, true, true);
         if (recording)
         {
             // Breathes while it waits, as the design's does.
@@ -863,7 +864,7 @@ void PresetCards(Flow& flow, const Model& model, Host& host, size_t index)
         const float on = Animate(SubId(key, "on"), used ? 1.0f : 0.0f, 0.25f, Curve::Out);
         const int start = draw->VtxBuffer.Size;
         draw->AddRectFilled(at.Min, at.Max, Mix(hovered && !used ? kWellHover : kWell, kInk, on), S(kRowRounding));
-        const ImU32 text = Mix(kInk, IM_COL32_WHITE, on);
+        const ImU32 text = Mix(kInk, kOnInk, on);
         Line(draw, at.Min.x + S(16), at.Max.x - S(edit ? 44.0f : 16.0f), at.Min.y + S(22), preset.name, text, kTextBody, true);
         Line(draw, at.Min.x + S(16), at.Max.x - S(16), at.Max.y - S(18), preset.folder.empty() ? game.name : preset.folder, Alpha(text, 0.6f), kTextSmall);
         Transform(draw, start, at.GetCenter(), Animate(SubId(key, "press"), held && !used ? 0.96f : 1.0f, 0.25f, Curve::Spring));
@@ -1287,7 +1288,7 @@ float GameBody(const Model& model, Host& host, size_t index, ImVec2 min, float w
         draw->ChannelsSetCurrent(0);
         const ImVec2 blockMax = blockMin + ImVec2(width, inside + pad * 2);
         draw->AddRectFilled(blockMin, blockMax, kTray, S(kBlockRounding));
-        draw->AddRect(blockMin + ImVec2(0.5f, 0.5f), blockMax - ImVec2(0.5f, 0.5f), IM_COL32(255, 255, 255, 178), S(kBlockRounding), 1.0f);
+        draw->AddRect(blockMin + ImVec2(0.5f, 0.5f), blockMax - ImVec2(0.5f, 0.5f), kEdge, S(kBlockRounding), 1.0f);
         draw->ChannelsMerge();
     }
     return y + inside + pad * 2;
@@ -1671,6 +1672,8 @@ float SettingsBody(const Model& model, Host& host, ImVec2 min, float width)
             if (const std::optional<bool> on = OnOff(flow, "updates", "Check for updates", *settings.updateChecks,
                                                      "Asks GitHub for a newer version when Unishade starts. Applies from the next start."))
                 host.SetSwitch(Switch::UpdateChecks, *on);
+        if (const int theme = Choices(flow, "theme", "Theme", kThemes, settings.darkMenu ? 1 : 0); theme >= 0)
+            host.SetSwitch(Switch::DarkMenu, theme == 1);
         if (settings.menuSize)
             MenuSizeRow(flow, host, settings);
         if (settings.reloadEffects &&
@@ -1785,7 +1788,7 @@ void AddonRow(Flow& flow, Host& host, const Addon& addon, size_t index)
     {
         // How far it is, in the ring's colors across a black pill.
         const ImVec2 barMin(x, top), barMax(x + progressWidth, top + S(kButton));
-        draw->AddRectFilled(barMin, barMax, kInk, S(kButton) / 2);
+        draw->AddRectFilled(barMin, barMax, IM_COL32_BLACK, S(kButton) / 2);
         const float progress = std::clamp(Animate(ImGui::GetID("progress"), addon.progress, 0.2f, Curve::Linear), 0.0f, 1.0f);
         RainbowFill(draw, barMin, barMax, S(kButton) / 2, progress);
         Line(draw, barMin.x, barMax.x, (barMin.y + barMax.y) / 2, std::to_string(static_cast<int>(std::lround(addon.progress * 100))) + "%", IM_COL32_WHITE,
@@ -2170,7 +2173,7 @@ void Modals(const Model& model, Host& host)
     draw->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 153));
     const int start = draw->VtxBuffer.Size;
     draw->AddRectFilled(min, max, kPaper, S(kBlockRounding));
-    draw->AddRect(min + ImVec2(0.5f, 0.5f), max - ImVec2(0.5f, 0.5f), IM_COL32(255, 255, 255, 178), S(kBlockRounding), 1.0f);
+    draw->AddRect(min + ImVec2(0.5f, 0.5f), max - ImVec2(0.5f, 0.5f), kEdge, S(kBlockRounding), 1.0f);
 
     const ImVec2 inside = min + ImVec2(S(kPanelPad), S(kPanelPad));
     float headerHeight = 0;
@@ -2219,6 +2222,7 @@ void Modals(const Model& model, Host& host)
 
 bool Draw(const Model& model, Host& host, float windowScale, Place where)
 {
+    spectrum::SetDark(model.settings.darkMenu);
     place = where;
     state = &states[static_cast<size_t>(where)];
     if (where == Place::Game)

@@ -228,6 +228,8 @@ struct Settings
     // The tray's white, from 0.6 to 1, and whether its tiles are small.
     float menuOpacity = 1;
     bool smallTiles = false;
+    // The tray, and the launcher's blocks and windows, in near-white type on near-black.
+    bool darkMenu = false;
     // The tray says how its tiles work, until the user says they have it.
     bool menuHints = false;
     std::optional<bool> keepEffectsVisible;
@@ -344,6 +346,7 @@ enum class Switch
     SkipTitleBar,
     SmallTiles,
     MenuHints,
+    DarkMenu,
     Effects, // the effects of the game being played, without stopping the overlay
 };
 

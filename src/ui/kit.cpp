@@ -606,6 +606,34 @@ ImU32 Mix(ImU32 from, ImU32 to, float t)
     return result;
 }
 
+namespace
+{
+bool darkTheme = false;
+}
+
+void SetDark(bool dark)
+{
+    darkTheme = dark;
+    kTray = dark ? IM_COL32(20, 20, 26, 219) : IM_COL32(247, 247, 251, 219);
+    kPaper = dark ? Color(0x16161C) : Color(0xF7F7FB);
+    kInk = dark ? Color(0xF2F2FB) : IM_COL32(0, 0, 0, 255);
+    kOnInk = dark ? IM_COL32(0, 0, 0, 255) : IM_COL32_WHITE;
+    kInkHover = dark ? Color(0xD4D4E2) : Color(0x2A2A33);
+    kMist = dark ? Color(0xA0A0B0) : Color(0x62626F);
+    kWell = dark ? IM_COL32(255, 255, 255, 20) : IM_COL32(0, 0, 0, 18);
+    kWellHover = dark ? IM_COL32(255, 255, 255, 36) : IM_COL32(0, 0, 0, 33);
+    kFaint = dark ? IM_COL32(255, 255, 255, 64) : IM_COL32(0, 0, 0, 64);
+    kQuiet = dark ? Color(0x4A4A58) : Color(0xC9C9D3);
+    kDanger = dark ? Color(0xFF7676) : Color(0xC8243A);
+    kCaution = dark ? Color(0xF5C05C) : Color(0x9A5B00);
+    kEdge = dark ? IM_COL32(255, 255, 255, 36) : IM_COL32(255, 255, 255, 178);
+}
+
+bool Dark()
+{
+    return darkTheme;
+}
+
 void ApplyStyle(ImGuiStyle& style)
 {
     kit::ApplyStyle(style);
@@ -618,13 +646,13 @@ void ApplyStyle(ImGuiStyle& style)
     color(ImGuiCol_TextDisabled, kMist);
     color(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
     color(ImGuiCol_PopupBg, kPaper);
-    color(ImGuiCol_Border, IM_COL32(0, 0, 0, 26));
+    color(ImGuiCol_Border, Alpha(kInk, 0.1f));
     color(ImGuiCol_FrameBg, kWell);
     color(ImGuiCol_FrameBgHovered, kWellHover);
     color(ImGuiCol_FrameBgActive, kWellHover);
     color(ImGuiCol_ScrollbarGrab, kFaint);
-    color(ImGuiCol_ScrollbarGrabHovered, IM_COL32(0, 0, 0, 110));
-    color(ImGuiCol_ScrollbarGrabActive, IM_COL32(0, 0, 0, 110));
+    color(ImGuiCol_ScrollbarGrabHovered, Alpha(kInk, 0.43f));
+    color(ImGuiCol_ScrollbarGrabActive, Alpha(kInk, 0.43f));
     color(ImGuiCol_CheckMark, kInk);
     color(ImGuiCol_SliderGrab, kInk);
     color(ImGuiCol_SliderGrabActive, kInk);
@@ -634,9 +662,9 @@ void ApplyStyle(ImGuiStyle& style)
     color(ImGuiCol_Header, kWell);
     color(ImGuiCol_HeaderHovered, kWellHover);
     color(ImGuiCol_HeaderActive, kFaint);
-    color(ImGuiCol_Separator, IM_COL32(0, 0, 0, 30));
+    color(ImGuiCol_Separator, Alpha(kInk, 0.12f));
     color(ImGuiCol_TextLink, kInk);
-    color(ImGuiCol_TextSelectedBg, IM_COL32(0, 0, 0, 45));
+    color(ImGuiCol_TextSelectedBg, Alpha(kInk, 0.18f));
     color(ImGuiCol_InputTextCursor, kInk);
     color(ImGuiCol_DragDropTarget, kInk);
     color(ImGuiCol_NavCursor, kInk);
@@ -903,7 +931,7 @@ bool RoundButton(const char* id, ImVec2 min, Icon icon, const char* tip, bool ac
     const ImVec2 center = min + ImVec2(side, side) * 0.5f;
     draw->AddCircleFilled(center, side / 2, active ? kInk : hovered ? kWellHover : kWell);
     const float angle = Animate(SubId(key, "turn"), active ? turn : 0, 0.5f, Curve::Spring);
-    DrawIcon(draw, icon, center, S(20.8f), active ? IM_COL32_WHITE : kInk, angle);
+    DrawIcon(draw, icon, center, S(20.8f), active ? kOnInk : kInk, angle);
     Transform(draw, start, center, Animate(SubId(key, "press"), held ? 0.86f : 1, 0.25f, Curve::Spring));
     if (tip)
         Tip(tip);
@@ -958,12 +986,12 @@ bool PillButton(const char* label, ImVec2 min, float height, PillStyle style, bo
     {
     case PillStyle::Well:
         fill = held ? kInk : hovered ? kWellHover : kWell;
-        text = held ? IM_COL32_WHITE : kInk;
+        text = held ? kOnInk : kInk;
         pressed = 0.94f;
         break;
     case PillStyle::Black:
-        fill = hovered ? Color(0x2A2A33) : kInk;
-        text = IM_COL32_WHITE;
+        fill = hovered ? kInkHover : kInk;
+        text = kOnInk;
         pressed = 0.92f;
         break;
     case PillStyle::Text:
@@ -1025,7 +1053,7 @@ int Segments(const char* id, ImVec2 min, std::span<const char* const> choices, i
         const bool hovered = ImGui::IsItemHovered();
         HandOnHover();
         ImGui::PopID();
-        const ImU32 color = static_cast<int>(i) == selected ? IM_COL32_WHITE : hovered ? kInk : kMist;
+        const ImU32 color = static_cast<int>(i) == selected ? kOnInk : hovered ? kInk : kMist;
         Line(draw, at.x, at.x + widths[i], at.y + height / 2, choices[i], color, kTextBody, true, true);
     }
     ImGui::PopID();
@@ -1044,7 +1072,7 @@ bool SwitchButton(const char* id, ImVec2 min, bool on)
     const int start = draw->VtxBuffer.Size;
     const float fill = Animate(SubId(key, "fill"), on ? 1.0f : 0.0f, 0.2f, Curve::Out);
     const float slide = Animate(SubId(key, "slide"), on ? 1.0f : 0.0f, 0.4f, Curve::Spring);
-    draw->AddRectFilled(min, min + size, Mix(hovered ? IM_COL32(0, 0, 0, 77) : kFaint, hovered ? Color(0x2A2A33) : kInk, fill), size.y / 2);
+    draw->AddRectFilled(min, min + size, Mix(hovered ? Alpha(kInk, 0.3f) : kFaint, hovered ? kInkHover : kInk, fill), size.y / 2);
     const float inset = S(3.2f), radius = size.y / 2 - inset;
     const float left = min.x + inset + radius, right = min.x + size.x - inset - radius;
     draw->AddCircleFilled(ImVec2(left + (right - left) * slide, min.y + size.y / 2), radius, kPaper, 32);
@@ -1180,7 +1208,8 @@ bool FillBar(const char* id, ImVec2 min, ImVec2 size, const Bar& bar, float& val
     if (shown > 0)
     {
         const ImVec2 fill[] = { min, ImVec2(min.x + size.x * shown, min.y), ImVec2(min.x + size.x * shown, min.y + size.y), ImVec2(min.x, min.y + size.y) };
-        FillInside(draw, min, min + size, rounding, fill, bar.color);
+        // The label and the value lie on the fill in the theme's type, which a bright color would hide in the dark.
+        FillInside(draw, min, min + size, rounding, fill, Dark() && bar.color != kQuiet ? Mix(bar.color, kPaper, 0.5f) : bar.color);
     }
     const std::string shownValue = text(value);
     const float valueWidth = Measure(shownValue, kTextBody, true).x;
@@ -1245,7 +1274,7 @@ void DrawTile(ImDrawList* draw, ImVec2 min, ImVec2 max, const TileLook& look)
     if (look.cooking)
     {
         // A white shine, slanted like the design's 110 degree gradient, that runs across while the effects compile.
-        draw->AddRectFilled(min, max, IM_COL32(0, 0, 0, 15), rounding);
+        draw->AddRectFilled(min, max, Alpha(kInk, 0.06f), rounding);
         const float peak = min.x - 0.55f * width + 3.75f * width * look.phase;
         const float slant = 0.364f;
         const float middle = (min.y + max.y) / 2;
@@ -1257,7 +1286,7 @@ void DrawTile(ImDrawList* draw, ImVec2 min, ImVec2 max, const TileLook& look)
             const float strength = 0.9f * (1 - std::abs((o0 + o1) / 2) / (0.5f * width));
             const ImVec2 band[] = { ImVec2(peak + o0 - (min.y - middle) * slant, min.y), ImVec2(peak + o1 - (min.y - middle) * slant, min.y),
                                     ImVec2(peak + o1 - (max.y - middle) * slant, max.y), ImVec2(peak + o0 - (max.y - middle) * slant, max.y) };
-            FillInside(draw, min, max, rounding, band, Alpha(IM_COL32_WHITE, strength));
+            FillInside(draw, min, max, rounding, band, Alpha(IM_COL32_WHITE, Dark() ? strength * 0.25f : strength));
         }
     }
     else if (look.reveal > 0)
@@ -1272,7 +1301,9 @@ void DrawTile(ImDrawList* draw, ImVec2 min, ImVec2 max, const TileLook& look)
     }
 
     // The name at the bottom left, under any detail line.
-    const ImU32 text = look.cooking ? kMist : Mix(kMist, kInk, look.ink);
+    // Black on the tile's color, and the theme's own type once the color is grayed and faded away.
+    const ImU32 solid = Mix(kOnColor, kInk, look.gray);
+    const ImU32 text = look.cooking ? kMist : Mix(kMist, solid, look.ink);
     const ImVec2 pad(S(look.small ? 8 : 10.4f), S(look.small ? 6.4f : 8));
     const float size = look.small ? kTextTileSmall : kTextTile;
     PushSize(size, true);
@@ -1308,8 +1339,8 @@ void DrawTile(ImDrawList* draw, ImVec2 min, ImVec2 max, const TileLook& look)
     // The dot: an outline while off, black with the tile's color in the middle while on.
     const float radius = TileDotRadius(look.small) * look.dotScale;
     const float faint = look.cooking ? 0.15f : 1.0f;
-    draw->AddCircleFilled(dot, radius, Alpha(kInk, look.dot * faint));
-    draw->AddCircle(dot, radius - S(1.2f), Alpha(Mix(text, kInk, look.dot), (0.45f + 0.55f * look.dot) * faint), 0, S(2.4f));
+    draw->AddCircleFilled(dot, radius, Alpha(solid, look.dot * faint));
+    draw->AddCircle(dot, radius - S(1.2f), Alpha(Mix(text, solid, look.dot), (0.45f + 0.55f * look.dot) * faint), 0, S(2.4f));
     if (look.spot > 0)
         draw->AddCircleFilled(dot, (radius - S(look.small ? 3.2f : 4.8f)) * look.spot, look.color);
 }
@@ -1366,7 +1397,7 @@ void DrawToast(ImDrawList* draw, ImVec2 top)
     const ImVec2 min(top.x - size.x / 2, top.y);
     const int start = draw->VtxBuffer.Size;
     draw->AddRectFilled(min, min + size, kInk, size.y / 2);
-    Line(draw, min.x, min.x + size.x, min.y + size.y / 2, context.toast, IM_COL32_WHITE, kTextBody, true, true);
+    Line(draw, min.x, min.x + size.x, min.y + size.y / 2, context.toast, kOnInk, kTextBody, true, true);
     Transform(draw, start, min + size * 0.5f, 0.8f + 0.2f * in, 0, ImVec2(0, -S(24) * (1 - in) - S(9.6f) * out), std::min(in, 1.0f) * (1 - out));
 }
 } // namespace spectrum

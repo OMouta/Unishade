@@ -1133,7 +1133,7 @@ float AddSheet(Frame& f, ImVec2 min, float width, float space)
                               const float fill = Animate(SubId(key, "fill"), added ? 1.0f : 0.0f, 0.35f, Curve::Out);
                               const float turn = Animate(SubId(key, "turn"), added ? 2 * IM_PI : 0.0f, 0.35f, Curve::Spring);
                               draw->AddCircleFilled(center, S(16), Mix(kInk, TileColor(effect->key), fill));
-                              DrawIcon(draw, added ? Icon::Check : Icon::Plus, center, S(16), Mix(IM_COL32_WHITE, kInk, fill), turn);
+                              DrawIcon(draw, added ? Icon::Check : Icon::Plus, center, S(16), Mix(kOnInk, kOnColor, fill), turn);
                               Transform(draw, start, at + size * 0.5f, Animate(SubId(key, "press"), held ? 0.96f : 1, 0.25f, Curve::Spring));
                               ImGui::PopID();
                               if (!clicked)
@@ -1334,7 +1334,7 @@ float PresetsSheet(Frame& f, ImVec2 min, float width, float space)
                               ImDrawList* draw = ImGui::GetWindowDrawList();
                               const int start = draw->VtxBuffer.Size;
                               draw->AddRectFilled(at, at + size, used ? kInk : hovered ? kWellHover : kWell, S(17.6f));
-                              const ImU32 text = used ? IM_COL32_WHITE : kInk;
+                              const ImU32 text = used ? kOnInk : kInk;
                               Line(draw, at.x + S(16), at.x + size.x - S(edit ? 44.0f : 16.0f), at.y + S(22), preset->name, text, kTextBody, true);
                               // The preset in use shows its tiles' colors, grey for the ones turned off.
                               if (used && f.effects)
@@ -1707,6 +1707,8 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
                                   f.host.SetMenuOpacity(state->opacity);
                               }
                           } });
+        fields.push_back(Choices("theme", "Theme", { "Light", "Dark" }, settings.darkMenu ? 1 : 0,
+                                 [&f](int choice) { f.host.SetSwitch(Switch::DarkMenu, choice == 1); }, {}, grid));
         fields.push_back(Choices("tiles", "Tiles", { "Regular", "Small" }, state->small ? 1 : 0,
                                  [&f](int choice) {
                                      state->small = choice == 1;
@@ -1765,10 +1767,10 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
                                   if (recording)
                                       RainbowBox(draw, keyMin, keyMin + ImVec2(keyWidth, S(40)), S(11.2f));
                                   else
-                                      draw->AddRectFilled(keyMin, keyMin + ImVec2(keyWidth, S(40)), hovered ? Color(0x2A2A33) : kInk, S(11.2f));
+                                      draw->AddRectFilled(keyMin, keyMin + ImVec2(keyWidth, S(40)), hovered ? kInkHover : kInk, S(11.2f));
                                   const std::string label = recording ? "Press keys..." : shortcut->keys.empty() ? "Not set" : shortcut->keys;
                                   Line(draw, keyMin.x + S(8), keyMin.x + keyWidth - S(8), keyMin.y + S(20), label,
-                                       recording ? kInk : shortcut->keys.empty() ? Alpha(IM_COL32_WHITE, 0.6f) : IM_COL32_WHITE, kTextBody, true, true);
+                                       recording ? kOnColor : shortcut->keys.empty() ? Alpha(kOnInk, 0.6f) : kOnInk, kTextBody, true, true);
                                   if (recording)
                                   {
                                       // Breathes while it waits, as the design's does.
@@ -2077,7 +2079,7 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
         TileLook look;
         look.name = addon.name;
         look.detail = "Add-on";
-        look.detailColor = Alpha(kInk, 0.55f);
+        look.detailColor = on && f.effects->on ? Alpha(kOnColor, 0.55f) : kMist;
         look.color = Ring(std::hash<std::string>{}(addon.id));
         look.reveal = Animate(ImGui::GetID("reveal"), on ? 1.0f : 0.0f, 0.55f, Curve::Out);
         look.ink = Animate(ImGui::GetID("ink"), on ? 1.0f : 0.0f, 0.35f, Curve::Out);
@@ -2189,7 +2191,7 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
         look.reveal = Animate(ImGui::GetID("reveal"), effect.on ? 1.0f : 0.0f, 0.55f, Curve::Out);
         look.ink = Animate(ImGui::GetID("ink"), effect.on ? 1.0f : 0.0f, 0.35f, Curve::Out);
         // Red does not show on a tile's color, so it is black there.
-        look.detailColor = Mix(kDanger, kInk, look.ink);
+        look.detailColor = f.effects->on ? Mix(kDanger, kOnColor, look.ink) : kDanger;
         look.gray = Animate(ImGui::GetID("gray"), f.effects->on ? 0.0f : 1.0f, 0.4f, Curve::Out, 0.03f * static_cast<float>(i));
         look.dot = Animate(ImGui::GetID("dot"), effect.on ? 1.0f : 0.0f, 0.3f, Curve::Out);
         look.spot = std::max(0.0f, Animate(ImGui::GetID("spot"), effect.on ? 1.0f : 0.0f, 0.4f, Curve::Spring));
@@ -2562,14 +2564,14 @@ void UndoPill(Frame& f, ImVec2 min, ImVec2 max)
     ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->AddRectFilled(at, at + size, kInk, height / 2);
-    Line(draw, at.x + pad, at.x + pad + text + 1, at.y + height / 2, state->undoText, IM_COL32_WHITE, kTextBody, true);
+    Line(draw, at.x + pad, at.x + pad + text + 1, at.y + height / 2, state->undoText, kOnInk, kTextBody, true);
     const ImVec2 buttonMin(at.x + size.x - inset - button, at.y + inset), buttonSize(button, height - inset * 2);
     ImGui::SetCursorScreenPos(buttonMin);
     const bool clicked = ImGui::InvisibleButton("Undo", buttonSize);
     const bool hovered = ImGui::IsItemHovered();
     HandOnHover();
-    draw->AddRectFilled(buttonMin, buttonMin + buttonSize, hovered ? Color(0x4A4A58) : Color(0x2A2A33), buttonSize.y / 2);
-    Line(draw, buttonMin.x, buttonMin.x + button, at.y + height / 2, "Undo", IM_COL32_WHITE, kTextBody, true, true);
+    draw->AddRectFilled(buttonMin, buttonMin + buttonSize, hovered ? Mix(kInk, kOnInk, 0.3f) : kInkHover, buttonSize.y / 2);
+    Line(draw, buttonMin.x, buttonMin.x + button, at.y + height / 2, "Undo", kOnInk, kTextBody, true, true);
     FadeWindow(ImGui::GetCurrentWindow(), shown);
     ImGui::End();
     if (clicked)
@@ -2731,7 +2733,7 @@ float Tray(Frame& f, std::optional<ImVec2> place, float pageWidth, bool& compari
             draw->AddImageRounded(frost, min, max, min / display, max / display, IM_COL32_WHITE, rounding);
     }
     draw->AddRectFilled(min, max, Alpha(kTray, state->opacity), rounding);
-    draw->AddRect(min + ImVec2(0.5f, 0.5f), max - ImVec2(0.5f, 0.5f), IM_COL32(255, 255, 255, 178), rounding, 1.0f);
+    draw->AddRect(min + ImVec2(0.5f, 0.5f), max - ImVec2(0.5f, 0.5f), kEdge, rounding, 1.0f);
     // First, so it wins over the grab handle.
     SizeCorner(f, min, max);
 
@@ -2753,7 +2755,7 @@ float Tray(Frame& f, std::optional<ImVec2> place, float pageWidth, bool& compari
         const float width = Animate(Key("grab"), state->moving ? 35.2f : hovered ? 67.2f : 48.0f, 0.3f, Curve::Spring) * s;
         const ImVec2 middle(min.x + f.trayWidth / 2, grab.y + S(kGrab) / 2);
         draw->AddRectFilled(middle - ImVec2(width / 2, S(2.56f)), middle + ImVec2(width / 2, S(2.56f)),
-                            state->moving ? kInk : hovered ? IM_COL32(0, 0, 0, 102) : IM_COL32(0, 0, 0, 51), S(16));
+                            state->moving ? kInk : Alpha(kInk, hovered ? 0.4f : 0.2f), S(16));
     }
 
     // From the anchored edge: the buttons, the tiles beyond them, then the sheet.
@@ -2915,7 +2917,7 @@ Open DrawOverGame(const Model& model, Host& host, float windowScale, bool covere
         const ImVec2 size(Measure(text, kTextBody, true).x + S(41.6f), S(41.6f));
         const ImVec2 min(display.x / 2 - size.x / 2, S(25.6f) - S(16) * (1 - label));
         front->AddRectFilled(min, min + size, Alpha(kInk, label), size.y / 2);
-        Line(front, min.x, min.x + size.x, min.y + size.y / 2, text, Alpha(IM_COL32_WHITE, label), kTextBody, true, true);
+        Line(front, min.x, min.x + size.x, min.y + size.y / 2, text, Alpha(kOnInk, label), kTextBody, true, true);
     }
     // The shot itself, framed in white, shrinks a little, then flies to the top right and fades, as the design's
     // .snapshot: 0.9 seconds, scale(.92) by 15% of it, then translate(42%, -40%) scale(.12), each part on the Out curve.

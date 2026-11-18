@@ -426,6 +426,23 @@ bool PanelTests(Host& host)
     ok &= Check(Count("game") == 0 && host.calls.empty(), "Escape closes them and leaves the menu open");
     return ok;
 }
+// The dark theme draws the same controls, so nothing is laid out by a color.
+bool DarkTests(Host& host)
+{
+    bool ok = true;
+    launcher::Model model = EffectsModel();
+    launcher::Reset(launcher::Place::Game);
+    Settle(host, model, launcher::Place::Game);
+    const size_t light = items.size();
+    model.settings.darkMenu = true;
+    Settle(host, model, launcher::Place::Game);
+    ok &= Check(items.size() == light && kit::spectrum::Dark(), "the tray has the same controls in the dark theme");
+    model.settings.darkMenu = false;
+    Settle(host, model, launcher::Place::Game);
+    ok &= Check(!kit::spectrum::Dark(), "and goes back to the light one");
+    launcher::Reset(launcher::Place::Game);
+    return ok;
+}
 // Quitting with unsaved changes waits for the answer to whether to save them.
 bool QuitTests(Host& host)
 {
@@ -642,6 +659,10 @@ int main()
     {
         Host host;
         ok &= PanelTests(host);
+    }
+    {
+        Host host;
+        ok &= DarkTests(host);
     }
     {
         Host host;

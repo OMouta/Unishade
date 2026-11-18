@@ -72,6 +72,7 @@ struct Settings
     float menuOpacity = 1;
     bool smallTiles = false;
     bool menuHints = true;
+    bool darkMenu = false;
     fs::path preset;
     // Searched recursively, like ReShade's paths ending in \**.
     std::vector<fs::path> effectPaths;

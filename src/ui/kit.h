@@ -153,18 +153,29 @@ constexpr float kTextName = Css(20.8f);
 constexpr float kTextTitle = Css(28.8f);
 constexpr float kTextTitleSide = Css(22.4f);
 
+// The colors below are the light theme's until SetDark changes them: black type on near-white, or near-white type on
+// near-black. They keep their names as constants because they only change between frames.
+void SetDark(bool dark);
+bool Dark();
 // The tray's translucent white. Over the game it lies on GameView::Frost, the design's backdrop blur, where the host
 // has it.
-constexpr ImU32 kTray = IM_COL32(247, 247, 251, 219);
-constexpr ImU32 kPaper = Color(0xF7F7FB);
-constexpr ImU32 kInk = IM_COL32(0, 0, 0, 255);
-constexpr ImU32 kMist = Color(0x62626F);
-constexpr ImU32 kWell = IM_COL32(0, 0, 0, 18);
-constexpr ImU32 kWellHover = IM_COL32(0, 0, 0, 33);
-constexpr ImU32 kFaint = IM_COL32(0, 0, 0, 64);
-constexpr ImU32 kQuiet = Color(0xC9C9D3);
-constexpr ImU32 kDanger = Color(0xC8243A);
-constexpr ImU32 kCaution = Color(0x9A5B00);
+inline ImU32 kTray = IM_COL32(247, 247, 251, 219);
+inline ImU32 kPaper = Color(0xF7F7FB);
+inline ImU32 kInk = IM_COL32(0, 0, 0, 255);
+// Type on something filled with kInk, and that fill under the mouse.
+inline ImU32 kOnInk = IM_COL32_WHITE;
+inline ImU32 kInkHover = Color(0x2A2A33);
+inline ImU32 kMist = Color(0x62626F);
+inline ImU32 kWell = IM_COL32(0, 0, 0, 18);
+inline ImU32 kWellHover = IM_COL32(0, 0, 0, 33);
+inline ImU32 kFaint = IM_COL32(0, 0, 0, 64);
+inline ImU32 kQuiet = Color(0xC9C9D3);
+inline ImU32 kDanger = Color(0xC8243A);
+inline ImU32 kCaution = Color(0x9A5B00);
+// The line around a block of kTray or kPaper.
+inline ImU32 kEdge = IM_COL32(255, 255, 255, 178);
+// Type on a color of the ring, which is bright in both themes.
+constexpr ImU32 kOnColor = IM_COL32(0, 0, 0, 255);
 // The ring's colors, repeating after seven.
 ImU32 Ring(size_t index);
 // color with its alpha multiplied.
@@ -211,7 +222,7 @@ std::vector<std::string> WrapName(const std::string& name, float size, bool bold
 
 // A key's name in a black cap, as high as height. Returns its width.
 float KeyWidth(const std::string& key);
-void KeyLabel(ImDrawList* draw, ImVec2 min, float height, const std::string& key, ImU32 fill = kInk, ImU32 text = IM_COL32_WHITE);
+void KeyLabel(ImDrawList* draw, ImVec2 min, float height, const std::string& key, ImU32 fill = kInk, ImU32 text = kOnInk);
 
 constexpr float kRoundSize = 40;
 // A round button with an icon, black while active. The icon turns by turn while active. Returns true when clicked.
