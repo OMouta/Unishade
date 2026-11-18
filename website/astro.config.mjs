@@ -19,7 +19,7 @@ const imageSizes = {
   element: {
     filter: ['img'],
     visit(node, context) {
-      context.setProperty(node, 'sizes', '(min-width: 860px) 720px, 100vw');
+      context.setProperty(node, 'sizes', '(min-width: 860px) 760px, 100vw');
     },
   },
 };
@@ -42,7 +42,7 @@ export default defineConfig({
   site: 'https://unishade.me',
   redirects: {
     '/install': '/docs/',
-    '/dlss5': '/docs/add-ons/#dlss5',
+    '/dlss5': '/docs/add-ons/',
   },
   trailingSlash: 'always',
   // A Content-Security-Policy <meta> on every page, with hashes of the scripts and styles Astro inlines. A <meta> can't
@@ -52,22 +52,19 @@ export default defineConfig({
   },
   // The sitemap leaves out the redirects and the 404 page.
   integrations: [checkLinks, sitemap()],
-  // Archivo from @fontsource-variable/archivo, its Latin letters only. <Font preload /> in Base.astro preloads it, and the
-  // fallback is Arial resized to Archivo's measurements, so the text barely moves when Archivo arrives.
+  // Bricolage Grotesque, the app's typeface, from assets/fonts. <Font preload /> in Base.astro preloads the regular
+  // weight, and the fallback is resized to its measurements, so the text barely moves when it arrives.
   fonts: [
     {
       provider: fontProviders.local(),
-      name: 'Archivo',
-      cssVariable: '--font-archivo',
+      name: 'Bricolage Grotesque',
+      cssVariable: '--font-bricolage',
       fallbacks: ['system-ui', 'sans-serif'],
       options: {
         variants: [
-          {
-            src: ['@fontsource-variable/archivo/files/archivo-latin-wdth-normal.woff2'],
-            weight: '100 900',
-            style: 'normal',
-            stretch: '62% 125%',
-          },
+          { src: ['../assets/fonts/BricolageGrotesque-Regular.ttf'], weight: 400, style: 'normal' },
+          { src: ['../assets/fonts/BricolageGrotesque-SemiBold.ttf'], weight: 600, style: 'normal' },
+          { src: ['../assets/fonts/BricolageGrotesque-ExtraBold.ttf'], weight: 800, style: 'normal' },
         ],
       },
     },
