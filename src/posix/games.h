@@ -48,6 +48,9 @@ int MatchingGame(std::span<const AutoGame> games, const std::string& executable,
 // Adds the game that owns the window, or turns it back on. Returns false when its process is gone.
 bool AddAutoGame(std::vector<AutoGame>& games, const platform::Window& window);
 
+// Adds the game a program's file runs, or turns it back on. Returns the game's name.
+std::string AddAutoGame(std::vector<AutoGame>& games, std::string program);
+
 // A saved game's running process, by its index in the list.
 struct GameProcess
 {

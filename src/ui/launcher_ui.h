@@ -309,6 +309,10 @@ struct Picker
 {
     bool add = true; // adds the window's game, or uses the window until Detect automatically
     std::vector<Window> windows;
+    // Adding a game: the games found installed that are not added yet, which AddInstalledGame adds, and whether
+    // BrowseForGame can be asked for.
+    std::vector<FoundGame> installed;
+    bool browse = false;
 };
 
 struct Model
@@ -378,6 +382,10 @@ public:
     virtual void ChooseWindow(size_t window) = 0;
     virtual void ClosePicker() = 0;
     virtual void DetectAutomatically() = 0;
+    // Adds one of Picker::installed, by its place there. The picker stays open.
+    virtual void AddInstalledGame(size_t game) = 0;
+    // Asks for a program's file and adds it as a game.
+    virtual void BrowseForGame() = 0;
     // The answer to Model::found: the ones to add by their place in it, or none.
     virtual void AddFoundGames(const std::vector<size_t>& games) = 0;
 

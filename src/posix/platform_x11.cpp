@@ -1887,6 +1887,32 @@ void Open(const std::string& target)
         std::thread([pid] { waitpid(pid, nullptr, 0); }).detach();
 }
 
+// X11 has no dialog of its own, so this is the desktop's: GNOME's or KDE's.
+void ChooseProgram(std::function<void(std::optional<std::string>)> done)
+{
+    std::thread([done = std::move(done)] {
+        for (const char* command : { "zenity --file-selection 2>/dev/null", "kdialog --getopenfilename 2>/dev/null" })
+        {
+            FILE* pipe = popen(command, "r");
+            if (!pipe)
+                continue;
+            std::string path;
+            char buffer[4096];
+            while (fgets(buffer, sizeof(buffer), pipe))
+                path += buffer;
+            const int status = pclose(pipe);
+            // What the shell answers when the program is not installed.
+            if (WIFEXITED(status) && WEXITSTATUS(status) == 127)
+                continue;
+            while (!path.empty() && path.back() == '\n')
+                path.pop_back();
+            done(path);
+            return;
+        }
+        done(std::nullopt);
+    }).detach();
+}
+
 // The home trash of the freedesktop.org trash specification, which file managers show. Presets are in the data folder
 // under the home folder, so the file only moves within its file system.
 bool MoveToTrash(const std::string& path)

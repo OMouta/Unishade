@@ -70,6 +70,8 @@ public:
     void OpenPicker(bool adding) override { picking = true; add = adding; }
     void ChooseWindow(size_t window) override { chosen = window; picking = false; }
     void ClosePicker() override { ++closed; picking = false; }
+    void AddInstalledGame(size_t) override {}
+    void BrowseForGame() override {}
     void AddFoundGames(const std::vector<size_t>& games) override
     {
         std::string call = "found";

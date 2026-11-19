@@ -1584,6 +1584,15 @@ void PollHotkeys()
             hotkeyCallback(id, pressed);
 }
 
+void ChooseProgram(std::function<void(std::optional<std::string>)> done)
+{
+    NSOpenPanel* panel = [NSOpenPanel openPanel];
+    panel.directoryURL = [NSURL fileURLWithPath:@"/Applications"];
+    [panel beginWithCompletionHandler:^(NSModalResponse response) {
+        done(response == NSModalResponseOK && panel.URL ? std::string(panel.URL.path.UTF8String) : std::string());
+    }];
+}
+
 void Open(const std::string& target)
 {
     Spawn("open", { target });

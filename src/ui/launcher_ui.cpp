@@ -1953,20 +1953,17 @@ float MessagesBody(const Model& model, Host& host, ImVec2 min, float width)
     return flow.Height();
 }
 
-// The open windows, to add a game by or to use for now.
+// The open windows, to add a game by or to use for now. Adding a game, the games installed and the way to a game's
+// file are under them, so every way to add one is on the one page.
 float PickerBody(const Picker& picker, Host& host, ImVec2 min, float width)
 {
     Flow flow(min, width, kCardWidth);
-    if (picker.windows.empty())
-        Note(flow, "No open windows.");
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    for (size_t i = 0; i < picker.windows.size(); ++i)
-    {
-        const Window& window = picker.windows[i];
+    // A window or a game: its icon, its name and a line under it. Returns whether it was clicked.
+    const auto row = [&](const char* id, const std::string& name, const std::string& detail, const std::string& picture) {
         const ImRect at = flow.Next(S(64));
-        ImGui::PushID(static_cast<int>(i));
         ImGui::SetCursorScreenPos(at.Min);
-        const bool clicked = ImGui::InvisibleButton("window", at.GetSize(), ImGuiButtonFlags_EnableNav);
+        const bool clicked = ImGui::InvisibleButton(id, at.GetSize(), ImGuiButtonFlags_EnableNav);
         const ImGuiID key = ImGui::GetItemID();
         const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
         HandOnHover();
@@ -1974,14 +1971,55 @@ float PickerBody(const Picker& picker, Host& host, ImVec2 min, float width)
         draw->AddRectFilled(at.Min, at.Max, hovered ? kWellHover : kWell, S(kRowRounding));
         const float icon = S(36);
         const ImVec2 iconMin(at.Min.x + S(14), at.GetCenter().y - icon / 2);
-        GameSquare(draw, iconMin, icon, S(9.6f), window.title, window.picture, window.title);
+        GameSquare(draw, iconMin, icon, S(9.6f), name, picture, name);
         const float left = iconMin.x + icon + S(12);
-        Line(draw, left, at.Max.x - S(14), at.GetCenter().y - S(9), window.title, kInk, kTextBody, true);
-        Line(draw, left, at.Max.x - S(14), at.GetCenter().y + S(11), window.detail, kMist, kTextSmall);
+        Line(draw, left, at.Max.x - S(14), at.GetCenter().y - (detail.empty() ? 0 : S(9)), name, kInk, kTextBody, true);
+        if (!detail.empty())
+            Line(draw, left, at.Max.x - S(14), at.GetCenter().y + S(11), detail, kMist, kTextSmall);
         Transform(draw, start, at.GetCenter(), Animate(SubId(key, "press"), held ? 0.96f : 1.0f, 0.25f, Curve::Spring));
-        if (clicked)
+        return clicked;
+    };
+
+    const bool more = picker.add && (picker.browse || !picker.installed.empty());
+    if (more)
+        Heading(flow, "Open now");
+    if (picker.windows.empty())
+        Note(flow, "No open windows.");
+    for (size_t i = 0; i < picker.windows.size(); ++i)
+    {
+        ImGui::PushID(static_cast<int>(i));
+        if (row("window", picker.windows[i].title, picker.windows[i].detail, picker.windows[i].picture))
             host.ChooseWindow(i);
         ImGui::PopID();
+    }
+    if (!more)
+        return flow.Height();
+
+    flow.Break();
+    Heading(flow, picker.installed.empty() ? "Not open" : "Installed");
+    ImGui::PushID("##installed");
+    for (size_t i = 0; i < picker.installed.size(); ++i)
+    {
+        ImGui::PushID(static_cast<int>(i));
+        if (row("installed", picker.installed[i].name, picker.installed[i].store, picker.installed[i].picture))
+            host.AddInstalledGame(i);
+        ImGui::PopID();
+    }
+    ImGui::PopID();
+    if (picker.browse)
+    {
+        const ImRect at = flow.Next(S(64));
+        ImGui::SetCursorScreenPos(at.Min);
+        const bool clicked = ImGui::InvisibleButton("browse", at.GetSize(), ImGuiButtonFlags_EnableNav);
+        const ImGuiID key = ImGui::GetItemID();
+        const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+        HandOnHover();
+        const int start = draw->VtxBuffer.Size;
+        DashedBox(draw, at.Min, at.Max, S(kRowRounding), hovered ? Alpha(kInk, 0.5f) : kFaint, S(2.4f));
+        Line(draw, at.Min.x + S(12), at.Max.x - S(12), at.GetCenter().y, "Choose a file", hovered ? kInk : kMist, kTextBody, true, true);
+        Transform(draw, start, at.GetCenter(), Animate(SubId(key, "press"), held ? 0.96f : 1.0f, 0.25f, Curve::Spring));
+        if (clicked)
+            host.BrowseForGame();
     }
     return flow.Height();
 }
@@ -2074,9 +2112,13 @@ void ModalHeader(const Model& model, Host& host, ImVec2 min, float width, float&
     case Modal::Picker:
     {
         const bool add = state->picker && state->picker->add;
+        // Adding from the games installed leaves the picker open for the next one.
+        const bool more = add && (state->picker->browse || !state->picker->installed.empty());
         if (Header(min, width, add ? "Add a game" : "Pick a window",
-                   add ? "Pick your game's window. If it isn't here, open the game first." : "Unishade uses this window until you click Detect automatically.",
-                   { { "Cancel", PillStyle::Text } }, height) == 0)
+                   more  ? ""
+                   : add ? "Pick your game's window. If it isn't here, open the game first."
+                         : "Unishade uses this window until you click Detect automatically.",
+                   { { more ? "Done" : "Cancel", PillStyle::Text } }, height) == 0)
             host.ClosePicker();
         break;
     }

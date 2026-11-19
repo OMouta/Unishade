@@ -232,6 +232,9 @@ bool WaylandDesktop();
 
 // Opens a folder or a web page with the system's default program.
 void Open(const std::string& target);
+// Asks for a program's file with the system's own dialog, without holding up the caller. done gets the file chosen, an
+// empty string when none was, or nothing when there is no dialog to show. It may be called on another thread.
+void ChooseProgram(std::function<void(std::optional<std::string>)> done);
 // Moves a file to the Recycle Bin on Windows, or to the Trash. Returns false when it stays where it is.
 bool MoveToTrash(const std::string& path);
 

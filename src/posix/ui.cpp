@@ -44,6 +44,7 @@
 #include <initializer_list>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <memory>
 #include <set>
 #include <thread>
@@ -604,6 +605,14 @@ struct LauncherState
 };
 LauncherState launcherState;
 
+// The games found installed that are not added yet, while the picker that adds a game lists them.
+std::vector<FoundGame> installedGames;
+
+// The answer of the dialog that asks for a game's program, from the thread it ran on.
+std::mutex programLock;
+std::optional<std::optional<std::string>> programChosen;
+std::atomic<bool> choosingProgram = false;
+
 // A saved game's presets folder. Names on Linux differ by case, and a folder named in another case is still the game's.
 fs::path GameFolder(const std::string& folder)
 {
@@ -861,6 +870,44 @@ void UseWindow(App& app, bool add, const platform::Window& window)
     platform::Activate(window);
 }
 
+// A game's icon goes where its logo is kept, so it shows before the game was ever played.
+void KeepGameIcon(const std::string& name, const std::string& picture)
+{
+    const std::string folder = FolderName(name);
+    int width = 0, height = 0;
+    const std::vector<uint8_t> icon = picture.empty() || folder.empty() ? std::vector<uint8_t>() : ReadPicture(picture, width, height);
+    const fs::path logo = GameFolder(folder) / "logo.png";
+    std::error_code error;
+    if (!icon.empty() && !fs::exists(logo, error))
+    {
+        fs::create_directories(logo.parent_path(), error);
+        stbi_write_png(logo.string().c_str(), width, height, 4, icon.data(), width * 4);
+    }
+}
+
+// Adds the program BrowseForGame's dialog was answered with, once it was.
+void AddChosenProgram(App& app)
+{
+    std::optional<std::optional<std::string>> chosen;
+    {
+        const std::lock_guard lock(programLock);
+        chosen.swap(programChosen);
+    }
+    if (!chosen)
+        return;
+    choosingProgram = false;
+    if (!*chosen)
+        Report(LogLevel::Warning, "There is no file dialog to browse with. Install zenity or kdialog.");
+    if (!*chosen || (*chosen)->empty())
+        return;
+    const std::string name = AddAutoGame(app.autoGames, **chosen);
+    if (IsProgram(**chosen))
+        KeepGameIcon(name, **chosen);
+    launcherState.picking = false;
+    app.SaveGames();
+    RefreshLauncher();
+}
+
 // The effects of the game being played. The list is made again only when the techniques change, which is checked on
 // every frame without allocating.
 launcher::Effects DescribeEffects(App& app)
@@ -1078,6 +1125,12 @@ public:
         launcherState.picking = true;
         launcherState.pickToAdd = add;
         launcherState.details.clear();
+        installedGames = add ? FindInstalledGames() : std::vector<FoundGame>();
+        std::erase_if(installedGames, [&](const FoundGame& found) {
+            return std::any_of(app.autoGames.begin(), app.autoGames.end(), [&](const AutoGame& game) {
+                return !strcasecmp(game.executable.c_str(), found.game.executable.c_str()) || !strcasecmp(game.name.c_str(), found.game.name.c_str());
+            });
+        });
     }
 
     void ChooseWindow(size_t window) override
@@ -1099,6 +1152,30 @@ public:
         app.Select(std::nullopt);
     }
 
+    void AddInstalledGame(size_t game) override
+    {
+        if (game >= installedGames.size())
+            return;
+        app.autoGames.push_back(installedGames[game].game);
+        KeepGameIcon(installedGames[game].game.name, installedGames[game].picture);
+        installedGames.erase(installedGames.begin() + static_cast<std::ptrdiff_t>(game));
+        app.SaveGames();
+        RefreshLauncher();
+    }
+
+    void BrowseForGame() override
+    {
+        if (choosingProgram.exchange(true))
+            return;
+        platform::ChooseProgram([](std::optional<std::string> program) {
+            {
+                const std::lock_guard lock(programLock);
+                programChosen = std::move(program);
+            }
+            glfwPostEmptyEvent();
+        });
+    }
+
     void AddFoundGames(const std::vector<size_t>& games) override
     {
         for (const size_t game : games)
@@ -1107,17 +1184,7 @@ public:
                 continue;
             const FoundGame& found = app.foundGames[game];
             app.autoGames.push_back(found.game);
-            // Its icon goes where a game's is kept, so it shows before the game was ever played.
-            const std::string folder = FolderName(found.game.name);
-            int width = 0, height = 0;
-            const std::vector<uint8_t> icon = found.picture.empty() || folder.empty() ? std::vector<uint8_t>() : ReadPicture(found.picture, width, height);
-            const fs::path logo = GameFolder(folder) / "logo.png";
-            std::error_code error;
-            if (!icon.empty() && !fs::exists(logo, error))
-            {
-                fs::create_directories(logo.parent_path(), error);
-                stbi_write_png(logo.string().c_str(), width, height, 4, icon.data(), width * 4);
-            }
+            KeepGameIcon(found.game.name, found.picture);
         }
         app.foundGames.clear();
         // Saved even when empty, so the list is not offered again.
@@ -2105,9 +2172,14 @@ launcher::Model DescribeLauncher(App& app)
     model.settings.recording = launcherState.recording;
     model.settings.shortcutError = launcherState.shortcutError;
 
+    AddChosenProgram(app);
     if (launcherState.picking)
     {
-        launcher::Picker picker{ .add = launcherState.pickToAdd };
+        // Over the game the picker only takes the game's window: a file dialog would come up over it.
+        launcher::Picker picker{ .add = launcherState.pickToAdd, .browse = launcherState.pickToAdd && !launcherState.overGame };
+        if (picker.browse)
+            for (const FoundGame& found : installedGames)
+                picker.installed.push_back({ found.game.name, found.store, found.picture });
         for (const platform::Window& window : app.Windows())
         {
             auto detail = launcherState.details.find(window.id);

@@ -121,6 +121,32 @@ bool AddAutoGame(std::vector<AutoGame>& games, const platform::Window& window)
     return true;
 }
 
+std::string AddAutoGame(std::vector<AutoGame>& games, std::string program)
+{
+    const std::string file = program;
+    std::string name = BaseName(program);
+    if (const size_t dot = name.rfind('.'); dot != std::string::npos && dot > 0)
+        name.erase(dot);
+#ifdef __APPLE__
+    // An app is a folder, with the program that runs somewhere inside it.
+    if (program.ends_with(".app"))
+        program += '/';
+#elif !defined(_WIN32)
+    // Wine and Proton games are saved by their .exe, since the executable is Wine's own.
+    if (program.size() > 4 && !strcasecmp(program.c_str() + program.size() - 4, ".exe"))
+        program = BaseName(program);
+#endif
+    // Already there, perhaps by its folder.
+    for (AutoGame& game : games)
+        if (game.executable == program || MatchesProcess(game, file, {}))
+        {
+            game.enabled = true;
+            return game.name;
+        }
+    games.push_back({ program, name });
+    return name;
+}
+
 std::optional<platform::Window> FindGameTarget(const std::optional<platform::Window>& selection, std::span<const AutoGame> games,
                                               platform::WindowId preferred, std::vector<GameProcess>* windowless)
 {

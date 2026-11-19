@@ -13,6 +13,7 @@
 #include <d3dcompiler.h>
 #include <dwmapi.h>
 #include <dxgi1_2.h>
+#include <commdlg.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <tlhelp32.h>
@@ -1707,6 +1708,21 @@ bool Relaunch()
 void ShowStartupError(const std::string& message)
 {
     MessageBoxW(nullptr, Wide(message).c_str(), L"Unishade could not start", MB_OK | MB_ICONERROR);
+}
+
+// On a thread of its own, since the dialog runs until it is answered and the game still has to be drawn over.
+void ChooseProgram(std::function<void(std::optional<std::string>)> done)
+{
+    std::thread([done = std::move(done), owner = FindWindowW(L"GLFW30", L"Unishade")] {
+        std::wstring file(32768, L'\0');
+        OPENFILENAMEW ask{ sizeof(ask) };
+        ask.hwndOwner = owner;
+        ask.lpstrFilter = L"Programs\0*.exe\0";
+        ask.lpstrFile = file.data();
+        ask.nMaxFile = static_cast<DWORD>(file.size());
+        ask.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_HIDEREADONLY;
+        done(GetOpenFileNameW(&ask) ? Utf8(file.c_str()) : std::string());
+    }).detach();
 }
 
 // Brings the running Unishade's launcher to the front. GLFW names its windows' class GLFW30.
