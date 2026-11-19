@@ -627,6 +627,9 @@ void SetDark(bool dark)
     kDanger = dark ? Color(0xFF7676) : Color(0xC8243A);
     kCaution = dark ? Color(0xF5C05C) : Color(0x9A5B00);
     kEdge = dark ? IM_COL32(255, 255, 255, 36) : IM_COL32(255, 255, 255, 178);
+    kToast = dark ? Color(0x16161C) : IM_COL32(0, 0, 0, 255);
+    kOnToast = dark ? Color(0xF2F2FB) : IM_COL32_WHITE;
+    kToastEdge = dark ? IM_COL32(255, 255, 255, 36) : 0;
 }
 
 bool Dark()
@@ -1396,8 +1399,9 @@ void DrawToast(ImDrawList* draw, ImVec2 top)
     const ImVec2 size(Measure(context.toast, kTextBody, true).x + S(41.6f), S(41.6f));
     const ImVec2 min(top.x - size.x / 2, top.y);
     const int start = draw->VtxBuffer.Size;
-    draw->AddRectFilled(min, min + size, kInk, size.y / 2);
-    Line(draw, min.x, min.x + size.x, min.y + size.y / 2, context.toast, kOnInk, kTextBody, true, true);
+    draw->AddRectFilled(min, min + size, kToast, size.y / 2);
+    draw->AddRect(min + ImVec2(0.5f, 0.5f), min + size - ImVec2(0.5f, 0.5f), kToastEdge, size.y / 2);
+    Line(draw, min.x, min.x + size.x, min.y + size.y / 2, context.toast, kOnToast, kTextBody, true, true);
     Transform(draw, start, min + size * 0.5f, 0.8f + 0.2f * in, 0, ImVec2(0, -S(24) * (1 - in) - S(9.6f) * out), std::min(in, 1.0f) * (1 - out));
 }
 } // namespace spectrum

@@ -388,7 +388,7 @@ void DrawToast(App& app)
         until = app.toastUntil;
         shownText = app.toast;
     }
-    // A pill of the theme's ink that springs up over half a second and sinks away over the last 0.3, as the design's toast. It
+    // A dark pill that springs up over half a second and sinks away over the last 0.3, as the design's toast. It
     // stands at the top while the menu is open, whose tray opens at the bottom.
     const float in = Ease(Curve::Spring, std::clamp(static_cast<float>((glfwGetTime() - since) / 0.5), 0.0f, 1.0f));
     const float out = 1 - std::clamp(static_cast<float>(left / 0.3), 0.0f, 1.0f);
@@ -404,17 +404,18 @@ void DrawToast(App& app)
     ImDrawList* draw = ImGui::GetForegroundDrawList();
     const int start = draw->VtxBuffer.Size;
     draw->AddRectFilled(min + ImVec2(0, S(6.4f)), min + size + ImVec2(0, S(6.4f)), IM_COL32(0, 0, 0, 40), height / 2);
-    draw->AddRectFilled(min, min + size, spectrum::kInk, height / 2);
+    draw->AddRectFilled(min, min + size, spectrum::kToast, height / 2);
+    draw->AddRect(min + ImVec2(0.5f, 0.5f), min + size - ImVec2(0.5f, 0.5f), spectrum::kToastEdge, height / 2);
     float x = min.x + pad;
     if (keyWidth > 0)
     {
         x -= S(8);
         const float keyHeight = S(28.8f);
-        draw->AddRectFilled(ImVec2(x, middle - keyHeight / 2), ImVec2(x + keyWidth, middle + keyHeight / 2), spectrum::Alpha(spectrum::kOnInk, 0.18f), S(9.6f));
-        Line(draw, x, x + keyWidth, middle, app.toastKey, spectrum::kOnInk, spectrum::kTextSmall, true, true);
+        draw->AddRectFilled(ImVec2(x, middle - keyHeight / 2), ImVec2(x + keyWidth, middle + keyHeight / 2), spectrum::Alpha(spectrum::kOnToast, 0.18f), S(9.6f));
+        Line(draw, x, x + keyWidth, middle, app.toastKey, spectrum::kOnToast, spectrum::kTextSmall, true, true);
         x += keyWidth + gap;
     }
-    Line(draw, x, x + textWidth + 1, middle, app.toast, spectrum::kOnInk, spectrum::kTextBody, true);
+    Line(draw, x, x + textWidth + 1, middle, app.toast, spectrum::kOnToast, spectrum::kTextBody, true);
     const float away = S(24) * (1 - in) + S(9.6f) * out;
     Transform(draw, start, min + size * 0.5f, 0.8f + 0.2f * in, 0, ImVec2(0, top ? -away : away), std::min(in, 1.0f) * (1 - out));
 }

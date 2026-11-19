@@ -174,6 +174,11 @@ inline ImU32 kDanger = Color(0xC8243A);
 inline ImU32 kCaution = Color(0x9A5B00);
 // The line around a block of kTray or kPaper.
 inline ImU32 kEdge = IM_COL32(255, 255, 255, 178);
+// A message's pill and the type on it: dark in both themes, with a line around it in the dark one, where it would
+// otherwise be lost on a dark game.
+inline ImU32 kToast = IM_COL32(0, 0, 0, 255);
+inline ImU32 kOnToast = IM_COL32_WHITE;
+inline ImU32 kToastEdge = 0;
 // Type on a color of the ring, which is bright in both themes.
 constexpr ImU32 kOnColor = IM_COL32(0, 0, 0, 255);
 // The ring's colors, repeating after seven.
@@ -312,7 +317,7 @@ constexpr float kMenuRowWidth = 216;
 // Call last in a popup, before EndPopup, which then fades in when it opens.
 float MenuAppear();
 
-// A message in a black pill at the top middle of the screen, which springs in and fades after a moment.
+// A message in a dark pill at the top middle of the screen, which springs in and fades after a moment.
 void Toast(const std::string& text);
 void DrawToast(ImDrawList* draw, ImVec2 top);
 } // namespace spectrum

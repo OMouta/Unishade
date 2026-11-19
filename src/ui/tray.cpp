@@ -2562,15 +2562,16 @@ void UndoPill(Frame& f, ImVec2 min, ImVec2 max)
     // The tray comes to the front when it is clicked, and this stays over it.
     ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    draw->AddRectFilled(at, at + size, kInk, height / 2);
-    Line(draw, at.x + pad, at.x + pad + text + 1, at.y + height / 2, state->undoText, kOnInk, kTextBody, true);
+    draw->AddRectFilled(at, at + size, kToast, height / 2);
+    draw->AddRect(at + ImVec2(0.5f, 0.5f), at + size - ImVec2(0.5f, 0.5f), kToastEdge, height / 2);
+    Line(draw, at.x + pad, at.x + pad + text + 1, at.y + height / 2, state->undoText, kOnToast, kTextBody, true);
     const ImVec2 buttonMin(at.x + size.x - inset - button, at.y + inset), buttonSize(button, height - inset * 2);
     ImGui::SetCursorScreenPos(buttonMin);
     const bool clicked = ImGui::InvisibleButton("Undo", buttonSize);
     const bool hovered = ImGui::IsItemHovered();
     HandOnHover();
-    draw->AddRectFilled(buttonMin, buttonMin + buttonSize, hovered ? Mix(kInk, kOnInk, 0.3f) : kInkHover, buttonSize.y / 2);
-    Line(draw, buttonMin.x, buttonMin.x + button, at.y + height / 2, "Undo", kOnInk, kTextBody, true, true);
+    draw->AddRectFilled(buttonMin, buttonMin + buttonSize, Mix(kToast, kOnToast, hovered ? 0.3f : 0.16f), buttonSize.y / 2);
+    Line(draw, buttonMin.x, buttonMin.x + button, at.y + height / 2, "Undo", kOnToast, kTextBody, true, true);
     FadeWindow(ImGui::GetCurrentWindow(), shown);
     ImGui::End();
     if (clicked)
