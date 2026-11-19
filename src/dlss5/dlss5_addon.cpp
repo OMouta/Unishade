@@ -20,11 +20,13 @@ namespace
 constexpr int kMostPasses = 4;
 
 const UnishadeSetting kSettings[] = {
-    { "Style", "Style", nullptr, UNISHADE_SETTING_CHOICE, 0, 0, 1, "Natural\0Cinematic\0" },
+    // nvngx_dlssnr.dll 310.8.0.0 has one more look, for every style but 0 and 1. The name is Unishade's.
+    { "Style", "Style", nullptr, UNISHADE_SETTING_CHOICE, 0, 0, 2, "Natural\0Cinematic\0Soft\0" },
     { "Intensity", "Intensity", "From the game's picture as it is to the full effect.", UNISHADE_SETTING_SLIDER, 1, 0, 1, nullptr },
-    { "LocalToneStrength", "Local tone", nullptr, UNISHADE_SETTING_SLIDER, 1, 0, 1, nullptr },
-    { "LocalStructureStrength", "Structure", nullptr, UNISHADE_SETTING_SLIDER, 1, 0, 1, nullptr },
-    { "SkinStructureStrength", "Skin structure", "Structure on characters, when Auto mask is on.", UNISHADE_SETTING_SLIDER, 1, 0, 1, nullptr },
+    // The DLL does not clamp the strengths. 1 is its own default.
+    { "LocalToneStrength", "Local tone", nullptr, UNISHADE_SETTING_SLIDER, 1, 0, 2, nullptr },
+    { "LocalStructureStrength", "Structure", nullptr, UNISHADE_SETTING_SLIDER, 1, 0, 2, nullptr },
+    { "SkinStructureStrength", "Skin structure", "Structure on characters, when Auto mask is on.", UNISHADE_SETTING_SLIDER, 1, 0, 2, nullptr },
     { "AutoMask", "Auto mask", "Finds characters, so Skin structure applies to them.", UNISHADE_SETTING_TOGGLE, 1, 0, 1, nullptr },
     { "PassCount", "Passes", "Runs DLSS5 again on its own result. Each pass takes more of the graphics card's memory.",
       UNISHADE_SETTING_INTEGER, 1, 1, kMostPasses, nullptr },
