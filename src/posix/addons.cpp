@@ -702,16 +702,11 @@ void Addons::SetSetting(const std::string& file, size_t index, float value)
 
 void Addons::WritePreset(const Addon& addon)
 {
-    // Addons lists the ones on in the preset and AddonsOff the ones turned off in it, as Techniques and TechniquesOff
-    // do for effects. A preset that names an add-on in neither was made without it, and leaves it on.
+    // Addons lists the ones on in the preset, as Techniques does for effects. One it does not name is off.
     // A list the preset does not have is not started empty.
-    const auto list = [&](const char* key, bool in) {
-        const std::string was = runtime->PresetValue("", key);
-        if (in || !was.empty())
-            runtime->SetPresetValue("", key, in ? PresetIni::With(was, addon.name) : PresetIni::Without(was, addon.name));
-    };
-    list("Addons", !addon.bypassed);
-    list("AddonsOff", addon.bypassed);
+    const std::string was = runtime->PresetValue("", "Addons");
+    if (!addon.bypassed || !was.empty())
+        runtime->SetPresetValue("", "Addons", addon.bypassed ? PresetIni::Without(was, addon.name) : PresetIni::With(was, addon.name));
     for (const Setting& setting : addon.settings)
         runtime->SetPresetValue(addon.name, setting.key, FormatValue(setting.type, setting.value));
 }
@@ -731,7 +726,7 @@ void Addons::ReadSettings(Addon& addon)
     library.values.resize(addon.settings.size());
     const bool look = ChangesPicture(addon);
     if (look)
-        addon.bypassed = PresetIni::Listed(runtime->PresetValue("", "AddonsOff"), addon.name);
+        addon.bypassed = !PresetIni::Listed(runtime->PresetValue("", "Addons"), addon.name);
     const IniText ini(look ? std::string() : ReadFile(DataDirectory() / "Unishade.ini"));
     for (size_t i = 0; i < addon.settings.size(); ++i)
     {
