@@ -43,6 +43,7 @@ constexpr float kTilesGap = 12.8f; // between the tiles and the buttons
 constexpr float kTileGap = 8;
 constexpr float kEdge = 25.6f;  // from the bottom of the game, where the tray starts
 constexpr float kDock = 90;     // let go this near a side of the game and the tray docks there
+constexpr float kCenter = 18;   // moved this near the middle of the game, the tray stays in the middle
 constexpr float kMargin = 20;   // the tray keeps this far from the sides of the game
 constexpr float kNameWidth = 240;
 constexpr float kSideNameWidth = 144;
@@ -2768,7 +2769,19 @@ float Tray(Frame& f, std::optional<ImVec2> place, float pageWidth, bool& compari
     {
         min = state->moving ? io.MousePos - state->moveOffset : TrayMin(f, f.trayHeight);
         if (state->moving)
+        {
             min.y = std::max(min.y, 0.0f);
+            // Near the middle of the game it stays there, with a line down the middle to say so.
+            const float middle = (display.x - f.trayWidth) / 2;
+            if (std::abs(min.x - middle) < S(kCenter))
+            {
+                min.x = middle;
+                ImDrawList* over = ImGui::GetForegroundDrawList();
+                const float x = std::round(display.x / 2);
+                over->AddLine(ImVec2(x, 0), ImVec2(x, display.y), IM_COL32(0, 0, 0, 90), S(4));
+                over->AddLine(ImVec2(x, 0), ImVec2(x, display.y), IM_COL32(255, 255, 255, 230), S(1.6f));
+            }
+        }
         // It rises into place with the spring when the menu opens, and drops back out of sight when it closes: 1 is
         // its own height and 48 more beyond the edge it is anchored by.
         if (std::exchange(state->justOpened, false))
