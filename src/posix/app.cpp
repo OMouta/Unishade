@@ -2,9 +2,9 @@
 #include "log.h"
 #include "theme.h"
 #include "ui.h"
+#include "uimask.h"
 #ifdef _WIN32
 #include "discord.h"
-#include "uimask.h"
 #include "upscale.h"
 #include "update.h"
 #endif
