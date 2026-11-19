@@ -279,9 +279,9 @@ struct Addon
     float progress = 0; // from 0 to 1, while it installs
     // While it is on: it changes the game's picture, as effects do.
     bool changesPicture = false;
-    // It stays loaded and leaves the picture alone, as an effect that is turned off.
+    // It stays loaded and leaves the picture alone, as an effect that is turned off. The preset keeps that.
     bool bypassed = false;
-    // While it is on: its settings, which each preset keeps.
+    // While it is on: its settings. Each preset keeps them for one that changes the picture.
     std::vector<EffectSetting> settings;
 };
 

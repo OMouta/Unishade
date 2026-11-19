@@ -1918,6 +1918,9 @@ std::vector<std::string> MissingEffects(App& app)
         if (std::find(files.begin(), files.end(), file) == files.end())
             files.push_back(std::move(file));
     }
+    // An add-on the preset has on is part of its look as an effect is.
+    for (const std::string& name : app.addons.Missing())
+        files.push_back("the " + name + " add-on");
     return files;
 }
 

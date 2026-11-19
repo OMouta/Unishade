@@ -168,6 +168,26 @@ public:
         return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) { return Lower(x) == Lower(y); });
     }
 
+    // Whether a list such as "a,b,c" names something.
+    static bool Listed(const std::string& list, const std::string& name)
+    {
+        const std::vector<std::string> items = Split(list);
+        return std::any_of(items.begin(), items.end(), [&](const std::string& item) { return Same(item, name); });
+    }
+
+    // A list with a name in it once, at its end when it was not there, or without it.
+    static std::string With(const std::string& list, const std::string& name)
+    {
+        return Listed(list, name) ? list : Join(Split(list + "," + name));
+    }
+
+    static std::string Without(const std::string& list, const std::string& name)
+    {
+        std::vector<std::string> items = Split(list);
+        std::erase_if(items, [&](const std::string& item) { return Same(item, name); });
+        return Join(items);
+    }
+
     static std::string Join(const std::vector<std::string>& items)
     {
         std::string text;

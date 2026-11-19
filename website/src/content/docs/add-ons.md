@@ -17,7 +17,9 @@ Click **Install** on one to download it, then use its switch to turn it on or of
 
 ## Settings
 
-An add-on that is on gets a tile in the menu, next to the effects. Click it for its settings, which each preset keeps.
+An add-on that changes the picture, as DLSS5 does, gets a tile in the menu next to the effects. Click it for its settings, and click its dot to turn it off. Each preset keeps both, so a preset you share looks the same for anyone with the add-on.
+
+Depth's detail is saved for your PC, not in the preset.
 
 ![Depth and DLSS5 settings](./images/addon-settings.png)
 

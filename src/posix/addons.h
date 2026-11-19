@@ -41,7 +41,7 @@ public:
         float max = 1;
         float defaultValue = 0;
         std::vector<std::string> choices;
-        float value = 0; // in the current preset
+        float value = 0; // in the current preset, or in Unishade.ini for an add-on that leaves the picture alone
     };
 
     struct Addon
@@ -52,7 +52,9 @@ public:
         bool official = false;
         State state = State::Pending;
         std::string error;
-        bool bypassed = false; // enabled, but frames skip it until Unishade starts again
+        // Enabled, but frames skip it. For an add-on that changes the picture, the preset says so: it is turned off
+        // in this preset as an effect is.
+        bool bypassed = false;
         std::vector<Setting> settings; // once it loaded
         std::shared_ptr<Library> library;
     };
@@ -93,8 +95,11 @@ public:
     // Reads the Addons folder again, and starts the add-on if it is on.
     void Resume(const std::string& file);
     bool Loaded(const std::string& file) const;
-    // Kept in the current preset.
+    // Kept in the current preset for an add-on that changes the picture, since it is part of the look, and in
+    // Unishade.ini for any other, whose settings are about this computer.
     void SetSetting(const std::string& file, size_t setting, float value);
+    // The add-ons the preset says are on in it that are not running here, by name.
+    std::vector<std::string> Missing() const;
     // Starts and stops add-ons as the calls above asked, and takes settings from a preset that loaded. Call once per
     // pass of the main loop, outside drawing, since stopping one prepares the effects again.
     void Update();
@@ -119,6 +124,9 @@ private:
     void Stop(Addon& addon, bool unload);
     void Fail(Addon& addon, const std::string& error);
     void ReadSettings(Addon& addon);
+    // Writes whether the add-on is on in the preset, and every one of its values, so the preset looks the same
+    // wherever the add-on runs and whatever its defaults become.
+    void WritePreset(const Addon& addon);
     // What Unishade.ini says about a file: 1 to load it, 0 not to, -1 nothing yet.
     int Answer(const std::string& file) const;
     void SetAnswer(const std::string& file, bool load);

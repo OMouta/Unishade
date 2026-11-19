@@ -36,6 +36,8 @@ constexpr char kExtension[] = ".dylib";
 constexpr char kExtension[] = ".so";
 #endif
 constexpr uint32_t kFrameFlags = UNISHADE_ADDON_WRITES_DEPTH | UNISHADE_ADDON_CHANGES_PICTURE;
+// Where Unishade.ini keeps the settings of an add-on that leaves the picture alone: this, then the add-on's name.
+const std::string kSettingsSection = "ADDON:";
 
 fs::path AddonsDirectory()
 {
@@ -689,17 +691,56 @@ void Addons::SetSetting(const std::string& file, size_t index, float value)
     setting.value = ValidValue(setting, value);
     if (index < addon->library->values.size())
         addon->library->values[index] = setting.value;
-    runtime->SetPresetValue(addon->name, setting.key, FormatValue(setting.type, setting.value));
+    if (ChangesPicture(*addon))
+        return WritePreset(*addon);
+    const fs::path path = DataDirectory() / "Unishade.ini";
+    IniText ini(ReadFile(path));
+    ini.Set(kSettingsSection + addon->name, setting.key, FormatValue(setting.type, setting.value));
+    if (!WriteFile(path, ini.Text()))
+        Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
+}
+
+void Addons::WritePreset(const Addon& addon)
+{
+    // Addons lists the ones on in the preset and AddonsOff the ones turned off in it, as Techniques and TechniquesOff
+    // do for effects. A preset that names an add-on in neither was made without it, and leaves it on.
+    // A list the preset does not have is not started empty.
+    const auto list = [&](const char* key, bool in) {
+        const std::string was = runtime->PresetValue("", key);
+        if (in || !was.empty())
+            runtime->SetPresetValue("", key, in ? PresetIni::With(was, addon.name) : PresetIni::Without(was, addon.name));
+    };
+    list("Addons", !addon.bypassed);
+    list("AddonsOff", addon.bypassed);
+    for (const Setting& setting : addon.settings)
+        runtime->SetPresetValue(addon.name, setting.key, FormatValue(setting.type, setting.value));
+}
+
+std::vector<std::string> Addons::Missing() const
+{
+    std::vector<std::string> missing;
+    for (const std::string& name : PresetIni::Split(runtime->PresetValue("", "Addons")))
+        if (std::none_of(addons.begin(), addons.end(), [&](const Addon& addon) { return addon.state == State::Enabled && PresetIni::Same(addon.name, name); }))
+            missing.push_back(name);
+    return missing;
 }
 
 void Addons::ReadSettings(Addon& addon)
 {
     Library& library = *addon.library;
     library.values.resize(addon.settings.size());
+    const bool look = ChangesPicture(addon);
+    if (look)
+        addon.bypassed = PresetIni::Listed(runtime->PresetValue("", "AddonsOff"), addon.name);
+    const IniText ini(look ? std::string() : ReadFile(DataDirectory() / "Unishade.ini"));
     for (size_t i = 0; i < addon.settings.size(); ++i)
     {
         Setting& setting = addon.settings[i];
-        const std::string text = runtime->PresetValue(addon.name, setting.key);
+        std::string text;
+        if (look)
+            text = runtime->PresetValue(addon.name, setting.key);
+        else
+            ini.Get(kSettingsSection + addon.name, setting.key, text);
         setting.value = text.empty() ? setting.defaultValue : ValidValue(setting, std::strtof(text.c_str(), nullptr));
         library.values[i] = setting.value;
     }
@@ -891,8 +932,12 @@ void Addons::Install(const Official& addon, const std::atomic<bool>& cancel,
 
 void Addons::SetBypassed(const std::string& file, bool bypassed)
 {
-    if (Addon* addon = Find(file))
-        addon->bypassed = bypassed;
+    Addon* addon = Find(file);
+    if (!addon)
+        return;
+    addon->bypassed = bypassed;
+    if (ChangesPicture(*addon))
+        WritePreset(*addon);
 }
 
 bool Addons::ChangesPicture(const Addon& addon) const
