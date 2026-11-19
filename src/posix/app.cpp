@@ -647,6 +647,7 @@ void App::RenderOverlay()
     }
     failedWidth = failedHeight = 0;
 
+    const double started = Now();
     Surface& surface = overlay.surface;
     if (!surface.BeginFrame())
         return;
@@ -700,6 +701,7 @@ void App::RenderOverlay()
     menuHovered = io.WantCaptureMouse;
     menuTyping = io.WantTextInput;
     EndUi(overlay);
+    frameStats.Shown(Now(), frame.serial, (Now() - started) * 1000);
 
     if (screenshot)
         SaveScreenshot();

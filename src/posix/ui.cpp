@@ -420,6 +420,103 @@ void DrawToast(App& app)
     Transform(draw, start, min + size * 0.5f, 0.8f + 0.2f * in, 0, ImVec2(0, top ? -away : away), std::min(in, 1.0f) * (1 - out));
 }
 
+// Frame rates and frame times in a card at the top right of the game, while the setting asks for them.
+void DrawDebugInfo(App& app)
+{
+    if (!app.settings.debugInfo || !app.active)
+        return;
+    using namespace spectrum;
+    SetDark(app.settings.darkMenu);
+    const FrameStats& stats = app.frameStats;
+    const ImGuiIO& io = ImGui::GetIO();
+    const float pad = S(18), width = S(368), numbers = S(46), graph = S(88), strip = S(34), gap = S(12), label = S(20);
+    const float big = Css(35.2f);
+    const ImVec2 size(width, pad + numbers + gap + graph + gap + strip + S(8) + label + pad);
+    const ImVec2 min(std::round(io.DisplaySize.x - S(20) - size.x), std::round(S(20))), max = min + size;
+    const float left = min.x + pad, right = max.x - pad;
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    Shadow(draw, min, max, S(24), S(12), S(40), 0.3f);
+    draw->AddRectFilled(min, max, Alpha(kPaper, 0.92f), S(24));
+    draw->AddRect(min + ImVec2(0.5f, 0.5f), max - ImVec2(0.5f, 0.5f), kEdge, S(24));
+
+    // The two rates as big numbers, with the size of the picture effects run on at the right.
+    char text[64];
+    float y = min.y + pad;
+    const float middle = y + numbers / 2;
+    const auto number = [&](float x, double value, const char* name) {
+        if (stats.ready)
+            snprintf(text, sizeof(text), "%.0f", value);
+        else
+            snprintf(text, sizeof(text), "-");
+        const float wide = Measure(text, big, true).x;
+        Line(draw, x, x + wide + 1, middle, text, kInk, big, true);
+        const float named = Measure(name, kTextSmall).x;
+        Line(draw, x + wide + S(7), x + wide + S(7) + named + 1, middle + S(7), name, kMist, kTextSmall);
+        return x + wide + S(7) + named + S(18);
+    };
+    number(number(left, stats.shownFps, "shown"), stats.gameFps, "game");
+    snprintf(text, sizeof(text), "%u x %u", app.runtime.Width(), app.runtime.Height());
+#ifdef _WIN32
+    // The picture is already the smaller one where effects run below the game's size.
+    if (app.effectResolution != 100)
+        snprintf(text, sizeof(text), "%u x %u at %d%%", app.runtime.Width(), app.runtime.Height(), app.effectResolution);
+#endif
+    const float sized = Measure(text, kTextSmall).x;
+    Line(draw, right - sized, right + 1, middle + S(7), text, kMist, kTextSmall);
+    y += numbers + gap;
+
+    // A bar for each of the last 60 seconds, as high as the frames shown: green while nearly every frame of the game
+    // is shown, yellow while some are left out and red while most are. The line over them is the game's own rate.
+    draw->AddRectFilled(ImVec2(left, y), ImVec2(right, y + graph), kWell, S(12));
+    float top = 30;
+    for (size_t i = 0; i < stats.Seconds(); ++i)
+        top = std::max({ top, stats.SecondAt(i).game, stats.SecondAt(i).shown });
+    top *= 1.15f;
+    const float inset = S(8), slot = (right - left - inset * 2) / FrameStats::kSeconds;
+    const float base = y + graph - inset, room = graph - inset * 2;
+    std::vector<ImVec2> rate;
+    for (size_t i = 0; i < stats.Seconds(); ++i)
+    {
+        const FrameStats::Second second = stats.SecondAt(i);
+        const float x = right - inset - slot * static_cast<float>(stats.Seconds() - i);
+        const float share = second.game > 0 ? second.shown / second.game : 1;
+        const ImU32 color = Ring(share >= 0.95f ? 3 : share >= 0.6f ? 2 : 0);
+        draw->AddRectFilled(ImVec2(x + S(0.75f), base - std::max(room * second.shown / top, S(1))), ImVec2(x + slot - S(0.75f), base), color, S(1.5f));
+        rate.emplace_back(x + slot / 2, base - room * second.game / top);
+    }
+    draw->AddPolyline(rate.data(), static_cast<int>(rate.size()), kInk, ImDrawFlags_None, S(1.6f));
+    y += graph + gap;
+
+    // The last frames' times as thin bars. The red ones took longer than the game takes to draw its next frame, so
+    // Unishade cannot show every frame.
+    const float budget = stats.ready && stats.gameFps > 0 ? static_cast<float>(1000 / stats.gameFps) : FLT_MAX;
+    float longest = 4;
+    for (size_t i = 0; i < stats.Frames(); ++i)
+        longest = std::max(longest, stats.FrameAt(i));
+    const float thin = (right - left) / FrameStats::kFrames;
+    for (size_t i = 0; i < stats.Frames(); ++i)
+    {
+        const float ms = stats.FrameAt(i);
+        const float x = right - thin * static_cast<float>(stats.Frames() - i);
+        draw->AddRectFilled(ImVec2(x, y + strip - std::max(strip * ms / longest, S(1))), ImVec2(x + std::max(thin - S(0.5f), 1.0f), y + strip),
+                            ms > budget ? Ring(0) : kQuiet);
+    }
+    y += strip + S(8);
+
+    if (stats.ready)
+        snprintf(text, sizeof(text), "%.1f ms a frame, %.1f at most", stats.averageMs, stats.worstMs);
+    else
+        snprintf(text, sizeof(text), "Measuring");
+    Line(draw, left, right, y + label / 2, text, kMist, kTextSmall);
+    if (stats.ready)
+    {
+        const double skipped = stats.SkippedPercent();
+        snprintf(text, sizeof(text), "%.0f%% skipped", skipped);
+        const float wide = Measure(text, kTextSmall).x;
+        Line(draw, right - wide, right + 1, y + label / 2, text, skipped >= 10 ? kCaution : kMist, kTextSmall);
+    }
+}
+
 
 // Launcher
 
@@ -906,6 +1003,11 @@ public:
         }
         else if (which == launcher::Switch::Effects)
             app.effectsEnabled = on;
+        else if (which == launcher::Switch::DebugInfo)
+        {
+            app.settings.debugInfo = on;
+            SaveSettings(app.settings);
+        }
         else if (which == launcher::Switch::SmallTiles)
         {
             app.settings.smallTiles = on;
@@ -1964,6 +2066,7 @@ launcher::Model DescribeLauncher(App& app)
     model.settings.updateChecks = app.settings.updateChecks;
 #endif
     model.settings.autoSavePresets = app.settings.autoSavePresets;
+    model.settings.debugInfo = app.settings.debugInfo;
     if (platform::OverlayCanStayBehind())
         model.settings.keepEffectsVisible = app.settings.keepEffectsVisible;
     model.settings.menuSize = static_cast<int>(std::lround(app.settings.menuScale * 100));
@@ -2333,5 +2436,6 @@ void DrawOverlay(App& app)
     ApplyStyle(ImGui::GetStyle());
     PushSize(14.5f);
     DrawToast(app);
+    DrawDebugInfo(app);
     ImGui::PopFont();
 }

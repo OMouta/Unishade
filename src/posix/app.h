@@ -4,6 +4,7 @@
 #include "config.h"
 #include "effects.h"
 #include "frame_limit.h"
+#include "frame_stats.h"
 #include "games.h"
 #include "gpu.h"
 #include "platform.h"
@@ -98,6 +99,8 @@ public:
     void UpdateEffectResolution();
     int effectResolution = 100;
 #endif
+    // The frame rates and frame times the debug view shows.
+    FrameStats frameStats;
     // A short message at the bottom of the game, with an optional key before it.
     void ShowToast(std::string text, double seconds = 3.0, std::string key = {});
     std::string HotkeyText(int id) const;

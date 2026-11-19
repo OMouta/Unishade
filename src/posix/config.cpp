@@ -364,6 +364,7 @@ Settings LoadSettings()
     settings.skipTitleBar = !ini.Get("HOST", "SkipTitleBar", value) || value != "0";
     settings.discordPresence = !ini.Get("HOST", "DiscordPresence", value) || value != "0";
     settings.updateChecks = !ini.Get("HOST", "CheckForUpdates", value) || value != "0";
+    settings.debugInfo = ini.Get("HOST", "DebugInfo", value) && value == "1";
     settings.keepEffectsVisible = !ini.Get("HOST", "KeepEffectsVisible", value) || value != "0";
     if (ini.Get("HOST", "MenuScale", value))
         settings.menuScale = std::clamp(std::round(std::strtof(value.c_str(), nullptr) * 100) / 100, kSmallestMenuScale, kLargestMenuScale);
@@ -422,6 +423,7 @@ bool SaveSettings(const Settings& settings)
 #ifdef _WIN32
     ini.Set("HOST", "DiscordPresence", settings.discordPresence ? "1" : "0");
     ini.Set("HOST", "CheckForUpdates", settings.updateChecks ? "1" : "0");
+    ini.Set("HOST", "DebugInfo", settings.debugInfo ? "1" : "0");
     ini.Set("HOST", "KeepEffectsVisible", settings.keepEffectsVisible ? "1" : "0");
 #endif
     if (WriteFile(path, ini.Text()))

@@ -61,6 +61,8 @@ struct Settings
     bool discordPresence = true;
     // Windows only: GitHub is asked for a newer Unishade when it starts.
     bool updateChecks = true;
+    // Frame rates and frame times show at the top of the game.
+    bool debugInfo = false;
     // Effects stay over the game while another window is in front of it, where platform::OverlayCanStayBehind.
     bool keepEffectsVisible = true;
     // The menu's size on top of the one that follows the game's window, to the percent.

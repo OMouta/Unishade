@@ -39,6 +39,8 @@ The sliders button next to the power button opens **Performance**.
 
 These are for the game whose page is open. **Settings > Performance** sets them for every game without its own.
 
+**Show debug info** puts the frame rates at the top of the game: how many frames the game draws, how many Unishade shows, and how long it works on each.
+
 ## Use a window just once
 
 While Unishade is waiting for a game, **Pick a window** uses any open window without saving it. **Detect automatically** goes back to your saved games.

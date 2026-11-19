@@ -1577,7 +1577,7 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
     std::vector<Field> fields;
     const auto debugInfo = [&] {
         return Switched("debug", "Show debug info", *settings.debugInfo, [&f](bool on) { f.host.SetSwitch(Switch::DebugInfo, on); },
-                        "Captured game FPS, output FPS and frame loss.", grid);
+                        "Frame rates and frame times, at the top of the game.", grid);
     };
     switch (state->tab)
     {

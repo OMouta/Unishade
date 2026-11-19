@@ -1697,7 +1697,7 @@ float SettingsBody(const Model& model, Host& host, ImVec2 min, float width)
         if (settings.performance)
             PerformanceFields(flow, host, *settings.performance, std::nullopt, {});
         if (settings.debugInfo)
-            if (const std::optional<bool> on = OnOff(flow, "debug", "Show debug info", *settings.debugInfo, "Captured game FPS, output FPS and frame loss."))
+            if (const std::optional<bool> on = OnOff(flow, "debug", "Show debug info", *settings.debugInfo, "Frame rates and frame times, at the top of the game."))
                 host.SetSwitch(Switch::DebugInfo, *on);
         break;
     case Tab::Shortcuts: ShortcutFields(flow, host, settings); break;
