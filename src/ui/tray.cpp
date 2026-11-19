@@ -80,7 +80,7 @@ enum class Question
 
 enum class Tab
 {
-    Performance,
+    Game, // what is kept for the game being played
     Menu,
     Shortcuts,
     Addons,
@@ -143,7 +143,7 @@ struct State
     float slide = 0;
     bool fromClosed = false;
     std::string tuned; // the effect whose settings show, by key
-    Tab tab = Tab::Performance;
+    Tab tab = Tab::Game;
     Question question = Question::Unsaved;
     Sheet back = Sheet::None; // where the question goes back to
     std::string pendingPreset;
@@ -1511,7 +1511,7 @@ void RainbowBox(ImDrawList* draw, ImVec2 min, ImVec2 max, float rounding)
     }
 }
 
-// Performance for the game, the menu, shortcuts, and the settings of the add-ons that are on.
+// The game's own settings, the menu, shortcuts, and the settings of the add-ons that are on.
 float MoreSheet(Frame& f, ImVec2 min, float width, float space)
 {
     const Settings& settings = f.model.settings;
@@ -1520,8 +1520,8 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
     std::vector<const char*> labels;
     if (f.game && f.game->performance)
     {
-        tabs.push_back(Tab::Performance);
-        labels.push_back("Performance");
+        tabs.push_back(Tab::Game);
+        labels.push_back("Game");
     }
     tabs.push_back(Tab::Menu);
     labels.push_back("Menu");
@@ -1578,7 +1578,7 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
     };
     switch (state->tab)
     {
-    case Tab::Performance:
+    case Tab::Game:
     {
         const Performance performance = *f.game->performance;
         const int rate = ChoiceOf(kFrameRates, performance.frameRate);
@@ -1717,8 +1717,7 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
                                      f.host.SetSwitch(Switch::SmallTiles, choice == 1);
                                  },
                                  {}, grid));
-        // Without a Performance tab, the debug info is here.
-        if (settings.debugInfo && !(f.game && f.game->performance))
+        if (settings.debugInfo)
             fields.push_back(debugInfo());
         fields.push_back(Heading("Presets"));
         fields.push_back(Switched("autosave", "Save changes automatically", settings.autoSavePresets,

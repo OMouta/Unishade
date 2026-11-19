@@ -30,7 +30,7 @@ Under **For this game**:
 
 ## Performance
 
-The sliders button next to the power button opens **Performance**.
+The sliders button next to the power button opens the menu's **Game** tab.
 
 ![Frame rate and effect resolution](./images/performance.png)
 
