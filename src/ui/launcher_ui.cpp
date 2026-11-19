@@ -241,7 +241,11 @@ void Follow(const Model& model)
     else if (first || !IndexOf(model, state->game))
     {
         const std::optional<size_t> played = Played(model);
-        ShowGame(played ? model.games[*played].id : model.games.empty() ? std::string() : model.games.front().id);
+        const std::string shown = played ? model.games[*played].id : model.games.empty() ? std::string() : model.games.front().id;
+        // With no game on the shelf there is no page to turn to, and showing the same one again in every frame would
+        // start its rising in over and over, which left the window empty.
+        if (first || shown != state->game)
+            ShowGame(shown);
     }
     if (!state->renaming.empty() && !IndexOf(model, state->renaming))
         state->renaming.clear();
