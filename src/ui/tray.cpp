@@ -1035,49 +1035,42 @@ float AddSheet(Frame& f, ImVec2 min, float width, float space)
     if (!f.effects)
         return y;
     const Effects& effects = *f.effects;
-    // The packs the effects came in, to list one at a time, beside the search box.
+    // The packs the effects came in, to list one at a time, as chips under the search box. Searching
+    // finds a pack by its name too.
     std::set<std::string> packs;
     for (const Effect& effect : effects.list)
         if (!effect.pack.empty())
             packs.insert(effect.pack);
     if (!packs.count(state->pack))
         state->pack.clear();
-    const std::string packLabel = (state->pack.empty() ? std::string("All packs") : state->pack) + "##packs";
-    const float packWidth = packs.empty() ? 0 : PillWidth(packLabel.c_str(), PillStyle::Well) + S(8);
-    SearchField("##search", "Search effects", state->search, sizeof(state->search), min + ImVec2(0, y), width - packWidth,
+    SearchField("##search", "Search effects", state->search, sizeof(state->search), min + ImVec2(0, y), width,
                 std::exchange(state->focusSearch, false));
     // Enter adds the first effect found, and the box is ready for the next.
     const bool entered = ImGui::IsItemDeactivated() && (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter));
+    y += S(kSearchHeight) + S(9.6f);
     if (!packs.empty())
     {
-        if (PillButton(packLabel.c_str(), ImVec2(min.x + width - packWidth + S(8), min.y + y + (S(kSearchHeight) - S(kButton)) / 2), S(kButton), PillStyle::Well))
-            ImGui::OpenPopup("packs");
-        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, S(326)));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(6.4f), S(6.4f)));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, S(1.6f)));
-        if (ImGui::BeginPopup("packs"))
-        {
-            if (MenuRow("All packs"))
-            {
-                state->pack.clear();
-                ImGui::CloseCurrentPopup();
-            }
-            for (const std::string& pack : packs)
-            {
-                ImGui::PushID(pack.c_str());
-                if (MenuRow(pack.c_str()))
-                {
-                    state->pack = pack;
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::PopID();
-            }
-            MenuAppear();
-            ImGui::EndPopup();
-        }
-        ImGui::PopStyleVar(2);
+        // One row, which the wheel moves along, since there can be dozens of packs. The chosen one is black, and
+        // clicking it again lists every pack.
+        const float chip = S(35.2f), gap = S(6.4f);
+        ImGui::SetCursorScreenPos(min + ImVec2(0, y));
+        ImGui::BeginChild("##packs", ImVec2(width, chip), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        if (ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel != 0)
+            ImGui::SetScrollX(ImGui::GetScrollX() - ImGui::GetIO().MouseWheel * S(160));
+        const ImVec2 origin = ImGui::GetWindowPos() - ImVec2(ImGui::GetScrollX(), 0);
+        float x = 0;
+        const auto add = [&](const std::string& label, const std::string& pack) {
+            const bool chosen = state->pack == pack;
+            if (PillButton(label.c_str(), origin + ImVec2(x, 0), chip, chosen ? PillStyle::Black : PillStyle::Well))
+                state->pack = chosen ? std::string() : pack;
+            x += PillWidth(label.c_str(), PillStyle::Well) + gap;
+        };
+        add("All##every pack", "");
+        for (const std::string& pack : packs)
+            add(pack + "##pack", pack);
+        ImGui::EndChild();
+        y += chip + S(9.6f);
     }
-    y += S(kSearchHeight) + S(9.6f);
 
     const std::string filter = Lower(state->search);
     std::vector<size_t> listed;
@@ -1089,7 +1082,7 @@ float AddSheet(Frame& f, ImVec2 min, float width, float space)
         if (!state->pack.empty() && effect.pack != state->pack)
             continue;
         if (filter.empty() || Lower(effect.name).find(filter) != std::string::npos || Lower(effect.file).find(filter) != std::string::npos ||
-            Lower(effect.description).find(filter) != std::string::npos)
+            Lower(effect.description).find(filter) != std::string::npos || Lower(effect.pack).find(filter) != std::string::npos)
             listed.push_back(i);
     }
     std::sort(listed.begin(), listed.end(), [&](size_t a, size_t b) { return Lower(effects.list[a].name) < Lower(effects.list[b].name); });
