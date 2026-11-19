@@ -30,9 +30,9 @@ using namespace kit;
 using namespace kit::spectrum;
 
 // The design's sizes at 100%, in CSS pixels.
-constexpr float kShelf = 96;       // the games along the top, with the space around them
-constexpr float kShelfTop = 9.6f;
-constexpr float kShelfRow = 83.2f; // the games themselves
+constexpr float kBar = 52;         // the title bar: the logo, the window's buttons and its own
+constexpr float kShelfRow = 83.2f; // the games, in a row of their own under it
+constexpr float kShelf = kBar + kShelfRow + 3.2f;
 constexpr float kSide = 48;        // the page's margin on the left and right
 constexpr float kColumn = 720;     // the page beside the game's picture, at most
 constexpr float kColumnLeast = 560;
@@ -1114,7 +1114,7 @@ float StatusBlock(const Model& model, Host& host, ImVec2 min, float width, ImU32
     return height;
 }
 
-// Marks the item just added as taking clicks in the window's title bar, as far as it shows. The rest of the row moves
+// Marks the item just added as taking clicks in the window's title bar, as far as it shows. The rest of the bar moves
 // the window.
 void InTitleBar()
 {
@@ -1126,7 +1126,7 @@ void InTitleBar()
 
 // The games along the top: the one whose page shows is larger in the ring's colors, and a dot marks the one being
 // played. Then the button that adds a game, and the game removed a moment ago, which can be put back. dark is on the
-// black of the window, where the shelf is the title bar.
+// black of the window.
 void Shelf(const Model& model, Host& host, ImVec2 min, float width, bool dark)
 {
     const float s = kit::scale;
@@ -1152,8 +1152,6 @@ void Shelf(const Model& model, Host& host, ImVec2 min, float width, bool dark)
         const ImVec2 wrapMin(origin.x + left * s, middle - wrap / 2), wrapMax = wrapMin + ImVec2(wrap, wrap);
         ImGui::SetCursorScreenPos(wrapMin);
         const bool clicked = ImGui::InvisibleButton("game", ImVec2(wrap, wrap), ImGuiButtonFlags_EnableNav);
-        if (dark)
-            InTitleBar();
         const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
         HandOnHover();
         Tip(game.name);
@@ -1198,8 +1196,6 @@ void Shelf(const Model& model, Host& host, ImVec2 min, float width, bool dark)
         const ImVec2 addMin(origin.x + (left + kRingPad) * s, middle - S(kSquare) / 2), addMax = addMin + ImVec2(S(kSquare), S(kSquare));
         ImGui::SetCursorScreenPos(addMin);
         const bool clicked = ImGui::InvisibleButton("add", addMax - addMin, ImGuiButtonFlags_EnableNav);
-        if (dark)
-            InTitleBar();
         const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
         HandOnHover();
         Tip("Add game");
@@ -1223,8 +1219,6 @@ void Shelf(const Model& model, Host& host, ImVec2 min, float width, bool dark)
         const ImVec2 undo(textLeft + textWidth + S(6.4f), middle - (dark ? S(16) : S(kButton) / 2));
         if (dark ? DarkButton("undo", "Undo", undo, Glyph::None) : PillButton("Undo", undo, S(kButton), PillStyle::Text))
             host.UndoRemove();
-        if (dark)
-            InTitleBar();
         x +=(textWidth + S(6.4f) + (dark ? DarkWidth("Undo", Glyph::None, {}) : PillWidth("Undo", PillStyle::Text))) / s + kShelfGap;
     }
     ImGui::SetCursorScreenPos(origin + ImVec2(x * s, 0));
@@ -1302,7 +1296,7 @@ float GameBody(const Model& model, Host& host, size_t index, ImVec2 min, float w
     return y + inside + pad * 2;
 }
 
-// The window's buttons at the right of the shelf. Returns how wide they are, and draws them unless measuring.
+// The window's buttons at the right of the title bar. Returns how wide they are, and draws them unless measuring.
 float TopButtons(const Model& model, float right, float middle, bool measuring)
 {
     struct Top
@@ -1337,7 +1331,7 @@ float TopButtons(const Model& model, float right, float middle, bool measuring)
     return width;
 }
 
-// Minimize, maximize and close at the right end of the shelf's row, as Windows 11's, where the window has none of its
+// Minimize, maximize and close at the right end of the title bar, as Windows 11's, where the window has none of its
 // own. The host gets the mouse over them, as the system does over its own buttons, and says which is hovered and
 // pressed. They stay above the modals, which do not cover them. Returns how wide they are.
 float CaptionButtons(float /*height*/, float middle)
@@ -1400,7 +1394,7 @@ float CaptionButtons(float /*height*/, float middle)
     return ImGui::GetIO().DisplaySize.x - (right - width * 3);
 }
 
-// The launcher's window: the shelf of games along the top, and the page of the game picked on it.
+// The launcher's window: the title bar, the shelf of games under it, and the page of the game picked on the shelf.
 void WindowView(const Model& model, Host& host)
 {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
@@ -1414,20 +1408,23 @@ void WindowView(const Model& model, Host& host)
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
 
-    // The shelf, with the window's buttons on its right. Its row is the window's title bar, where the platform lets it
-    // be: the system's buttons sit at its left, or the launcher draws them at its right.
+    // The title bar, where the platform lets the window draw it: the logo after the system's buttons at its left, or
+    // at the left with the buttons the launcher draws at its right. What is between the logo and the buttons moves the
+    // window.
     const float side = S(kSide);
-    const float middle = S(kShelfTop) + S(kShelfRow) / 2;
-    caption::bar.height = S(kShelf);
+    const float middle = S(kBar) / 2;
+    caption::bar.height = S(kBar);
     caption::bar.controls.clear();
-    const float captions = CaptionButtons(S(kShelf), middle);
-    const float left = std::max(side - S(6), caption::bar.inset);
+    const float captions = CaptionButtons(S(kBar), middle);
     const float right = captions > 0 ? display.x - captions - S(9.6f) : display.x - side;
-    const float buttons = TopButtons(model, right, middle, true);
-    // The shelf stops short of the buttons, so the window can be moved by what is between them however many games
-    // there are.
-    Shelf(model, host, ImVec2(left, S(kShelfTop)), std::max(right - left - buttons - S(120), S(60)), true);
     TopButtons(model, right, middle, false);
+    const float logo = S(25.6f);
+    const ImVec2 logoMin(std::round(std::max(side, caption::bar.inset)), std::round(middle - logo / 2));
+    if (const ImTextureID picture = Picture("logo", logo); picture != ImTextureID_Invalid)
+        ImGui::GetWindowDrawList()->AddImage(picture, logoMin, logoMin + ImVec2(logo, logo));
+
+    // The games, across the window.
+    Shelf(model, host, ImVec2(side - S(6), S(kBar)), display.x - side * 2 + S(12), true);
 
     // The page of the game being played has the game's picture on its right, as the design's .gameview, where the host
     // has it and the window has room for both. Otherwise the page takes the whole width.

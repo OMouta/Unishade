@@ -89,7 +89,7 @@ std::vector<Process> ListProcesses();
 // Saves the icon of the window's program as a PNG. Returns false when it has none.
 bool SaveWindowIcon(const Window& window, const std::string& path);
 
-// Call before the launcher window first shows. On Windows and macOS the shelf's row becomes the title bar, as
+// Call before the launcher window first shows. On Windows and macOS the launcher draws the title bar, as
 // caption::bar describes: on Windows the launcher draws the window's buttons, and on macOS the system's sit at the
 // row's left. X11 keeps the window manager's title bar.
 void SetupLauncherWindow(GLFWwindow* window);

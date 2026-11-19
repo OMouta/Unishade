@@ -1220,7 +1220,7 @@ bool SaveWindowIcon(const Window& window, const std::string& path)
 
 namespace
 {
-// The launcher's caption is left off so the shelf's row can be the title bar, and the system's caption buttons with
+// The launcher's caption is left off so the launcher can draw the title bar, and the system's caption buttons with
 // it, which the launcher draws instead. Everything else stays the system's: the frame's style, so snapping, the
 // shadow, rounded corners and the animations stay, the resize borders, and moving, maximizing and the window menu
 // from the row through HTCAPTION. GLFW has no hook for this, so its window procedure is wrapped.

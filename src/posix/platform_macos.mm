@@ -974,7 +974,7 @@ bool SaveWindowIcon(const Window& window, const std::string& path)
 
 namespace
 {
-// Whether a click in the launcher falls on the shelf's row away from what takes clicks there and the window's own
+// Whether a click in the launcher falls on its title bar away from what takes clicks there and the window's own
 // buttons, where it moves the window as a title bar does.
 bool OnTitleBar(NSWindow* window, NSEvent* event)
 {
@@ -997,11 +997,16 @@ bool OnTitleBar(NSWindow* window, NSEvent* event)
 
 void SetupLauncherWindow(GLFWwindow* glfwWindow)
 {
-    // The shelf's row is the title bar, with the window's own buttons at its left, where they are by default.
+    // The launcher draws the title bar, with the window's own buttons at its left, where they are by default. An
+    // empty toolbar makes the system's bar as high as the launcher's, which puts the buttons in the middle of it.
     NSWindow* window = glfwGetCocoaWindow(glfwWindow);
     window.styleMask |= NSWindowStyleMaskFullSizeContentView;
     window.titlebarAppearsTransparent = YES;
     window.titleVisibility = NSWindowTitleHidden;
+    window.toolbar = [[NSToolbar alloc] initWithIdentifier:@"bar"];
+    window.toolbarStyle = NSWindowToolbarStyleUnified;
+    window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
+    [window layoutIfNeeded];
     if (NSButton* zoom = [window standardWindowButton:NSWindowZoomButton])
         caption::bar.inset = static_cast<float>(NSMaxX([zoom convertRect:zoom.bounds toView:nil])) + 12;
 

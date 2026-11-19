@@ -1,6 +1,6 @@
 #pragma once
 
-// The launcher window's title bar, which is the row of the shelf. Where the platform lets the window draw into its
+// The launcher window's title bar, the row above the shelf of games. Where the platform lets the window draw into its
 // title bar, the host says what is left of the window's own, and the launcher says each frame where its row and what
 // in it takes clicks are, so the host can tell the system which parts move the window. Both sides run on the main
 // thread. Positions are in the window's client coordinates, as Dear ImGui's: pixels on Windows, points on macOS.
@@ -33,9 +33,9 @@ struct Bar
     Button pressed = Button::None;
 
     // From the launcher, each frame it draws the window.
-    float height = 0;          // the row, from the top of the window
+    float height = 0;          // the bar, from the top of the window
     Box buttons[3];            // minimize, maximize and close, where drawButtons
-    std::vector<Box> controls; // what in the row takes clicks; the rest of the row moves the window
+    std::vector<Box> controls; // what in the bar takes clicks; the rest of it moves the window
 };
 
 // The launcher window's. The menu over the game has none.
