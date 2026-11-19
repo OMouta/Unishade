@@ -165,6 +165,10 @@ struct Dlss5
     UINT height = 0;
     // Passes after the first take turns writing to these.
     std::array<winrt::com_ptr<ID3D12Resource>, 2> between;
+    // A captured picture has neither, so these say nothing moved and everything is as far. Without them the network
+    // does not hold its history steady, and details shimmer from frame to frame.
+    winrt::com_ptr<ID3D12Resource> motion;
+    winrt::com_ptr<ID3D12Resource> depth;
     std::string error;
 
     ~Dlss5();
@@ -325,8 +329,21 @@ void Dlss5::Evaluate(ID3D12Resource* color, ID3D12Resource* output, const Dlss5L
     {
         ReleaseFeatures();
         between = {};
+        motion = depth = nullptr;
         width = out.Width;
         height = out.Height;
+    }
+    for (const auto& [texture, format] : { std::pair{ &motion, DXGI_FORMAT_R16G16_FLOAT }, std::pair{ &depth, DXGI_FORMAT_R32_FLOAT } })
+    {
+        if (*texture)
+            continue;
+        // Never written, and D3D12 hands new textures over zeroed.
+        const D3D12_HEAP_PROPERTIES heap{ D3D12_HEAP_TYPE_DEFAULT };
+        D3D12_RESOURCE_DESC description = out;
+        description.Format = format;
+        description.Flags = D3D12_RESOURCE_FLAG_NONE;
+        Check(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                                              nullptr, IID_PPV_ARGS(texture->put())), "CreateCommittedResource");
     }
     while (features.size() > static_cast<size_t>(look.passCount))
     {
@@ -413,6 +430,13 @@ void Dlss5::Record(ID3D12Resource* color, ID3D12Resource* output, const Dlss5Loo
         parameters->Set("DLSSNR.Output", target);
         setRect("DLSSNR.Color");
         setRect("DLSSNR.Output");
+        parameters->Set("DLSSNR.MVec", motion.get());
+        parameters->Set("DLSSNR.Depth", depth.get());
+        setRect("DLSSNR.MVec");
+        setRect("DLSSNR.Depth");
+        parameters->Set("DLSSNR.MVecScaleX", 1.0f);
+        parameters->Set("DLSSNR.MVecScaleY", 1.0f);
+        parameters->Set("DLSSNR.DepthInverted", 0);
         parameters->Set("DLSSNR.Width", static_cast<unsigned>(width));
         parameters->Set("DLSSNR.Height", height);
         parameters->Set("DLSSNR.ScalingRatio", 1.0f);
