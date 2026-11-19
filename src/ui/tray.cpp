@@ -1981,6 +1981,92 @@ void DropTile(Frame& f, const std::vector<TileItem>& modelTiles, const std::vect
         f.host.MoveEffect(modelTiles[from].index, modelTiles[to].index);
 }
 
+// The menu a right click on an effect's tile opens.
+void EffectMenu(Frame& f, const std::vector<TileItem>& modelTiles, const TileItem& tile)
+{
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(6.4f), S(6.4f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, S(1.6f)));
+    if (ImGui::BeginPopup("actions"))
+    {
+        const Effect& effect = f.effects->list[tile.index];
+        const auto addonOn = [](const Addon& addon) { return addon.changesPicture && !addon.bypassed; };
+        const bool othersOn = std::any_of(modelTiles.begin(), modelTiles.end(), [&](const TileItem& other) {
+                                  return other.key != tile.key && f.effects->list[other.index].on;
+                              }) || (f.model.addons && std::any_of(f.model.addons->begin(), f.model.addons->end(), addonOn));
+        bool chosen = false;
+        if (MenuRow(effect.on ? "Turn off" : "Turn on"))
+        {
+            f.host.SetEffect(tile.index, !effect.on);
+            chosen = true;
+        }
+        // Only this one stays on: every other effect and add-on that changes the picture is turned off.
+        if (MenuRow("Solo", othersOn || !effect.on))
+        {
+            std::vector<std::string> effectsOff, addonsOff;
+            for (const TileItem& other : modelTiles)
+                if (other.key != tile.key && f.effects->list[other.index].on)
+                {
+                    f.host.SetEffect(other.index, false);
+                    effectsOff.push_back(other.key);
+                }
+            for (size_t i = 0; f.model.addons && i < f.model.addons->size(); ++i)
+                if (addonOn((*f.model.addons)[i]))
+                {
+                    f.host.BypassAddon(i, true);
+                    addonsOff.push_back((*f.model.addons)[i].id);
+                }
+            const bool turnedOn = !effect.on;
+            if (turnedOn)
+                f.host.SetEffect(tile.index, true);
+            Offer("Only " + effect.name + " is on", [effectsOff, addonsOff, turnedOn, key = tile.key](Frame& frame) {
+                if (!frame.effects)
+                    return;
+                for (const std::string& other : effectsOff)
+                    if (const std::optional<size_t> at = IndexOf(*frame.effects, other))
+                        frame.host.SetEffect(*at, true);
+                for (size_t i = 0; frame.model.addons && i < frame.model.addons->size(); ++i)
+                    if (std::find(addonsOff.begin(), addonsOff.end(), (*frame.model.addons)[i].id) != addonsOff.end())
+                        frame.host.BypassAddon(i, false);
+                if (const std::optional<size_t> at = IndexOf(*frame.effects, key); at && turnedOn)
+                    frame.host.SetEffect(*at, false);
+            });
+            chosen = true;
+        }
+        if (MenuRow("Move first", tile.key != modelTiles.front().key))
+        {
+            f.host.MoveEffect(tile.index, modelTiles.front().index);
+            chosen = true;
+        }
+        if (MenuRow("Move last", tile.key != modelTiles.back().key))
+        {
+            f.host.MoveEffect(tile.index, modelTiles.back().index);
+            chosen = true;
+        }
+        if (MenuRow("Reset settings"))
+        {
+            state->resetting = tile.key;
+            Ask(Question::ResetEffect, state->sheet);
+            chosen = true;
+        }
+        if (MenuRow("Remove", true, kDanger))
+        {
+            f.host.RemoveEffect(tile.index);
+            Offer("Removed " + effect.name, [key = tile.key](Frame& frame) {
+                if (const std::optional<size_t> at = frame.effects ? IndexOf(*frame.effects, key) : std::nullopt)
+                    frame.host.SetEffect(*at, true);
+            });
+            if (state->sheet == Sheet::Tune && state->tuned == tile.key)
+                CloseSheet();
+            chosen = true;
+        }
+        if (chosen)
+            ImGui::CloseCurrentPopup();
+        MenuAppear();
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2);
+}
+
 // The tiles, and the one that adds an effect. Each glides to its place with the spring when the order or the size
 // changes, grows in when it is new and shrinks away when it goes.
 void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles, const std::vector<TileItem>& tiles, const std::vector<size_t>& addonTiles,
@@ -2128,6 +2214,9 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
             Tip(effect.on ? "Turn off" : "Turn on");
         if (dotClicked && !cooking)
             f.host.SetEffect(tile.index, !effect.on);
+        if ((hovered || dotHovered) && !state->dragging && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            ImGui::OpenPopup("actions");
+        EffectMenu(f, modelTiles, tile);
 
         const bool isNew = !state->memos.count(tile.key);
         if (activated)
