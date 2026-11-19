@@ -1,5 +1,6 @@
 #include "effects.h"
 #include "log.h"
+#include "uimask.h"
 
 #include <effect_codegen.hpp>
 #include <effect_parser.hpp>
@@ -1340,6 +1341,7 @@ void Runtime::Shutdown()
     if (!gpu.device)
         return;
     vkDeviceWaitIdle(gpu.device);
+    uimask::Release();
     DestroyAllGpu();
     SavePipelineCache();
     if (pipelineCache)
@@ -1389,6 +1391,7 @@ void Runtime::JoinLoaders(bool wait)
 bool Runtime::CreateTargets()
 {
     vkDeviceWaitIdle(gpu.device);
+    uimask::Release();
     for (GpuImage* image : { &backbuffer, &color, &stencil })
         gpu.DestroyImage(*image);
     gpu.DestroyBuffer(staging);
@@ -3213,7 +3216,7 @@ void CopySource(VkCommandBuffer commands, const Runtime::Source& source, VkImage
 }
 } // namespace
 
-void Runtime::CopyIn(VkCommandBuffer commands, const Source& source)
+void Runtime::CopyIn(VkCommandBuffer commands, const Source& source, bool effects)
 {
     if (!width || !height)
         return;
@@ -3242,6 +3245,8 @@ void Runtime::CopyIn(VkCommandBuffer commands, const Source& source)
         vkCmdCopyBufferToImage(commands, staging.buffer, backbuffer.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
     }
     FullBarrier(commands);
+    if (effects)
+        uimask::Fill(commands, backbuffer);
 }
 
 void Runtime::RenderEffects(VkCommandBuffer commands, bool enabled)
@@ -3254,7 +3259,10 @@ void Runtime::RenderEffects(VkCommandBuffer commands, bool enabled)
     ++frameCount;
     // Effects compiled for another size wait for the new one.
     if (!enabled || resizePending)
+    {
+        uimask::Restore(commands, backbuffer);
         return;
+    }
     HandleToggleKeys();
 
     const auto runs = [this](const Technique& technique) {
@@ -3320,6 +3328,7 @@ void Runtime::RenderEffects(VkCommandBuffer commands, bool enabled)
         if (technique.timeout > 0 && (technique.timeLeft -= frameTime) <= 0)
             Enable(technique, false);
     }
+    uimask::Restore(commands, backbuffer);
 }
 
 std::vector<uint8_t> Runtime::ReadOutput()

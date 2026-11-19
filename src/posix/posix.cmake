@@ -320,6 +320,7 @@ set(POSIX_SOURCES
     "${POSIX_DIR}/log.cpp"
     "${POSIX_DIR}/setup.cpp"
     "${POSIX_DIR}/ui.cpp"
+    "${POSIX_DIR}/uimask.cpp"
     # The launcher every platform shares.
     "${POSIX_DIR}/../ui/kit.cpp"
     "${POSIX_DIR}/../ui/launcher_ui.cpp"

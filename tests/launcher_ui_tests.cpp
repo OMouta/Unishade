@@ -102,6 +102,7 @@ public:
     void UndoRemove() override {}
     void OpenPresetsFolder(size_t) override {}
     void SetPerformance(std::optional<size_t>, launcher::PerformanceSetting, int) override {}
+    void SetUiMask(size_t, const std::vector<std::array<float, 4>>&) override {}
     void StepMenuSize(int) override {}
     void SetMenuSize(int) override {}
     void PlaceMenu(float, float) override {}

@@ -62,6 +62,8 @@ public:
     void ShowLauncher();
     // Reads the frame rate limit of the game being played again, such as after Performance changed it.
     void UpdateFrameRateLimit();
+    // Reads the marked interface of the game being played again, such as after the menu changed it.
+    void UpdateUiMask();
     // Quits once the launcher asked about unsaved changes, if there are any. Signals quit without asking.
     void Quit();
 

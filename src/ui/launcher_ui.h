@@ -7,6 +7,7 @@
 // Draw only reads the model, and the host must not change it until Draw returns: a Host call that changes something
 // shows in the model the host makes for the next frame.
 
+#include <array>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -196,6 +197,9 @@ struct Game
     bool changed = false;
     std::vector<std::string> missing;
     std::optional<Performance> performance;
+    // The parts of its picture marked as its own interface, which effects leave as the game drew them: the left, top,
+    // width and height of each, in fractions of the picture's.
+    std::vector<std::array<float, 4>> uiMask;
 };
 
 // A game removed a moment ago, which can be put back.
@@ -417,6 +421,9 @@ public:
     virtual void KeepRunning() = 0;
     // For a game, or the defaults without one.
     virtual void SetPerformance(std::optional<size_t> game, PerformanceSetting setting, int value) = 0;
+
+    // As Game::uiMask.
+    virtual void SetUiMask(size_t game, const std::vector<std::array<float, 4>>& areas) = 0;
 
     virtual void StepMenuSize(int step) = 0;
     // Over the game: the menu size in percent that dragging the menu's corner left, and where the menu was moved to,

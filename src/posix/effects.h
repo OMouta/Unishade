@@ -277,12 +277,14 @@ public:
     // Copies the game's picture in and runs every enabled technique on it, or none when effects is false.
     void Render(VkCommandBuffer commands, const Source& source, bool effects)
     {
-        CopyIn(commands, source);
+        CopyIn(commands, source, effects);
         RenderEffects(commands, effects);
     }
     // Render in two steps, for add-ons that work on the picture in between, in commands of their own: the picture is
-    // in the output after CopyIn. RenderEffects starts with nothing between it and the commands before it.
-    void CopyIn(VkCommandBuffer commands, const Source& source);
+    // in the output after CopyIn. RenderEffects starts with nothing between it and the commands before it. With
+    // effects, the parts of the picture marked as the game's interface are filled in, as uimask.h says, and
+    // RenderEffects puts them back.
+    void CopyIn(VkCommandBuffer commands, const Source& source, bool effects);
     void RenderEffects(VkCommandBuffer commands, bool effects);
     // Gives effects a DEPTH the size of the picture, R32_SFLOAT, which something else fills, such as an add-on, and
     // tells them through bufready_depth. Otherwise DEPTH is empty. A change prepares the effects again.

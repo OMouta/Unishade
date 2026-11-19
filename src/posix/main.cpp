@@ -5,6 +5,7 @@
 #include "app.h"
 #include "log.h"
 #include "setup.h"
+#include "uimask.h"
 
 // Before GLFW's header, which otherwise defines APIENTRY itself.
 #ifdef _WIN32
@@ -197,17 +198,19 @@ void Usage()
     printf("Unishade %s\n\n"
            "  unishade                      Starts the launcher.\n"
            "  unishade --install-effects    Downloads effects and presets into %s.\n"
-           "  unishade --render IN.png PRESET.ini OUT.png [--gpu-source]\n"
+           "  unishade --render IN.png PRESET.ini OUT.png [--gpu-source] [--mask X,Y,WIDTH,HEIGHT]...\n"
            "                                Applies a preset to an image without a window, to check effects.\n"
            "                                --gpu-source hands the image over on the graphics card, as zero-copy\n"
-           "                                capture does.\n",
+           "                                capture does. --mask keeps a part of the image out of effects, as the\n"
+           "                                game's interface, in fractions of its size.\n",
            UNISHADE_VERSION, DataDirectory().string().c_str());
 }
 
 // Applies a preset to an image with the same code the overlay uses, without any window. gpuSource hands the
 // picture over the way zero-copy capture does: from an image on the graphics card, at an offset inside it.
-int Render(const char* input, const char* preset, const char* output, bool gpuSource)
+int Render(const char* input, const char* preset, const char* output, bool gpuSource, const std::vector<uimask::Rect>& mask)
 {
+    uimask::Set(mask);
     std::string error;
     if (!gpu.Init(true, error))
     {
@@ -399,8 +402,23 @@ int main(int argc, char** argv)
             if (!HaveDataDirectory())
                 return 1;
             InitTerminalLog();
-            const bool gpuSource = i + 4 < argc && !strcmp(argv[i + 4], "--gpu-source");
-            const int result = Render(argv[i + 1], argv[i + 2], argv[i + 3], gpuSource);
+            bool gpuSource = false;
+            std::vector<uimask::Rect> mask;
+            for (int option = i + 4; option < argc; ++option)
+            {
+                uimask::Rect rect{};
+                if (!strcmp(argv[option], "--gpu-source"))
+                    gpuSource = true;
+                else if (!strcmp(argv[option], "--mask") && option + 1 < argc &&
+                         sscanf(argv[++option], "%f,%f,%f,%f", &rect[0], &rect[1], &rect[2], &rect[3]) == 4)
+                    mask.push_back(rect);
+                else
+                {
+                    Usage();
+                    return 2;
+                }
+            }
+            const int result = Render(argv[i + 1], argv[i + 2], argv[i + 3], gpuSource, mask);
             Log(LogLevel::Info, "Session ended: exit_code=%d.", result);
             FlushLog();
             return result;

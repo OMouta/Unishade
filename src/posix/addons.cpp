@@ -984,7 +984,7 @@ bool Addons::Frame(Surface& surface, const fx::Runtime::Source& source, uint64_t
     VkCommandBuffer commands = exchange->Begin();
     if (!commands)
         return false;
-    runtime->CopyIn(commands, source);
+    runtime->CopyIn(commands, source, true);
     if (!exchange->Submit(runtime->Output()))
         return false;
 

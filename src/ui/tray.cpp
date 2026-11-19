@@ -180,6 +180,9 @@ struct State
     int seenSize = 0;
     bool moving = false;
     ImVec2 moveOffset;
+    // Marking the game's interface, in place of the tray, and where the area being dragged started.
+    bool masking = false;
+    ImVec2 maskFrom;
     bool sizing = false;
     int sizeFrom = 100;
     float sizeAt = 0;
@@ -1635,8 +1638,14 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
             fields.push_back(Note("Effects run on a smaller picture that FSR upscales to the game's size. Lower is faster and softer, and screenshots get smaller.",
                                   kMist, width));
         }
-        if (settings.debugInfo)
-            fields.push_back(debugInfo());
+        // Marked over the game, so only there.
+        if (!page)
+        {
+            const size_t count = f.game->uiMask.size();
+            const std::string label = count ? "Game interface: " + std::to_string(count) + (count == 1 ? " area" : " areas") : "Game interface";
+            fields.push_back(Actions("interface", label, { { "Mark", PillStyle::Text } }, [](int) { state->masking = true; }, width));
+            fields.push_back(Note("Mark the game's own interface, such as a health bar or the chat, and effects leave it as the game drew it.", kMist, width));
+        }
         break;
     }
     case Tab::Menu:
@@ -2950,6 +2959,7 @@ void Begin(const Model& model)
         state->started = true;
         state->justOpened = !page;
         state->opened = ImGui::GetTime();
+        state->masking = false;
         // A list left open when the menu closed.
         if (!page)
             ImGui::ClosePopupsOverWindow(nullptr, false);
@@ -2972,6 +2982,99 @@ void Begin(const Model& model)
     }
 }
 } // namespace
+
+// Marking the game's interface, with the tray out of the way: dragging over the game marks an area, and each area has
+// a cross that takes it away. Every change goes to the host at once, so the game shows what it does.
+void MaskEditor(Frame& f)
+{
+    const ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 display = io.DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(display);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::Begin("##interface", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar(2);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    std::vector<std::array<float, 4>> areas = f.game->uiMask;
+    bool changed = false;
+    // A line that shows on any picture: white with a dark one around it.
+    const auto outline = [&](ImVec2 min, ImVec2 max, float alpha) {
+        draw->AddRect(min, max, IM_COL32(0, 0, 0, static_cast<int>(120 * alpha)), S(3.2f), 0, S(4.8f));
+        draw->AddRect(min, max, IM_COL32(255, 255, 255, static_cast<int>(240 * alpha)), S(3.2f), 0, S(1.6f));
+    };
+
+    // The whole game takes the drag. The areas' crosses and the bar are over it.
+    ImGui::SetCursorScreenPos(ImVec2(0, 0));
+    ImGui::SetNextItemAllowOverlap();
+    ImGui::InvisibleButton("##drag", display);
+    if (ImGui::IsItemActivated())
+        state->maskFrom = io.MousePos;
+    const bool dragging = ImGui::IsItemActive();
+    const ImVec2 from(std::min(state->maskFrom.x, io.MousePos.x), std::min(state->maskFrom.y, io.MousePos.y));
+    const ImVec2 to(std::max(state->maskFrom.x, io.MousePos.x), std::max(state->maskFrom.y, io.MousePos.y));
+    const bool room = areas.size() < 16;
+    // A click, or a slip of the mouse, marks nothing.
+    if (ImGui::IsItemDeactivated() && room && to.x - from.x > S(8) && to.y - from.y > S(8))
+    {
+        const ImVec2 min = ImClamp(from / display, ImVec2(0, 0), ImVec2(1, 1)), max = ImClamp(to / display, ImVec2(0, 0), ImVec2(1, 1));
+        areas.push_back({ min.x, min.y, max.x - min.x, max.y - min.y });
+        changed = true;
+    }
+
+    for (size_t i = 0; i < areas.size(); ++i)
+    {
+        const ImVec2 min = ImVec2(areas[i][0], areas[i][1]) * display, max = min + ImVec2(areas[i][2], areas[i][3]) * display;
+        draw->AddRectFilled(min, max, IM_COL32(255, 255, 255, 30), S(3.2f));
+        outline(min, max, 1);
+        ImGui::PushID(static_cast<int>(i));
+        const float button = S(25.6f);
+        const ImVec2 at(std::max(max.x - button - S(4.8f), min.x), min.y + S(4.8f));
+        ImGui::SetCursorScreenPos(at);
+        const bool removed = ImGui::InvisibleButton("##remove", ImVec2(button, button)) && !dragging;
+        const bool hovered = ImGui::IsItemHovered();
+        if (hovered)
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        draw->AddCircleFilled(at + ImVec2(button, button) * 0.5f, button / 2, hovered ? kDanger : kToast);
+        DrawIcon(draw, Icon::Close, at + ImVec2(button, button) * 0.5f, S(14.4f), kOnToast);
+        ImGui::PopID();
+        if (removed)
+        {
+            areas.erase(areas.begin() + static_cast<std::ptrdiff_t>(i));
+            changed = true;
+            break;
+        }
+    }
+    if (dragging && room)
+        outline(from, to, 0.7f);
+
+    // What to do, and the way out, at the top of the game.
+    const char* hint = room ? "Drag over the game's interface to keep effects off it." : "That is as many areas as there can be.";
+    const float pad = S(9.6f), gap = S(6.4f), height = S(kButton) + pad * 2;
+    const float text = Measure(hint, kTextBody, true).x, clear = PillWidth("Clear", PillStyle::Text), done = PillWidth("Done", PillStyle::Black);
+    const float width = pad + S(9.6f) + text + S(16) + clear + gap + done + pad;
+    const ImVec2 min(std::round((display.x - width) / 2), S(25.6f)), max = min + ImVec2(width, height);
+    // Clicks on the bar are not the start of an area.
+    ImGui::SetCursorScreenPos(min);
+    ImGui::SetNextItemAllowOverlap();
+    ImGui::InvisibleButton("##bar", ImVec2(width, height));
+    Shadow(draw, min, max, height / 2, S(16), S(40), 0.4f);
+    draw->AddRectFilled(min, max, kTray, height / 2);
+    draw->AddRect(min + ImVec2(0.5f, 0.5f), max - ImVec2(0.5f, 0.5f), spectrum::kEdge, height / 2, 0, 1.0f);
+    Line(draw, min.x + pad + S(9.6f), min.x + pad + S(9.6f) + text + 1, min.y + height / 2, hint, kInk, kTextBody, true);
+    if (PillButton("Clear", ImVec2(max.x - pad - done - gap - clear, min.y + pad), S(kButton), PillStyle::Text, !areas.empty()))
+    {
+        areas.clear();
+        changed = true;
+    }
+    if (PillButton("Done", ImVec2(max.x - pad - done, min.y + pad), S(kButton), PillStyle::Black))
+        state->masking = false;
+    ImGui::End();
+    if (changed)
+        f.host.SetUiMask(f.gameIndex, areas);
+}
 
 Open DrawOverGame(const Model& model, Host& host, float windowScale, bool covered)
 {
@@ -2999,7 +3102,10 @@ Open DrawOverGame(const Model& model, Host& host, float windowScale, bool covere
         ImGui::ClosePopupsOverWindow(nullptr, false);
     ImGui::PushStyleVar(ImGuiStyleVar_DisabledAlpha, 1.0f);
     ImGui::BeginDisabled(model.closing);
-    Tray(f, std::nullopt, 0, comparing);
+    if (state->masking && f.game && !model.closing)
+        MaskEditor(f);
+    else
+        Tray(f, std::nullopt, 0, comparing);
     ImGui::EndDisabled();
     ImGui::PopStyleVar();
 
@@ -3047,7 +3153,9 @@ Open DrawOverGame(const Model& model, Host& host, float windowScale, bool covere
     host.Compare(comparing);
     if (escape)
     {
-        if (state->sheet == Sheet::Ask)
+        if (state->masking)
+            state->masking = false;
+        else if (state->sheet == Sheet::Ask)
             Back();
         else if (state->sheet != Sheet::None)
             CloseSheet();

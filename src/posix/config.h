@@ -2,6 +2,7 @@
 
 #include "hotkeys.h"
 
+#include <array>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -97,6 +98,11 @@ void SetFrameRateLimit(const std::string& game, int fps);
 // Unishade.ini for a saved game with its own, otherwise in [PERFORMANCE], which an empty game reads and sets.
 int EffectResolution(const std::string& game);
 void SetEffectResolution(const std::string& game, int percent);
+// The parts of a game's picture that are its own interface, which effects leave as the game drew them: the left, top,
+// width and height of each, in fractions of the picture's. Kept as UiMask beside the game's performance settings, and
+// for every game without its own with an empty name.
+std::vector<std::array<float, 4>> UiMask(const std::string& game);
+void SetUiMask(const std::string& game, const std::vector<std::array<float, 4>>& areas);
 // Moves a game's own performance settings to its new name, leaving the old one without.
 void RenamePerformance(const std::string& from, const std::string& to);
 // Forgets a removed game's own performance settings.

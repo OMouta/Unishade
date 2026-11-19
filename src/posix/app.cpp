@@ -4,6 +4,7 @@
 #include "ui.h"
 #ifdef _WIN32
 #include "discord.h"
+#include "uimask.h"
 #include "upscale.h"
 #include "update.h"
 #endif
@@ -1060,6 +1061,11 @@ bool App::MovePreset(const fs::path& preset, const fs::path& folder, std::string
 }
 
 // Switching to a saved game switches to the preset last used in it.
+void App::UpdateUiMask()
+{
+    uimask::Set(UiMask(game));
+}
+
 void App::UpdateFrameRateLimit()
 {
     const int limit = FrameRateLimit(game);
@@ -1078,6 +1084,7 @@ void App::FollowGame()
             break;
         }
     UpdateFrameRateLimit();
+    UpdateUiMask();
     if (game.empty())
         return;
 

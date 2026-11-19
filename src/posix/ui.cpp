@@ -1407,6 +1407,15 @@ public:
             return;
         RefreshLauncher();
     }
+    void SetUiMask(size_t game, const std::vector<std::array<float, 4>>& areas) override
+    {
+        if (!Listed(app, game))
+            return;
+        ::SetUiMask(game < app.autoGames.size() ? FolderName(app.autoGames[game].name) : std::string(), areas);
+        app.UpdateUiMask();
+        RefreshLauncher();
+    }
+
     void StepMenuSize(int step) override
     {
         app.settings.menuScale = std::clamp(app.settings.menuScale + 0.25f * static_cast<float>(step), kSmallestMenuScale, kLargestMenuScale);
@@ -1966,7 +1975,8 @@ launcher::Model DescribeLauncher(App& app)
                                  .picture = path.string(),
                                  .enabled = saved.enabled,
                                  .running = running(saved),
-                                 .performance = PerformanceOf(folder) };
+                                 .performance = PerformanceOf(folder),
+                                 .uiMask = UiMask(folder) };
             const bool playing = !folder.empty() && !strcasecmp(app.game.c_str(), folder.c_str());
             const fs::path inUse = playing ? app.runtime.PresetPath() : folder.empty() ? fs::path() : GamePreset(folder);
             const auto add = [&](const fs::path& preset, const std::string& from) {
@@ -1994,7 +2004,8 @@ launcher::Model DescribeLauncher(App& app)
                                .executable = fs::path(app.activeExecutable).filename().string(),
                                .running = true,
                                .picked = true,
-                               .performance = launcherState.defaults };
+                               .performance = launcherState.defaults,
+                               .uiMask = UiMask({}) };
         const fs::path& inUse = app.runtime.PresetPath();
         for (const fs::path& preset : PresetsOf(PresetsDirectory()))
             picked.presets.push_back({ preset.string(), preset.stem().string(), "All games", preset == inUse });
