@@ -2731,7 +2731,8 @@ float Tray(Frame& f, std::optional<ImVec2> place, float pageWidth, bool& compari
         if (const ImTextureID frost = GameImage(GameView::Frost); frost != ImTextureID_Invalid)
             draw->AddImageRounded(frost, min, max, min / display, max / display, IM_COL32_WHITE, rounding);
     }
-    draw->AddRectFilled(min, max, Alpha(kTray, state->opacity), rounding);
+    // The opacity lets the game through. On the launcher's page only black is behind, which would grey the tray.
+    draw->AddRectFilled(min, max, page ? kTray : Alpha(kTray, state->opacity), rounding);
     draw->AddRect(min + ImVec2(0.5f, 0.5f), max - ImVec2(0.5f, 0.5f), spectrum::kEdge, rounding, 1.0f);
     // First, so it wins over the grab handle.
     SizeCorner(f, min, max);
