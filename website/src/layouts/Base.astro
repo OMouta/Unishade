@@ -4,7 +4,7 @@ import { Font, Image, getImage } from 'astro:assets';
 import logo from '../../../assets/UnishadeSmall.png';
 import icon from '../../../assets/Unishade.ico?url';
 import appIcon from '../../../assets/Unishade.png';
-import banner from '../../../assets/unishade-banner1.png';
+import banner from '../../../assets/brand/unishade-social.png';
 import { links } from '../links';
 import BookIcon from '../icons/book.svg';
 import DiscordIcon from '../icons/discord.svg';
@@ -28,10 +28,10 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
 // Small icons for browser tabs and home screens. The .ico stays for older browsers.
 const favicon = await getImage({ src: appIcon, width: 32, height: 32, format: 'png', layout: 'none' });
 const touchIcon = await getImage({ src: appIcon, width: 180, height: 180, format: 'png', background: '#000000', layout: 'none' });
-// The picture link previews show, cropped to their 1.91:1. The banner is 600px tall, and images aren't enlarged.
-const preview = await getImage({ src: banner, width: 1146, height: 600, fit: 'cover', format: 'jpg', quality: 80, layout: 'none' });
+// The picture link previews show, which is made at their 1.91:1.
+const preview = await getImage({ src: banner, width: 1200, height: 630, format: 'jpg', quality: 80, layout: 'none' });
 const previewUrl = new URL(preview.src, Astro.site);
-const previewAlt = 'The Unishade logo over six games with effects, and the words Universal post-processing without injection.';
+const previewAlt = 'The Unishade logo and name, and the words Universal post-processing without injection.';
 
 // Discord shows this instead of the Open Graph preview. It drops the whole thing over 3,000 bytes or with a key it
 // doesn't know, and falls back to Open Graph. https://docs.discord.com/developers/link-previews/component-embeds
