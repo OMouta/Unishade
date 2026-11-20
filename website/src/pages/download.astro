@@ -10,11 +10,6 @@ const released = release.date?.toLocaleDateString('en-US', { year: 'numeric', mo
 // ", 2.1 MB", or nothing for a link to the Releases page.
 const size = (file: Download | undefined) => (file?.size ? `, ${megabytes(file.size)}` : '');
 
-// The site describes the version in CMakeLists.txt, which may not be out yet.
-const note = release.upcoming
-  ? `Unishade ${release.upcoming} isn't out yet, so this is ${release.version}${release.oldName ? ', from when Unishade was still called RobloxShadeHost' : ''}. Some of what the docs describe comes with ${release.upcoming}.`
-  : release.oldName && `This release is from before the new name, so its files are still called RobloxShadeHost.`;
-
 // Each system in one of the ring's colors, like the home page's bands.
 const platforms = [
   {
@@ -44,7 +39,6 @@ const platforms = [
           )
         }
       </p>
-      {note && <p class="note">{note}</p>}
     </header>
 
     <ul class="platforms">
@@ -150,13 +144,6 @@ const platforms = [
   .lede {
     color: var(--haze);
     font-size: 1.25rem;
-  }
-
-  .note {
-    max-width: 60ch;
-    padding: 16px 20px;
-    border-radius: var(--radius);
-    background: var(--night-raised);
   }
 
   /* Three tiles in the ring's colors, as the effects are in the menu. */

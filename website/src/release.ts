@@ -1,7 +1,6 @@
 // The newest release, read from GitHub once per build. Publishing a release rebuilds the site, so the download
 // buttons link straight to the newest files. When GitHub can't be reached, or has no release with a Setup, the
 // buttons link to the Releases page instead and the build goes on.
-import cmake from '../../CMakeLists.txt?raw';
 import { links, repository } from './links';
 
 export interface Download {
@@ -17,10 +16,6 @@ export interface Release {
   date?: Date;
   // The release's page, or the Releases page.
   notes: string;
-  // The version this site describes, from CMakeLists.txt, when it's newer than the release.
-  upcoming?: string;
-  // The release's files still have RobloxShadeHost's name.
-  oldName: boolean;
   setup: Download;
   host?: Download;
   macos?: Download;
@@ -58,9 +53,6 @@ function newer(a: number[], b: number[]) {
 const download = (asset: Asset | undefined): Download | undefined =>
   asset && { url: asset.browser_download_url, name: asset.name, size: asset.size };
 
-// The version being built, from project(Unishade VERSION x.y.z).
-const project = /project\(Unishade VERSION (\d+\.\d+\.\d+)/.exec(cmake)?.[1];
-
 async function list() {
   const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
   // Without a token GitHub allows 60 requests an hour, which local builds rarely reach.
@@ -76,7 +68,7 @@ async function list() {
 }
 
 async function newest(): Promise<Release> {
-  const fallback: Release = { notes: links.releases, oldName: false, setup: { url: links.releases } };
+  const fallback: Release = { notes: links.releases, setup: { url: links.releases } };
   let releases: GitHubRelease[];
   try {
     releases = await list();
@@ -101,15 +93,11 @@ async function newest(): Promise<Release> {
   }
 
   const { release, setup, version } = best;
-  const target = project ? parse(project) : undefined;
   const asset = (pattern: RegExp) => download(release.assets.find((file) => pattern.test(file.name)));
   return {
     version: version.join('.'),
     date: new Date(release.published_at),
     notes: release.html_url,
-    upcoming: target && newer(target, version) ? project : undefined,
-    // Releases before the rename call Setup RobloxShadeHost-Setup-x.y.z.exe and the host RobloxShadeHost.exe.
-    oldName: !setup.name.startsWith('Unishade-'),
     setup: download(setup)!,
     host: asset(/^(Unishade|RobloxShadeHost)\.exe$/),
     // Releases before macOS and Linux support have neither.
