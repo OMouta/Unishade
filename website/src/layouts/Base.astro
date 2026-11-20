@@ -142,6 +142,7 @@ const discordEmbed = {
           <a href="/docs/">Docs</a>
           <a href="/docs/troubleshooting/">Troubleshooting</a>
           <a href={links.releases}>Releases</a>
+          <a href="/branding/">Branding</a>
         </div>
         <div>
           <h2>Community</h2>
@@ -348,7 +349,10 @@ const discordEmbed = {
 
   .wordmark {
     grid-column: 1 / -1;
-    margin: 0 -0.04em -0.17em;
+    /* The colors only fill the box, which the line height makes shorter than the dot of the i. The padding makes room
+       for it, and the margin takes that room back. */
+    margin: -0.1em -0.04em -0.17em;
+    padding-top: 0.1em;
     color: transparent;
     background: linear-gradient(90deg, var(--spectrum));
     background-clip: text;

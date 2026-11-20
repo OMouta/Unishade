@@ -1,40 +1,69 @@
 <p align="center">
-  <img src="assets/unishade-banner1.png" alt="Unishade"/>
+  <a href="https://unishade.me">
+    <img src="assets/brand/unishade-banner.png" alt="Unishade. Universal post-processing without injection."/>
+  </a>
 </p>
 
-<p align="center">
+<h3 align="center">
   <a href="https://unishade.me/download/">Download</a>
   &nbsp;·&nbsp;
   <a href="https://unishade.me/docs/">Docs</a>
   &nbsp;·&nbsp;
   <a href="https://discord.gg/wVbVUdENas">Discord</a>
+</h3>
+
+Run ReShade effects on your games without installing anything into them. Unishade copies the game's window and draws it again with effects, in a window of its own on top. Free and open source, for Windows, macOS and Linux.
+
+<table>
+  <tr>
+    <td><img src="website/src/assets/shots/game-before.jpg" alt="A game without effects"/></td>
+    <td><img src="website/src/assets/shots/game-after.jpg" alt="The same view with Unishade's effects"/></td>
+  </tr>
+  <tr>
+    <td align="center">Without Unishade</td>
+    <td align="center">With Unishade</td>
+  </tr>
+</table>
+
+## The menu
+
+Press **Home** in the game, or **Cmd+Shift+U** on a Mac. Every effect is a tile. Click one for its settings, or the dot in its corner to turn it off.
+
+<a href="https://unishade.me/docs/menu/">
+  <img src="website/src/assets/shots/menu.jpg" alt="Unishade's menu over a game, with the preset's effects as colored tiles"/>
+</a>
+
+## Your games
+
+Each game gets its own page and starts with the preset you left it on.
+
+<p align="center">
+  <a href="https://unishade.me/docs/games/">
+    <img src="website/src/content/docs/images/launcher.png" width="720" alt="The Unishade window on Roblox's page, with the game's effects and a preview"/>
+  </a>
 </p>
 
-Unishade is an open-source project for universal post-processing without injection. It runs outside the game process and is built for games where traditional ReShade injection isn't available or desirable.
+## Get started
 
-> Note: This project is not affiliated with the unrelated united-debug/unishade repository that has been reported as malicious. Unishade is developed independently, is fully open source, and its source code and releases are available here at OMouta/Unishade. Only download Unishade from unishade.me or this GitHub repository.
+1. [Download Unishade](https://unishade.me/download/) and install it.
+2. Start Unishade and pick your games.
+3. Open a game and press **Home**.
 
-## Getting started
-
-1. [Download Setup](https://unishade.me/download/) and run it.
-2. Open your game, click **Add game** in Unishade and pick its window.
-3. Press **Home** in the game and pick a preset.
-
-Games need to run windowed or borderless. Unishade runs on Windows, macOS and Linux.
+Run your games in windowed or borderless mode. The [install guide](https://unishade.me/docs/) has every step for Windows, macOS and Linux.
 
 If regular ReShade already works in your game, use that.
 
-> [!NOTE]
-> Setup isn't code-signed yet, so the first time Windows may say **Windows protected your PC**. Click **More info**, then **Run anyway**.
+> [!WARNING]
+> Only download Unishade from [unishade.me](https://unishade.me) or this repository. The unrelated united-debug/unishade repository has been reported as malicious and isn't part of this project.
 
-## Help and presets
+## Help
 
-Ask on [Discord](https://discord.gg/wVbVUdENas). People share their presets there too. The [docs](https://unishade.me/docs/) cover the menu, add-ons and troubleshooting.
+[Troubleshooting](https://unishade.me/docs/troubleshooting/) lists what to check when a game isn't picked up or effects don't show. For anything else, ask on [Discord](https://discord.gg/wVbVUdENas). People share their presets there too.
 
-To build Unishade or send a preset, see [CONTRIBUTING.md](CONTRIBUTING.md).
+## Building and contributing
 
-Unishade is free. If you want to support it, I'm on [Ko-fi](https://ko-fi.com/omouta).
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Unishade is free. If you want to support it, I'm on [Ko-fi](https://ko-fi.com/omouta).
