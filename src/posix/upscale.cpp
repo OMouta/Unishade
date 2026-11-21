@@ -25,7 +25,7 @@ extern const unsigned kFfxFsr1Size;
 namespace
 {
 // AMD's headers go between these, read as HLSL, which ReShade's compiler takes. EASU upscales and RCAS sharpens. Both
-// expect gamma-encoded colors, which the picture has.
+// expect gamma-encoded colors from 0 to 1, which an SDR picture has. UNISHADE_HDR goes before them.
 constexpr char kPrelude[] = R"(
 #define A_GPU 1
 #define A_HLSL 1
@@ -40,9 +40,23 @@ texture2D InputTexture;
 sampler2D Input { Texture = InputTexture; };
 #define FSR_EASU_F 1
 #define FSR_RCAS_F 1
+#if UNISHADE_HDR
+// An HDR picture is scRGB, linear with 80 nits at 1. EASU reads it as the square root of its share of 10,000 nits,
+// signed so colors outside sRGB's survive, and RCAS squares it back. A power law keeps FSR's ratios as they are in SDR
+// whatever the scale, and 10,000 nits is past what any display shows.
+AF4 Encode(AF4 c)
+{
+    AF4 share = clamp(c * AF4_(1.0 / 125.0), AF4_(-1.0), AF4_(1.0));
+    return sign(share) * sqrt(abs(share));
+}
+AF4 FsrEasuRF(AF2 p) { return Encode(tex2DgatherR(Input, p)); }
+AF4 FsrEasuGF(AF2 p) { return Encode(tex2DgatherG(Input, p)); }
+AF4 FsrEasuBF(AF2 p) { return Encode(tex2DgatherB(Input, p)); }
+#else
 AF4 FsrEasuRF(AF2 p) { return tex2DgatherR(Input, p); }
 AF4 FsrEasuGF(AF2 p) { return tex2DgatherG(Input, p); }
 AF4 FsrEasuBF(AF2 p) { return tex2DgatherB(Input, p); }
+#endif
 AF4 FsrRcasLoadF(ASU2 p) { return tex2Dfetch(Input, p); }
 void FsrRcasInputF(inout AF1 r, inout AF1 g, inout AF1 b) {}
 )";
@@ -65,7 +79,12 @@ float4 rcas(float4 position : SV_Position) : SV_Target
 {
     AF1 r, g, b;
     FsrRcasF(r, g, b, AU2(position.xy), Con0);
+#if UNISHADE_HDR
+    AF3 c = AF3(r, g, b);
+    return float4(c * abs(c) * 125.0, 1);
+#else
     return float4(r, g, b, 1);
+#endif
 }
 
 technique FSR
@@ -96,6 +115,7 @@ struct Pass
 struct Upscaler
 {
     bool made = false;   // the pipelines
+    bool hdr = false;    // what the pipelines and images were made for
     bool failed = false; // set after an error, so the picture is stretched instead of failing every frame
     bool on = false;     // for the log
     VkDescriptorSetLayout setLayouts[2]{};
@@ -104,7 +124,8 @@ struct Upscaler
     VkSampler sampler = VK_NULL_HANDLE;
     Pass easu;
     Pass rcas;
-    // At the window's size. EASU writes more than 8 bits, so RCAS does not sharpen EASU's rounding.
+    // At the window's size. EASU writes more than 8 bits, so RCAS does not sharpen EASU's rounding. For HDR both are
+    // half floats, as the encoded values are signed and 10 bits would band, and sharpened is scRGB.
     GpuImage upscaled;
     GpuImage sharpened;
 };
@@ -119,6 +140,16 @@ void Check(VkResult result, const char* what)
 uint32_t Bits(float value)
 {
     return std::bit_cast<uint32_t>(value);
+}
+
+VkFormat UpscaledFormat(bool hdr)
+{
+    return hdr ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+}
+
+VkFormat SharpenedFormat(bool hdr)
+{
+    return hdr ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_B8G8R8A8_UNORM;
 }
 
 // FsrEasuCon from ffx_fsr1.h, for an input that fills its texture.
@@ -201,6 +232,9 @@ void CreatePass(Pass& pass, VkFormat format, VkShaderModule vertex, const std::s
     info.renderPass = pass.renderPass;
     Check(vkCreateGraphicsPipelines(gpu.device, VK_NULL_HANDLE, 1, &info, nullptr, &pass.pipeline), "create a pipeline");
 
+    // The constants and their descriptors outlive a switch between SDR and HDR.
+    if (pass.constants.buffer)
+        return;
     if (!gpu.CreateBuffer(pass.constants, sizeof(Constants), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true))
         throw std::runtime_error("could not create a buffer");
     VkDescriptorSetAllocateInfo allocation{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
@@ -217,10 +251,11 @@ void CreatePass(Pass& pass, VkFormat format, VkShaderModule vertex, const std::s
     vkUpdateDescriptorSets(gpu.device, 1, &write, 0, nullptr);
 }
 
-void Create()
+void Create(bool hdr)
 {
     const auto started = std::chrono::steady_clock::now();
-    const std::string source = std::string(kPrelude) + std::string(reinterpret_cast<const char*>(kFfxA), kFfxASize) + kCallbacks +
+    const std::string source = std::string(kPrelude) + (hdr ? "#define UNISHADE_HDR 1\n" : "#define UNISHADE_HDR 0\n") +
+                               std::string(reinterpret_cast<const char*>(kFfxA), kFfxASize) + kCallbacks +
                                std::string(reinterpret_cast<const char*>(kFfxFsr1), kFfxFsr1Size) + kEntryPoints;
     reshadefx::preprocessor preprocessor;
     preprocessor.append_string(source, "fsr.fx");
@@ -255,36 +290,40 @@ void Create()
             Check(vkCreateShaderModule(gpu.device, &info, nullptr, &shaders[name]), "create a shader");
         }
 
-        // Set 0 holds the constants and set 1 the one texture, as ReShade's compiler lays them out.
-        const VkDescriptorSetLayoutBinding bindings[] = { { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr },
-                                                          { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL, nullptr } };
-        for (int set = 0; set < 2; ++set)
+        // The layouts, pool and sampler are made once, as nothing in them depends on the format.
+        if (!u.layout)
         {
-            VkDescriptorSetLayoutCreateInfo info{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-            info.bindingCount = 1;
-            info.pBindings = &bindings[set];
-            Check(vkCreateDescriptorSetLayout(gpu.device, &info, nullptr, &u.setLayouts[set]), "create a descriptor layout");
+            // Set 0 holds the constants and set 1 the one texture, as ReShade's compiler lays them out.
+            const VkDescriptorSetLayoutBinding bindings[] = { { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr },
+                                                              { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL, nullptr } };
+            for (int set = 0; set < 2; ++set)
+            {
+                VkDescriptorSetLayoutCreateInfo info{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+                info.bindingCount = 1;
+                info.pBindings = &bindings[set];
+                Check(vkCreateDescriptorSetLayout(gpu.device, &info, nullptr, &u.setLayouts[set]), "create a descriptor layout");
+            }
+            VkPipelineLayoutCreateInfo layoutInfo{ VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+            layoutInfo.setLayoutCount = 2;
+            layoutInfo.pSetLayouts = u.setLayouts;
+            Check(vkCreatePipelineLayout(gpu.device, &layoutInfo, nullptr, &u.layout), "create a pipeline layout");
+            const VkDescriptorPoolSize sizes[] = { { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 }, { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 } };
+            VkDescriptorPoolCreateInfo poolInfo{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+            poolInfo.maxSets = 4;
+            poolInfo.poolSizeCount = 2;
+            poolInfo.pPoolSizes = sizes;
+            Check(vkCreateDescriptorPool(gpu.device, &poolInfo, nullptr, &u.pool), "create a descriptor pool");
+            VkSamplerCreateInfo samplerInfo{ VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+            samplerInfo.magFilter = samplerInfo.minFilter = VK_FILTER_LINEAR;
+            samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            samplerInfo.addressModeU = samplerInfo.addressModeV = samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
+            Check(vkCreateSampler(gpu.device, &samplerInfo, nullptr, &u.sampler), "create a sampler");
         }
-        VkPipelineLayoutCreateInfo layoutInfo{ VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-        layoutInfo.setLayoutCount = 2;
-        layoutInfo.pSetLayouts = u.setLayouts;
-        Check(vkCreatePipelineLayout(gpu.device, &layoutInfo, nullptr, &u.layout), "create a pipeline layout");
-        const VkDescriptorPoolSize sizes[] = { { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 }, { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 } };
-        VkDescriptorPoolCreateInfo poolInfo{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-        poolInfo.maxSets = 4;
-        poolInfo.poolSizeCount = 2;
-        poolInfo.pPoolSizes = sizes;
-        Check(vkCreateDescriptorPool(gpu.device, &poolInfo, nullptr, &u.pool), "create a descriptor pool");
-        VkSamplerCreateInfo samplerInfo{ VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
-        samplerInfo.magFilter = samplerInfo.minFilter = VK_FILTER_LINEAR;
-        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        samplerInfo.addressModeU = samplerInfo.addressModeV = samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
-        Check(vkCreateSampler(gpu.device, &samplerInfo, nullptr, &u.sampler), "create a sampler");
 
-        CreatePass(u.easu, VK_FORMAT_A2B10G10R10_UNORM_PACK32, shaders[easu.vs_entry_point], easu.vs_entry_point, shaders[easu.ps_entry_point],
+        CreatePass(u.easu, UpscaledFormat(hdr), shaders[easu.vs_entry_point], easu.vs_entry_point, shaders[easu.ps_entry_point],
                    easu.ps_entry_point);
-        CreatePass(u.rcas, VK_FORMAT_B8G8R8A8_UNORM, shaders[rcas.vs_entry_point], rcas.vs_entry_point, shaders[rcas.ps_entry_point],
+        CreatePass(u.rcas, SharpenedFormat(hdr), shaders[rcas.vs_entry_point], rcas.vs_entry_point, shaders[rcas.ps_entry_point],
                    rcas.ps_entry_point);
     }
     catch (...)
@@ -294,7 +333,23 @@ void Create()
     }
     destroyShaders();
     u.made = true;
-    Log(LogLevel::Info, "FSR shaders compiled in %.0f ms.", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+    u.hdr = hdr;
+    Log(LogLevel::Info, "FSR shaders compiled for %s in %.0f ms.", hdr ? "HDR" : "SDR",
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+}
+
+void DestroyPipelines()
+{
+    for (Pass* pass : { &u.easu, &u.rcas })
+    {
+        if (pass->pipeline)
+            vkDestroyPipeline(gpu.device, pass->pipeline, nullptr);
+        if (pass->renderPass)
+            vkDestroyRenderPass(gpu.device, pass->renderPass, nullptr);
+        pass->pipeline = VK_NULL_HANDLE;
+        pass->renderPass = VK_NULL_HANDLE;
+    }
+    u.made = false;
 }
 
 void DestroyTargets()
@@ -327,9 +382,9 @@ VkFramebuffer CreateFramebuffer(const Pass& pass, const GpuImage& image)
 void Resize(VkCommandBuffer commands, VkExtent2D extent)
 {
     DestroyTargets();
-    if (!gpu.CreateImage(u.upscaled, extent.width, extent.height, 1, VK_FORMAT_A2B10G10R10_UNORM_PACK32,
+    if (!gpu.CreateImage(u.upscaled, extent.width, extent.height, 1, UpscaledFormat(u.hdr),
                          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT) ||
-        !gpu.CreateImage(u.sharpened, extent.width, extent.height, 1, VK_FORMAT_B8G8R8A8_UNORM,
+        !gpu.CreateImage(u.sharpened, extent.width, extent.height, 1, SharpenedFormat(u.hdr),
                          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
         throw std::runtime_error("the graphics card has no room for its images");
     InitLayout(commands, u.upscaled);
@@ -371,6 +426,7 @@ void Draw(VkCommandBuffer commands, const Pass& pass, VkImageView view, VkExtent
 
 bool Upscale(VkCommandBuffer commands, int effectResolution, const GpuImage& input, VkImage target, VkExtent2D extent)
 {
+    const bool hdr = input.format == VK_FORMAT_R16G16B16A16_SFLOAT;
     // FSR is for effects below 100%, and only scales up. At 100% the picture can be a few pixels off the window's size,
     // which stretching handles as before.
     if (u.failed || effectResolution >= 100 || input.width >= extent.width || input.height >= extent.height)
@@ -381,8 +437,15 @@ bool Upscale(VkCommandBuffer commands, int effectResolution, const GpuImage& inp
     }
     try
     {
+        // The pipelines and images are remade when the picture changes between SDR and HDR. The previous frame is done
+        // with the old ones.
+        if (u.made && u.hdr != hdr)
+        {
+            DestroyTargets();
+            DestroyPipelines();
+        }
         if (!u.made)
-            Create();
+            Create(hdr);
         if (u.upscaled.width != extent.width || u.upscaled.height != extent.height)
             Resize(commands, extent);
         Draw(commands, u.easu, input.view, extent,
@@ -415,18 +478,12 @@ void ReleaseUpscaler()
     if (!gpu.device)
         return;
     DestroyTargets();
+    DestroyPipelines();
     for (Pass* pass : { &u.easu, &u.rcas })
-    {
-        if (pass->pipeline)
-            vkDestroyPipeline(gpu.device, pass->pipeline, nullptr);
-        if (pass->renderPass)
-            vkDestroyRenderPass(gpu.device, pass->renderPass, nullptr);
         gpu.DestroyBuffer(pass->constants);
-    }
     if (u.sampler)
         vkDestroySampler(gpu.device, u.sampler, nullptr);
     if (u.pool)
-    const bool hdr = input.format == VK_FORMAT_R16G16B16A16_SFLOAT;
         vkDestroyDescriptorPool(gpu.device, u.pool, nullptr);
     if (u.layout)
         vkDestroyPipelineLayout(gpu.device, u.layout, nullptr);
