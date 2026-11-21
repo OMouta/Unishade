@@ -39,9 +39,11 @@ public:
         UnishadeSettingType type = UNISHADE_SETTING_TOGGLE;
         float min = 0;
         float max = 1;
-        float defaultValue = 0;
+        size_t count = 1; // values: three or four for a color
+        float defaultValue[4] = {};
         std::vector<std::string> choices;
-        float value = 0; // in the current preset, or in Unishade.ini for an add-on that leaves the picture alone
+        // In the current preset, or in Unishade.ini for an add-on that leaves the picture alone. A button's stays 0.
+        float value[4] = {};
     };
 
     struct Addon
@@ -55,6 +57,9 @@ public:
         // Enabled, but frames skip it. For an add-on that changes the picture, the preset says so: it is turned off
         // in this preset as an effect is.
         bool bypassed = false;
+        // Enabled, but frames skip it while the picture is HDR, since it changes the picture and takes SDR ones only.
+        // error says so meanwhile.
+        bool hdrSkipped = false;
         std::vector<Setting> settings; // once it loaded
         std::shared_ptr<Library> library;
     };
@@ -96,12 +101,14 @@ public:
     void Resume(const std::string& file);
     bool Loaded(const std::string& file) const;
     // Kept in the current preset for an add-on that changes the picture, since it is part of the look, and in
-    // Unishade.ini for any other, whose settings are about this computer.
-    void SetSetting(const std::string& file, size_t setting, float value);
+    // Unishade.ini for any other, whose settings are about this computer. Takes as many values as the setting has. A
+    // button is pressed by setting it, whatever the value.
+    void SetSetting(const std::string& file, size_t setting, const float* values);
     // The add-ons the preset says are on in it that are not running here, by name.
     std::vector<std::string> Missing() const;
-    // Starts and stops add-ons as the calls above asked, and takes settings from a preset that loaded. Call once per
-    // pass of the main loop, outside drawing, since stopping one prepares the effects again.
+    // Starts and stops add-ons as the calls above asked, takes settings from a preset that loaded, and calls the update
+    // of every add-on that has one. Call once per pass of the main loop, outside drawing, since stopping one prepares the
+    // effects again.
     void Update();
 
     // The official add-ons for this system.
@@ -113,9 +120,10 @@ public:
     static void Install(const Official& addon, const std::atomic<bool>& cancel,
                         const std::function<void(size_t file, uint64_t received, uint64_t total)>& progress = {});
 
-    // Has the add-ons that work on frames work on this one, in the overlay's frame being recorded, before effects.
-    // Copies the picture in itself, so the caller goes on with RenderEffects. Returns false, having done nothing, when
-    // no add-on works on frames, and the caller renders as usual.
+    // Has the add-ons that work on frames work on this one, in the overlay's frame being recorded, before effects and
+    // after them, and renders the effects in between. Returns false when no add-on works on frames, or it could not
+    // hand frames to them, and the caller renders as usual. While the picture is HDR, add-ons that do not take HDR
+    // get an SDR copy, and those of them that change the picture sit out.
     bool Frame(Surface& surface, const fx::Runtime::Source& source, uint64_t picture);
 
 private:
@@ -139,4 +147,5 @@ private:
     std::unique_ptr<Exchange> exchange;
     uint64_t presetGeneration = 0;
     bool changed = false; // an answer changed since the last Update
+    bool hdr = false; // the picture was HDR at the last Update, which says which add-ons sit out and provide DEPTH
 };

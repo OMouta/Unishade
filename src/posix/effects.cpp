@@ -1576,6 +1576,7 @@ void Runtime::ClearEffects()
     SavePipelineCache();
     effects.clear();
     techniques.clear();
+    ++effectsGeneration;
     sharedTextures.clear();
     textureFilesScanned = false;
     std::lock_guard lock(watchMutex);
@@ -1636,8 +1637,8 @@ void Runtime::ReloadNow(bool replace)
     presetOptions.height = pictureHeight;
     presetOptions.vendor = gpu.properties.vendorID;
     presetOptions.device = gpu.properties.deviceID;
-    presetOptions.includePaths = settings.effectPaths;
     presetOptions.hdr = hdr;
+    presetOptions.includePaths = settings.effectPaths;
     presetOptions.cacheDirectory = CacheDirectory() / "preset-effects";
     presetOptions.otherCacheDirectory = CacheDirectory() / "effects";
     CompileOptions libraryOptions = presetOptions;
@@ -1648,7 +1649,6 @@ void Runtime::ReloadNow(bool replace)
     presetEffectCount = presetJobs;
     if (jobs.empty())
     {
-        Log(LogLevel::Warning, "No effects were found. Install them from the launcher.");
         // Nothing to wait for, so the effects there are go now.
         if (replace)
         {
@@ -1658,6 +1658,7 @@ void Runtime::ReloadNow(bool replace)
         }
         effectsComplete = true;
         WatchEffects();
+        Log(LogLevel::Warning, "No effects were found. Install them from the launcher.");
         return;
     }
     // The effects being replaced are complete or not until the new ones are swapped in.
@@ -1749,21 +1750,20 @@ void Runtime::Update()
 {
     JoinLoaders(false);
     if (resizePending && std::chrono::steady_clock::now() - resizeTime >= kResizeDelay)
-        ReloadNow();
-    if (reloadRequested)
         ReloadNow(true);
-    std::deque<Effect> arrived;
+    if (reloadRequested)
+        ReloadNow();
     if (!holdFileChanges && filesChanged.exchange(false))
     {
         Log(LogLevel::Info, "Effect files changed, so effects load again.");
         ReloadNow(true);
     }
+    std::deque<Effect> arrived;
     bool running, presetRunning;
     {
         std::lock_guard lock(finishedMutex);
         running = loaderRunning;
         presetRunning = presetLoaderRunning;
-    }
         // Effects being replaced stay until every new one the preset uses has arrived, so none is missing a frame.
         if (!replacing || !presetRunning)
             arrived.swap(finished);
@@ -1778,6 +1778,7 @@ void Runtime::Update()
             effectsComplete = false;
         else
             arrived.clear();
+    }
     for (Effect& effect : arrived)
         AddEffect(std::move(effect));
     if (!arrived.empty())
@@ -1823,7 +1824,6 @@ void Runtime::Update()
         summaryPending = false;
         effectsComplete = true;
         summary("Effects loaded", effects.size());
-    }
         WatchEffects();
     }
     // Swapped in effects are all prepared before the frame, which has no others.
@@ -1900,6 +1900,7 @@ void Runtime::WatchFiles()
             filesChanged = true;
             watching = {};
         }
+    }
 }
 
 void Runtime::StopWatcher()
@@ -1997,6 +1998,7 @@ void Runtime::ShareTextures(Effect& effect, size_t index)
 void Runtime::SortTechniques()
 {
     OrderTechniques(techniques, effects, sorting);
+    ++effectsGeneration;
 }
 
 std::vector<std::string> Runtime::SortingKeys() const
@@ -2147,13 +2149,13 @@ bool Runtime::WritePreset(const fs::path& path, PresetIni preset)
 
 void Runtime::ReloadKeepingChanges()
 {
-    // The effects that arrive take their state from presetIni, so it takes the changes, while the file stays as it
-{
     KeepChanges();
     Reload();
 }
 
 void Runtime::KeepChanges()
+{
+    // The effects that arrive take their state from presetIni, so it takes the changes, while the file stays as it
     // was and the preset stays unsaved.
     std::vector<std::string> order = SortingKeys();
     presetIni = ComposePreset(presetIni, order);
@@ -2352,6 +2354,7 @@ void Runtime::MoveTechnique(size_t from, size_t to)
     Technique moved = std::move(techniques[from]);
     techniques.erase(techniques.begin() + from);
     techniques.insert(techniques.begin() + to, std::move(moved));
+    ++effectsGeneration;
     sorting = SortingKeys();
     dirty = true;
 }
@@ -3456,14 +3459,14 @@ void Runtime::CopyIn(VkCommandBuffer commands, const Source& source, bool effect
         return;
     ReleaseSetups(false);
     FullBarrier(commands);
-    if (source.image)
-        // Straight from the capture on the graphics card. Alpha is whatever the window has, as in games where
-        // ReShade runs.
     // While the picture's size waits for effects of its own, it comes in at that size and is scaled to theirs.
     const bool scaling = scaled.image != VK_NULL_HANDLE;
     const GpuImage& target = scaling ? scaled : backbuffer;
     const GpuBuffer& upload = scaling ? scaledStaging : staging;
     const uint32_t width = target.width, height = target.height;
+    if (source.image)
+        // Straight from the capture on the graphics card. Alpha is whatever the window has, as in games where
+        // ReShade runs.
         CopySource(commands, source, target.image, width, height);
     else if ((source.pixels || source.memory) && upload.mapped)
     {
@@ -3539,9 +3542,6 @@ void Runtime::RenderEffects(VkCommandBuffer commands, bool enabled)
             g.updatedFrame = frameCount;
         }
 
-        for (const PassGpu& p : g.techniques[technique.index])
-        {
-            if (colorStale)
         // Written once everything before has finished, which the barriers after every pass keep to this technique.
         std::vector<TimedTechnique>& timed = timedTechniques[slot];
         const bool measured = timing && timed.size() < kTimedTechniques;
@@ -3551,6 +3551,9 @@ void Runtime::RenderEffects(VkCommandBuffer commands, bool enabled)
             timed.push_back({ static_cast<size_t>(&technique - techniques.data()), technique.effect, technique.name });
             vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps, query);
         }
+        for (const PassGpu& p : g.techniques[technique.index])
+        {
+            if (colorStale)
             {
                 VkImageCopy region{};
                 region.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
@@ -3587,18 +3590,15 @@ void Runtime::RenderEffects(VkCommandBuffer commands, bool enabled)
                 for (const GpuImage* image : p.written)
                     GenerateMipmaps(commands, *image);
         }
+        if (measured)
+            vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps, query + 1);
         // A technique with a timeout turns itself off once it has run that long.
         if (technique.timeout > 0 && (technique.timeLeft -= frameTime) <= 0)
             Enable(technique, false);
-        if (measured)
-            vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps, query + 1);
     }
     uimask::Restore(commands, backbuffer);
 }
 
-std::vector<uint8_t> Runtime::ReadOutput()
-{
-    return ReadImage(backbuffer.image, 0, 0, false);
 // Smooths each technique's time with what a slot measured, kTimedFrames frames ago. A technique the slot did not time
 // has no time, so one turned off, or timing that stopped, shows none.
 void Runtime::ReadTimestamps(uint32_t slot)
@@ -3639,6 +3639,9 @@ void Runtime::ReadTimestamps(uint32_t slot)
     timed.clear();
 }
 
+std::vector<uint8_t> Runtime::ReadOutput()
+{
+    return ReadImage(backbuffer.image, 0, 0, false);
 }
 
 std::vector<uint8_t> Runtime::ReadSource(const Source& source)
@@ -3680,9 +3683,6 @@ std::vector<uint8_t> Runtime::ReadImage(VkImage image, uint32_t x, uint32_t y, b
     if (!gpu.SubmitAndWait(commands))
         return pixels;
     gpu.Invalidate(readback);
-    pixels.resize(size);
-    std::memcpy(pixels.data(), readback.mapped, size);
-    for (size_t i = 0; i < size; i += 4)
     if (hdr)
     {
         // RGBA in half floats, turned into SDR as capture does: divided by SDR white, clamped and encoded as sRGB. Each
@@ -3711,6 +3711,9 @@ std::vector<uint8_t> Runtime::ReadImage(VkImage image, uint32_t x, uint32_t y, b
         }
         return pixels;
     }
+    pixels.resize(size);
+    std::memcpy(pixels.data(), readback.mapped, size);
+    for (size_t i = 0; i < size; i += 4)
     {
         std::swap(pixels[i], pixels[i + 2]);
         pixels[i + 3] = 255;

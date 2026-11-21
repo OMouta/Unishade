@@ -699,11 +699,10 @@ void App::RenderOverlay()
     const bool screenshot = screenshotRequested;
     UpdateInput();
 
-    // Add-ons work on the picture before effects, and not while effects are off, so comparing shows the game's own.
+    // Add-ons work on the picture before and after effects, and not while effects are off, so comparing shows the
+    // game's own.
     const bool effects = effectsEnabled && !comparing && !compareButton;
-    if (effects && addons.Frame(surface, Source(), frame.serial))
-        runtime.RenderEffects(surface.commands, effects);
-    else
+    if (!effects || !addons.Frame(surface, Source(), frame.serial))
         runtime.Render(surface.commands, Source(), effects);
     FullBarrier(surface.commands);
     const GpuImage& output = runtime.Output();
@@ -1403,6 +1402,7 @@ void App::UpdateEffectResolution()
         Log(LogLevel::Info, "Effect resolution: %d%% for %s.", percent, game.empty() ? "every game" : game.c_str());
     effectResolution = percent;
     platform::SetFrameScale(effectResolution);
+}
 
 void App::UpdateHdrOutput()
 {
@@ -1411,7 +1411,6 @@ void App::UpdateHdrOutput()
         Log(LogLevel::Info, "HDR output: %s for %s.", on ? "on" : "off", game.empty() ? "every game" : game.c_str());
     hdrOutput = on;
     nextHdrCheck = 0;
-}
 }
 #endif
 

@@ -340,6 +340,9 @@ public:
     std::vector<Effect>& Effects() { return effects; }
     // In the order they run.
     std::vector<Technique>& Techniques() { return techniques; }
+    // Goes up whenever effects or techniques may have moved, been added or gone, so indices into them and pointers
+    // to their strings from before may be stale: when effects load, a preset loads or a technique moves.
+    uint64_t EffectsGeneration() const { return effectsGeneration; }
     // A technique turned off stays one of the preset's, to be turned back on. Removing it takes it out.
     void SetEnabled(size_t technique, bool enabled);
     void RemoveTechnique(size_t technique);
@@ -358,20 +361,20 @@ public:
     // for the whole system takes a hundred calls or a round trip to the X server, so the host skips it otherwise.
     bool ReadsInput() const;
 
-    // For uniforms with a source.
-    bool menuOpen = false;
-    float mouseX = 0;
     // Effect files that change on disk load again by themselves, unless this is set, as while the installer writes
     // them and reloads once it is done.
     bool holdFileChanges = false;
 
+    // For uniforms with a source.
+    bool menuOpen = false;
+    float mouseX = 0;
     float mouseY = 0;
     EffectInput input;
+    // Times each technique on the graphics card, for Technique::gpuMs. Only while something shows it.
+    bool timeTechniques = false;
 
 private:
     // A texture effects share by name, or through the pooled annotation, as in ReShade. It is made with every
-    // Times each technique on the graphics card, for Technique::gpuMs. Only while something shows it.
-    bool timeTechniques = false;
     // use any of them has for it.
     struct SharedTexture
     {
@@ -400,6 +403,17 @@ private:
         std::atomic<bool> done = false;
     };
 
+    // What the watcher looks at: the effect folders, the effect files they had when the effects loaded, and every
+    // file the effects were compiled from. A file written after since may not be what was compiled.
+    struct WatchList
+    {
+        uint64_t generation = 0; // 0 while there is nothing to watch
+        std::vector<fs::path> roots;
+        std::vector<fs::path> found;
+        std::vector<fs::path> files;
+        fs::file_time_type since;
+    };
+
     void StopLoader();
     void JoinLoaders(bool wait);
     // With replace, the effects there are go on until the new ones the preset uses have arrived, and Update swaps
@@ -412,17 +426,6 @@ private:
     void WatchEffects();
     void WatchFiles();
     void StopWatcher();
-    // What the watcher looks at: the effect folders, the effect files they had when the effects loaded, and every
-    // file the effects were compiled from. A file written after since may not be what was compiled.
-    struct WatchList
-    {
-        uint64_t generation = 0; // 0 while there is nothing to watch
-        std::vector<fs::path> roots;
-        std::vector<fs::path> found;
-        std::vector<fs::path> files;
-        fs::file_time_type since;
-    };
-
     void AddEffect(Effect&& effect);
     void ShareTextures(Effect& effect, size_t index);
     void SortTechniques();
@@ -453,10 +456,10 @@ private:
     void SubmitSetup();
     void ReleaseSetups(bool wait);
     void SavePipelineCache();
+    void ReadTimestamps(uint32_t slot);
     std::vector<uint8_t> ReadImage(VkImage image, uint32_t x, uint32_t y, bool foreign);
 
     Settings settings;
-    void ReadTimestamps(uint32_t slot);
     uint32_t width = 0;
     uint32_t height = 0;
     // Effects are compiled for one size, width by height. When the picture changes size they wait until it has
@@ -465,14 +468,14 @@ private:
     uint32_t pictureHeight = 0;
     bool resizePending = false;
     std::chrono::steady_clock::time_point resizeTime;
-
-    GpuImage backbuffer; // what passes without a render target write to
-    GpuImage color;      // a copy of backbuffer, which effects read as COLOR
     // The picture at its own size while that differs from the effects', which CopyIn scales from.
     GpuImage scaled;
     GpuBuffer scaledStaging;
     bool hdr = false;
     float sdrWhite = 1;
+
+    GpuImage backbuffer; // what passes without a render target write to
+    GpuImage color;      // a copy of backbuffer, which effects read as COLOR
     GpuImage depth;      // effects read DEPTH from here, empty unless ProvideDepth: the game's depth is out of reach
     bool depthProvided = false;
     GpuImage blank;      // bound where an effect reads a texture it is writing in the same pass
@@ -489,9 +492,6 @@ private:
     std::vector<Setup> setups; // submitted, until the graphics card is done with them
     std::vector<VkFormat> mipmapWarnings;
 
-    std::vector<Effect> effects;
-    std::vector<Technique> techniques;
-    std::vector<std::string> sorting; // technique keys in the order they run
     // Timestamps before and after each technique, in a slot per frame. A slot is read when its frame comes round
     // again, by when the graphics card is done with it, so reading never waits. No pool without timestamps.
     static constexpr uint32_t kTimedFrames = 3;
@@ -507,12 +507,16 @@ private:
     double tickMs = 0;
     std::array<std::vector<TimedTechnique>, kTimedFrames> timedTechniques;
 
+    std::vector<Effect> effects;
+    std::vector<Technique> techniques;
+    std::vector<std::string> sorting; // technique keys in the order they run
     fs::path presetPath;
     PresetIni presetIni; // as loaded or last saved
     PresetDefinitions presetDefinitions;
     // SetPresetValue's keys since the preset loaded, which saving writes into the file.
     std::vector<std::array<std::string, 3>> presetValues;
     uint64_t presetGeneration = 0;
+    uint64_t effectsGeneration = 0;
     bool dirty = false;
     // The definition SetDefinition changed last, until the effects compiled with it, and the value it had in the
     // effect's section, if any.
@@ -532,11 +536,11 @@ private:
     std::atomic<bool> loaderRunning = false;
     std::atomic<bool> presetLoaderRunning = false; // still compiling the effects the preset uses
     bool reloadRequested = false;
+    bool replacing = false; // a load with replace runs, whose effects wait in finished until the preset's have arrived
     bool preparingEffects = false;
     bool summaryPending = false;
     bool presetSummaryPending = false;
     size_t presetEffectCount = 0; // the first effects to arrive are the preset's
-    bool replacing = false; // a load with replace runs, whose effects wait in finished until the preset's have arrived
     // Every effect found has arrived. Until then a saved preset keeps the order of techniques not loaded yet.
     bool effectsComplete = false;
     std::atomic<size_t> loadedCount = 0;
@@ -544,10 +548,6 @@ private:
     std::mutex finishedMutex;
     std::deque<Effect> finished;
 
-    std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
-    std::chrono::steady_clock::time_point lastFrame = startTime;
-    float frameTime = 0;
-    uint32_t frameCount = 0;
     // A thread looks at the effect files once a second, and sets filesChanged once they changed and settled.
     fs::file_time_type loadStarted;
     std::vector<fs::path> foundEffects; // by the last load
@@ -559,5 +559,9 @@ private:
     uint64_t watchGeneration = 0;
     std::atomic<bool> filesChanged = false;
 
+    std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point lastFrame = startTime;
+    float frameTime = 0;
+    uint32_t frameCount = 0;
 };
 } // namespace fx

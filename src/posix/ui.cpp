@@ -1632,8 +1632,11 @@ public:
 
     void SetAddonSetting(size_t addon, size_t setting, const launcher::EffectSetting& value) override
     {
+        float values[4];
+        for (int i = 0; i < 4; ++i)
+            values[i] = value.floating ? value.floats[i] : static_cast<float>(value.ints[i]);
         if (addon < launcherState.addonFiles.size())
-            app.addons.SetSetting(launcherState.addonFiles[addon], setting, value.floating ? value.floats[0] : static_cast<float>(value.ints[0]));
+            app.addons.SetSetting(launcherState.addonFiles[addon], setting, values);
     }
 
     void OpenAddonsFolder() override
@@ -1813,10 +1816,10 @@ launcher::Performance PerformanceOf(const std::string& folder)
     launcher::Performance performance{ .frameRate = FrameRateLimit(folder) };
 #ifdef _WIN32
     performance.effectResolution = EffectResolution(folder);
+    performance.hdrOutput = HdrOutput(folder);
 #endif
     return performance;
 }
-    performance.hdrOutput = HdrOutput(folder);
 
 // Starts each install once its add-on let go of its files, and finishes the ones that are done.
 void FollowInstalls(App& app)
@@ -1899,11 +1902,22 @@ launcher::EffectSetting SettingOf(const Addons::Setting& setting)
     shown.range = true;
     shown.min = setting.min;
     shown.max = setting.max;
-    shown.floating = setting.type == UNISHADE_SETTING_SLIDER;
-    shown.floats[0] = setting.value;
-    shown.ints[0] = static_cast<int>(std::lround(setting.value));
+    shown.floating = setting.type == UNISHADE_SETTING_SLIDER || setting.count > 1;
+    shown.count = static_cast<int>(setting.count);
+    for (size_t i = 0; i < setting.count; ++i)
+    {
+        shown.floats[i] = setting.value[i];
+        shown.ints[i] = static_cast<int>(std::lround(setting.value[i]));
+    }
     switch (setting.type)
     {
+    case UNISHADE_SETTING_COLOR_RGB:
+    case UNISHADE_SETTING_COLOR_RGBA:
+        shown.control = Control::Color;
+        shown.min = 0;
+        shown.max = 1;
+        break;
+    case UNISHADE_SETTING_BUTTON: shown.control = Control::Button; break;
     case UNISHADE_SETTING_TOGGLE: shown.control = Control::Check; break;
     case UNISHADE_SETTING_CHOICE:
         shown.control = Control::List;
@@ -2440,6 +2454,13 @@ void EndUi(UiWindow& ui)
     ImGui::Render();
     ui.surface.BeginRenderPass();
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), ui.surface.commands);
+    // Dear ImGui's colors are sRGB, which an scRGB swapchain would take as linear and show dim, so it drew into the
+    // surface's menu, which goes over the picture at the display's SDR white.
+    if (ui.surface.hdr)
+    {
+        ui.surface.BeginComposite();
+        backdrop::DrawMenu(ui.surface.commands, ui.surface.menu, ui.surface.sdrWhite);
+    }
     ui.surface.EndFrame();
     pictureSets[ui.context].commands = VK_NULL_HANDLE;
 }
@@ -2454,13 +2475,6 @@ void GiveBack(launcher::Model& model)
     {
         launcherState.effects = std::move(model.effects->list);
         launcherState.broken = std::move(model.effects->broken);
-    // Dear ImGui's colors are sRGB, which an scRGB swapchain would take as linear and show dim, so it drew into the
-    // surface's menu, which goes over the picture at the display's SDR white.
-    if (ui.surface.hdr)
-    {
-        ui.surface.BeginComposite();
-        backdrop::DrawMenu(ui.surface.commands, ui.surface.menu, ui.surface.sdrWhite);
-    }
     }
 }
 
@@ -2501,6 +2515,7 @@ void DrawGamePictures(App& app, VkCommandBuffer commands, const GpuImage& output
         return;
     backdrop::Begin(commands);
     const platform::WindowId window = app.active->id;
+    const float white = app.runtime.SdrWhite();
     if (frosted)
     {
         int width = 1, height = 1;
@@ -2516,7 +2531,6 @@ void DrawGamePictures(App& app, VkCommandBuffer commands, const GpuImage& output
     }
     if (previewing)
     {
-    const float white = app.runtime.SdrWhite();
         // Once a second while the game is played, so it costs the game next to nothing.
         nextPreview = now + (app.inFront ? 1.0 : kPreviewInterval);
         const uint32_t divisor = std::max(2u, (output.width + kPreviewWidth - 1) / kPreviewWidth);

@@ -645,6 +645,10 @@ Field SettingField(const std::string& scope, const EffectSetting& setting, size_
         return field;
     }
 
+    if (setting.control == EffectSetting::Control::Button)
+        return Actions(id, "", { { s->label.c_str(), PillStyle::Well } }, [s, change](int) { change(*s); },
+                       grid.column * static_cast<float>(grid.columns) + S(kFieldGap) * static_cast<float>(grid.columns - 1));
+
     if (setting.control == EffectSetting::Control::List)
     {
         std::vector<const char*> choices;
@@ -1679,10 +1683,6 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
             fields.push_back(Note("Effects run on a smaller picture that FSR upscales to the game's size. Lower is faster and softer, and screenshots get smaller.",
                                   kMist, width));
         }
-        // Marked over the game, so only there.
-        if (!page)
-        {
-            const size_t count = f.game->uiMask.size();
         if (performance.hdrOutput)
         {
             fields.push_back(Switched("hdr", "HDR output", *performance.hdrOutput,
@@ -1690,6 +1690,10 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
             fields.push_back(Note("Keeps an HDR game in HDR. Most effects are made for SDR and can look wrong in HDR, and add-ons that work on the picture pause.",
                                   kMist, width));
         }
+        // Marked over the game, so only there.
+        if (!page)
+        {
+            const size_t count = f.game->uiMask.size();
             const std::string label = count ? "Game interface: " + std::to_string(count) + (count == 1 ? " area" : " areas") : "Game interface";
             fields.push_back(Actions("interface", label, { { "Mark", PillStyle::Text } }, [](int) { state->masking = true; }, width));
             fields.push_back(Note("Mark the game's own interface, such as a health bar or the chat, and effects leave it as the game drew it.", kMist, width));
@@ -2320,10 +2324,6 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
         look.ink = Animate(ImGui::GetID("ink"), effect.on ? 1.0f : 0.0f, 0.35f, Curve::Out);
         // Red does not show on a tile's color, so it is black there.
         look.detailColor = f.effects->on ? Mix(kDanger, kOnColor, look.ink) : kDanger;
-        look.gray = Animate(ImGui::GetID("gray"), f.effects->on ? 0.0f : 1.0f, 0.4f, Curve::Out, 0.03f * static_cast<float>(i));
-        look.dot = Animate(ImGui::GetID("dot"), effect.on ? 1.0f : 0.0f, 0.3f, Curve::Out);
-        look.spot = std::max(0.0f, Animate(ImGui::GetID("spot"), effect.on ? 1.0f : 0.0f, 0.4f, Curve::Spring));
-        look.dotScale = Animate(ImGui::GetID("dot scale"), dotHovered ? 1.15f : 1, 0.25f, Curve::Spring);
         // The time the graphics card spends on it, while debug info shows.
         if (!effect.failed && effect.gpuMs > 0)
         {
@@ -2332,6 +2332,10 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
             look.detail = ms;
             look.detailColor = Alpha(kOnColor, 0.55f);
         }
+        look.gray = Animate(ImGui::GetID("gray"), f.effects->on ? 0.0f : 1.0f, 0.4f, Curve::Out, 0.03f * static_cast<float>(i));
+        look.dot = Animate(ImGui::GetID("dot"), effect.on ? 1.0f : 0.0f, 0.3f, Curve::Out);
+        look.spot = std::max(0.0f, Animate(ImGui::GetID("spot"), effect.on ? 1.0f : 0.0f, 0.4f, Curve::Spring));
+        look.dotScale = Animate(ImGui::GetID("dot scale"), dotHovered ? 1.15f : 1, 0.25f, Curve::Spring);
         look.small = small;
         look.cooking = cooking;
         look.phase = cooking ? static_cast<float>(std::fmod(now / 1.1 + 0.09 * static_cast<double>(i) / 1.1, 1.0)) : 0;

@@ -367,11 +367,12 @@ bool Ready()
 
 // Runs a pass over target, reading input. Each pass of a frame has a slot of its own, since a set cannot change once
 // commands that use it are recorded.
-bool Draw(VkCommandBuffer commands, VkPipeline pipeline, VkImageView input, const backdrop::Target& target, const float (&step)[4])
+bool Draw(VkCommandBuffer commands, VkPipeline pipeline, VkImageView input, const backdrop::Target& target, const float (&step)[4],
+          const Slot* own = nullptr)
 {
-    if (!b.made || b.used >= kSlots || !target.framebuffer)
+    if (!b.made || (!own && b.used >= kSlots) || !target.framebuffer)
         return false;
-    const Slot& slot = b.slots[b.used++];
+    const Slot& slot = own ? *own : b.slots[b.used++];
     std::memcpy(slot.constants.mapped, step, sizeof(step));
     const VkDescriptorImageInfo image{ b.sampler, input, VK_IMAGE_LAYOUT_GENERAL };
     VkWriteDescriptorSet write{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
@@ -450,7 +451,6 @@ bool Shrink(VkCommandBuffer commands, const GpuImage& input, const Target& targe
     return Draw(commands, b.shrink, input.view, target, step);
 }
 
-bool Blur(VkCommandBuffer commands, const Target& target, const Target& scratch, float radius, float saturation)
 bool ToSdr(VkCommandBuffer commands, const GpuImage& input, const Target& target, float sdrWhite, int slot)
 {
     const float step[4] = { 0, 0, 0, sdrWhite };
@@ -481,6 +481,7 @@ bool DrawMenu(VkCommandBuffer commands, const GpuImage& menu, float sdrWhite)
     return true;
 }
 
+bool Blur(VkCommandBuffer commands, const Target& target, const Target& scratch, float radius, float saturation)
 {
     // radius is the standard deviation, and the shader takes 4 steps to one.
     const float spacing = std::max(radius, 0.0f) / 4;
@@ -501,10 +502,10 @@ void Release()
             vkDestroyRenderPass(gpu.device, pass, nullptr);
     for (Slot& slot : b.slots)
         gpu.DestroyBuffer(slot.constants);
-    if (b.sampler)
     for (Slot& slot : b.sdrSlots)
         gpu.DestroyBuffer(slot.constants);
     gpu.DestroyBuffer(b.menuSlot.constants);
+    if (b.sampler)
         vkDestroySampler(gpu.device, b.sampler, nullptr);
     if (b.pool)
         vkDestroyDescriptorPool(gpu.device, b.pool, nullptr);
