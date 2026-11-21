@@ -878,7 +878,7 @@ void App::OnHotkey(int id, bool pressed)
     case kScreenshotHotkey:
     case kBeforeAfterHotkey:
         if (pressed)
-            RequestScreenshot(id == kBeforeAfterHotkey);
+            RequestScreenshot(id == kBeforeAfterHotkey ? ScreenshotKind::SideBySide : ScreenshotKind::Effects);
         break;
     case kNextPresetHotkey:
     case kPreviousPresetHotkey:
@@ -1212,12 +1212,13 @@ void App::StepPreset(int step)
 
 // Screenshots
 
-void App::RequestScreenshot(bool beforeAfter)
+void App::RequestScreenshot(ScreenshotKind kind, bool copy)
 {
     if (screenshots.size() >= 2)
         return;
     screenshotRequested = true;
-    beforeAfterRequested = beforeAfter;
+    screenshotKind = kind;
+    screenshotCopy = copy;
 }
 
 bool App::HasFrame() const
@@ -1241,7 +1242,10 @@ void App::SaveScreenshot()
     const uint32_t width = runtime.Width(), height = runtime.Height();
     std::vector<uint8_t> before;
     std::vector<uint32_t> beforePixels;
-    const bool beforeAfter = beforeAfterRequested && frame.width == width && frame.height == height;
+    // The game's own picture is only read at the size of the one with effects. At another size, which a lower effect
+    // resolution gives, every kind saves the picture with effects.
+    const ScreenshotKind kind = frame.width == width && frame.height == height ? screenshotKind : ScreenshotKind::Effects;
+    const bool beforeAfter = kind != ScreenshotKind::Effects;
     if (beforeAfter && frame.image)
         before = runtime.ReadSource(Source());
     else if (beforeAfter && frame.memory)
@@ -1271,13 +1275,16 @@ void App::SaveScreenshot()
     if (screenshotsInStamp > 1)
         name += " " + std::to_string(screenshotsInStamp);
     const fs::path folder = ScreenshotDirectory();
-    const fs::path path = folder / (name + (beforeAfter ? " before-after" : "") + ".png");
+    const bool twoFiles = kind == ScreenshotKind::TwoFiles, original = kind == ScreenshotKind::Original;
+    const char* const suffix = twoFiles ? " after" : original ? " without effects" : beforeAfter ? " before-after" : "";
+    const fs::path path = folder / (name + suffix + ".png");
+    const fs::path beforePath = folder / (name + " before.png");
     std::string shown = folder.string();
     if (const char* home = getenv("HOME"); home && *home && shown.rfind(home, 0) == 0)
         shown = "~" + shown.substr(strlen(home));
 
     // Encoding the PNG takes long enough to hold up the game's picture, so it happens on a thread of its own.
-    auto write = [path, shown, width, height, after = std::move(after), before = std::move(before),
+    auto write = [path, beforePath, twoFiles, original, copy = screenshotCopy, shown, width, height, after = std::move(after), before = std::move(before),
                   beforePixels = std::move(beforePixels)]() mutable -> std::string {
         if (!beforePixels.empty())
         {
@@ -1291,9 +1298,19 @@ void App::SaveScreenshot()
                 before[i * 4 + 3] = 255;
             }
         }
+        std::error_code error;
+        if (!copy)
+            fs::create_directories(path.parent_path(), error);
+        if (twoFiles && !before.empty() && !stbi_write_png(beforePath.string().c_str(), int(width), int(height), 4, before.data(), int(width) * 4))
+        {
+            Report(LogLevel::Warning, "Could not save the screenshot to %s.", beforePath.string().c_str());
+            return {};
+        }
         std::vector<uint8_t> image;
         uint32_t imageWidth = width;
-        if (!before.empty())
+        if (original && !before.empty())
+            image = std::move(before);
+        else if (!before.empty() && !twoFiles)
         {
             // The game's own picture on the left, with effects on the right.
             imageWidth = width * 2;
@@ -1306,15 +1323,20 @@ void App::SaveScreenshot()
         }
         else
             image = std::move(after);
-        std::error_code error;
-        fs::create_directories(path.parent_path(), error);
+        if (copy)
+        {
+            if (platform::CopyImage(image.data(), imageWidth, height))
+                return "Screenshot copied";
+            Report(LogLevel::Warning, "Could not copy the screenshot.");
+            return {};
+        }
         if (!stbi_write_png(path.string().c_str(), int(imageWidth), int(height), 4, image.data(), int(imageWidth) * 4))
         {
             Report(LogLevel::Warning, "Could not save the screenshot to %s.", path.string().c_str());
             return {};
         }
         Log(LogLevel::Info, "Screenshot saved to %s", path.string().c_str());
-        return "Screenshot saved to " + shown;
+        return (twoFiles ? "Screenshots saved to " : "Screenshot saved to ") + shown;
     };
     try
     {

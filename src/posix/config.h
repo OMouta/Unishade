@@ -74,6 +74,10 @@ struct Settings
     // As launcher::Settings::menuOpacity and smallTiles.
     float menuOpacity = 0.6f;
     bool smallTiles = false;
+    // As launcher::Settings' three.
+    bool shotEffects = true;
+    bool shotOriginal = false;
+    bool shotTwoFiles = false;
     bool menuHints = true;
     bool darkMenu = true;
     fs::path preset;

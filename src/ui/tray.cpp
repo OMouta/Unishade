@@ -66,6 +66,7 @@ enum class Sheet
     Add,
     Presets,
     More,
+    Shot,
     Ask,
 };
 
@@ -1280,6 +1281,46 @@ void PresetMenu(Frame& f, const Preset& preset)
     ImGui::PopStyleVar(2);
 }
 
+// What a screenshot holds, and the buttons that take one. Screenshots leave out the tray.
+float ShotSheet(Frame& f, ImVec2 min, float width, float space)
+{
+    const Settings& settings = f.model.settings;
+    float height = 0;
+    const bool copies = settings.copyScreenshots;
+    const int clicked = copies ? Header(f, min, width, "Screenshot", "", { { "Copy", PillStyle::Text }, { "Take screenshot", PillStyle::Black } }, height)
+                               : Header(f, min, width, "Screenshot", "", { { "Take screenshot", PillStyle::Black } }, height);
+    if (clicked >= 0)
+    {
+        f.host.TakeScreenshot(copies && clicked == 0);
+        state->shot = ImGui::GetTime();
+    }
+    float y = height + S(14.4f);
+
+    const Grid grid = GridOf(width, f.side ? width : S(kFieldWidth));
+    std::vector<Field> fields;
+    // One of the two stays on: turning the last one off turns the other on.
+    fields.push_back(Switched("effects", "With effects", settings.shotEffects,
+                              [&f, &settings](bool on) {
+                                  f.host.SetSwitch(Switch::ShotEffects, on);
+                                  if (!on && !settings.shotOriginal)
+                                      f.host.SetSwitch(Switch::ShotOriginal, true);
+                              },
+                              {}, grid));
+    fields.push_back(Switched("original", "Without effects", settings.shotOriginal,
+                              [&f, &settings](bool on) {
+                                  f.host.SetSwitch(Switch::ShotOriginal, on);
+                                  if (!on && !settings.shotEffects)
+                                      f.host.SetSwitch(Switch::ShotEffects, true);
+                              },
+                              {}, grid));
+    if (settings.shotEffects && settings.shotOriginal)
+        fields.push_back(Choices("both", "Both", { "Side by side", "Two pictures" }, settings.shotTwoFiles ? 1 : 0,
+                                 [&f](int choice) { f.host.SetSwitch(Switch::ShotTwoFiles, choice == 1); }, {}, grid));
+    fields.push_back(Actions("folder", "Saved screenshots", { { "Open folder", PillStyle::Text } }, [&f](int) { f.host.OpenScreenshots(); }, width));
+    y += Fields("##shot", fields, grid, min + ImVec2(0, y), width, MaxHeight(f, 0.38f, space, y));
+    return y;
+}
+
 // The game's presets by folder, to use, and to make, copy, rename, move and delete where the model offers it.
 float PresetsSheet(Frame& f, ImVec2 min, float width, float space)
 {
@@ -1725,17 +1766,6 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
                                   "Turn off to try changes first, then save or discard them.", grid));
         if (settings.reloadEffects)
             fields.push_back(Actions("reload", "Reload effects", { { "Reload", PillStyle::Text } }, [&f](int) { f.host.ReloadEffects(); }, width));
-        if (!page)
-        {
-            fields.push_back(Heading("Screenshots"));
-            fields.push_back(Actions("before and after", "Before and after, side by side", { { "Take", PillStyle::Text } },
-                                     [&f](int) {
-                                         f.host.TakeScreenshot(true);
-                                         state->shot = ImGui::GetTime();
-                                     },
-                                     width));
-            fields.push_back(Actions("screenshots", "Saved screenshots", { { "Open folder", PillStyle::Text } }, [&f](int) { f.host.OpenScreenshots(); }, width));
-        }
         break;
     }
     case Tab::Shortcuts:
@@ -1843,6 +1873,7 @@ void DrawSheet(Frame& f, ImVec2 min, float height, float room)
     case Sheet::Add: used = AddSheet(f, inner, width, space); break;
     case Sheet::Presets: used = PresetsSheet(f, inner, width, space); break;
     case Sheet::More: used = MoreSheet(f, inner, width, space); break;
+    case Sheet::Shot: used = ShotSheet(f, inner, width, space); break;
     case Sheet::Ask: used = AskSheet(f, inner, width); break;
     case Sheet::None: break;
     }
@@ -2601,12 +2632,8 @@ bool Controls(Frame& f, ImVec2 origin, const std::vector<Placed>& placed)
             Tip("Hold to see the game without effects");
             break;
         case Control::Camera:
-            // Screenshots leave out the menu.
-            if (RoundButton("screenshot", at, Icon::Camera, "Screenshot"))
-            {
-                f.host.TakeScreenshot(false);
-                state->shot = ImGui::GetTime();
-            }
+            if (RoundButton("screenshot", at, Icon::Camera, "Screenshot", state->sheet == Sheet::Shot))
+                Toggle(Sheet::Shot);
             break;
         case Control::More:
             if (RoundButton("more", at, Icon::Sliders, "Performance and settings", state->sheet == Sheet::More, kRoundSize, IM_PI / 3))

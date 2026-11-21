@@ -46,13 +46,13 @@ Hold **Hold to compare**, or hold **F7** in the game, to see the game without ef
 
 ## Screenshots
 
-The camera button saves a screenshot, without the menu in it. Screenshots go to `Unishade` in your pictures folder.
+The camera button opens the screenshot's settings. **Take screenshot** saves one, without the menu in it, to `Unishade` in your pictures folder. On Windows and macOS, **Copy** puts it on the clipboard instead.
 
-The sliders button opens the menu's settings, where **Menu** has **Before and after, side by side**, which saves the same moment with and without effects.
+**With effects** and **Without effects** pick what it shows. With both on, it holds the same moment twice, and **Both** puts the two side by side in one picture or in a picture each.
 
 ## Look
 
-The same **Menu** tab sets the menu's opacity, a light or dark theme and smaller tiles.
+The sliders button opens the menu's settings, where **Menu** sets the menu's opacity, a light or dark theme and smaller tiles.
 
 ![The Menu tab](./images/menu-settings.png)
 

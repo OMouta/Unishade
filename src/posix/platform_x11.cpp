@@ -1915,6 +1915,17 @@ void ChooseProgram(std::function<void(std::optional<std::string>)> done)
 
 // The home trash of the freedesktop.org trash specification, which file managers show. Presets are in the data folder
 // under the home folder, so the file only moves within its file system.
+// GLFW's clipboard is for text, and a picture would need Unishade to answer for it itself.
+bool CanCopyImages()
+{
+    return false;
+}
+
+bool CopyImage(const uint8_t*, uint32_t, uint32_t)
+{
+    return false;
+}
+
 bool MoveToTrash(const std::string& path)
 {
     namespace fs = std::filesystem;

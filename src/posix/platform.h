@@ -235,6 +235,10 @@ void Open(const std::string& target);
 // Asks for a program's file with the system's own dialog, without holding up the caller. done gets the file chosen, an
 // empty string when none was, or nothing when there is no dialog to show. It may be called on another thread.
 void ChooseProgram(std::function<void(std::optional<std::string>)> done);
+// Puts a picture on the clipboard: RGBA with the top row first, taken as opaque. May run on another thread. Returns
+// false when it could not, which is always where CanCopyImages is false, as on X11.
+bool CanCopyImages();
+bool CopyImage(const uint8_t* rgba, uint32_t width, uint32_t height);
 // Moves a file to the Recycle Bin on Windows, or to the Trash. Returns false when it stays where it is.
 bool MoveToTrash(const std::string& path);
 

@@ -49,6 +49,16 @@ struct UiWindow
     bool rescale = false; // the window's content scale changed
 };
 
+// What a screenshot saves: the game with effects, the game without them, both beside each other in one file, or
+// both in a file each.
+enum class ScreenshotKind
+{
+    Effects,
+    Original,
+    SideBySide,
+    TwoFiles,
+};
+
 // The host: the launcher outside the game, and the overlay that redraws the game with effects and shows the
 // menu. The same design as on Windows, where ReShade draws on the host's own swapchain.
 class App
@@ -89,7 +99,8 @@ public:
     // Moves a preset into a folder, creating it.
     bool MovePreset(const fs::path& preset, const fs::path& folder, std::string& error);
     void StepPreset(int step);
-    void RequestScreenshot(bool beforeAfter);
+    // With copy the picture goes to the clipboard and no file is written.
+    void RequestScreenshot(ScreenshotKind kind, bool copy = false);
     // Registers the new shortcuts and saves them. Keeps the old ones and returns false when one is taken.
     bool ChangeHotkeys(const InputHotkeys& hotkeys, std::string& error);
     // While the menu records a shortcut, every shortcut is let go so its keys reach the menu.
@@ -186,7 +197,8 @@ private:
     bool menuFocused = false; // the overlay had focus since the menu opened
     bool startHintShown = false;
     bool screenshotRequested = false;
-    bool beforeAfterRequested = false;
+    ScreenshotKind screenshotKind = ScreenshotKind::Effects;
+    bool screenshotCopy = false;
     std::vector<std::future<std::string>> screenshots; // being written, each to the message it shows
     std::string screenshotStamp;                        // the second of the last screenshot
     int screenshotsInStamp = 0;

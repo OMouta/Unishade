@@ -1806,6 +1806,58 @@ void Open(const std::string& target)
     InSingleThreadedApartment([&] { ShellExecuteW(nullptr, L"open", wide.c_str(), nullptr, nullptr, SW_SHOWNORMAL); });
 }
 
+bool CanCopyImages()
+{
+    return true;
+}
+
+bool CopyImage(const uint8_t* rgba, uint32_t width, uint32_t height)
+{
+    // A device-independent bitmap: its header, then BGRA rows from the bottom one up.
+    const size_t row = size_t(width) * 4;
+    const HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, sizeof(BITMAPINFOHEADER) + row * height);
+    if (!memory)
+        return false;
+    auto* const header = static_cast<BITMAPINFOHEADER*>(GlobalLock(memory));
+    *header = {};
+    header->biSize = sizeof(BITMAPINFOHEADER);
+    header->biWidth = static_cast<LONG>(width);
+    header->biHeight = static_cast<LONG>(height);
+    header->biPlanes = 1;
+    header->biBitCount = 32;
+    header->biCompression = BI_RGB;
+    header->biSizeImage = static_cast<DWORD>(row * height);
+    uint8_t* out = reinterpret_cast<uint8_t*>(header + 1);
+    for (uint32_t y = 0; y < height; ++y)
+    {
+        const uint8_t* in = rgba + size_t(height - 1 - y) * row;
+        for (uint32_t x = 0; x < width; ++x, in += 4, out += 4)
+        {
+            out[0] = in[2];
+            out[1] = in[1];
+            out[2] = in[0];
+            out[3] = 255;
+        }
+    }
+    GlobalUnlock(memory);
+    // Another program can hold the clipboard for a moment.
+    bool opened = false;
+    for (int attempt = 0; attempt < 10 && !(opened = OpenClipboard(nullptr) != FALSE); ++attempt)
+        Sleep(10);
+    if (!opened)
+    {
+        GlobalFree(memory);
+        return false;
+    }
+    EmptyClipboard();
+    // The clipboard owns the memory once it takes it.
+    const bool set = SetClipboardData(CF_DIB, memory) != nullptr;
+    if (!set)
+        GlobalFree(memory);
+    CloseClipboard();
+    return set;
+}
+
 bool MoveToTrash(const std::string& path)
 {
     // The list of files ends with an empty one.

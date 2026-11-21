@@ -1060,6 +1060,11 @@ public:
             app.settings.smallTiles = on;
             SaveSettings(app.settings);
         }
+        else if (which == launcher::Switch::ShotEffects || which == launcher::Switch::ShotOriginal || which == launcher::Switch::ShotTwoFiles)
+        {
+            (which == launcher::Switch::ShotEffects ? app.settings.shotEffects : which == launcher::Switch::ShotOriginal ? app.settings.shotOriginal : app.settings.shotTwoFiles) = on;
+            SaveSettings(app.settings);
+        }
         else if (which == launcher::Switch::DarkMenu)
         {
             app.settings.darkMenu = on;
@@ -1398,11 +1403,14 @@ public:
         app.compareButton = holding;
     }
 
-    void TakeScreenshot(bool beforeAfter) override
+    void TakeScreenshot(bool copy) override
     {
         // The thumbnail waits for the frame that takes it, and stays away when none does.
         shot.ready = false;
-        app.RequestScreenshot(beforeAfter);
+        const auto& settings = app.settings;
+        // The clipboard holds one picture, so both go there side by side.
+        const ScreenshotKind both = settings.shotTwoFiles && !copy ? ScreenshotKind::TwoFiles : ScreenshotKind::SideBySide;
+        app.RequestScreenshot(!settings.shotOriginal ? ScreenshotKind::Effects : settings.shotEffects ? both : ScreenshotKind::Original, copy);
     }
 
     void OpenScreenshots() override
@@ -2157,6 +2165,10 @@ launcher::Model DescribeLauncher(App& app)
     model.settings.menuY = app.settings.menuY;
     model.settings.menuOpacity = app.settings.menuOpacity;
     model.settings.smallTiles = app.settings.smallTiles;
+    model.settings.shotEffects = app.settings.shotEffects;
+    model.settings.shotOriginal = app.settings.shotOriginal;
+    model.settings.shotTwoFiles = app.settings.shotTwoFiles;
+    model.settings.copyScreenshots = platform::CanCopyImages();
     model.settings.menuHints = app.settings.menuHints;
     for (const FoundGame& found : app.foundGames)
         model.found.push_back({ found.game.name, found.store, found.picture });

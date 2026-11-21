@@ -381,6 +381,10 @@ Settings LoadSettings()
     if (ini.Get("HOST", "MenuOpacity", value))
         settings.menuOpacity = std::clamp(std::round(std::strtof(value.c_str(), nullptr) * 100) / 100, 0.2f, 1.0f);
     settings.smallTiles = ini.Get("HOST", "SmallTiles", value) && value == "1";
+    settings.shotOriginal = ini.Get("HOST", "ScreenshotOriginal", value) && value == "1";
+    // One of the two is always on.
+    settings.shotEffects = !settings.shotOriginal || !ini.Get("HOST", "ScreenshotEffects", value) || value != "0";
+    settings.shotTwoFiles = ini.Get("HOST", "ScreenshotTwoFiles", value) && value == "1";
     settings.menuHints = !ini.Get("HOST", "MenuHints", value) || value != "0";
     settings.darkMenu = !ini.Get("HOST", "DarkMenu", value) || value != "0";
 
@@ -415,6 +419,9 @@ bool SaveSettings(const Settings& settings)
     std::snprintf(opacity, sizeof(opacity), "%.2f", settings.menuOpacity);
     ini.Set("HOST", "MenuOpacity", opacity);
     ini.Set("HOST", "SmallTiles", settings.smallTiles ? "1" : "0");
+    ini.Set("HOST", "ScreenshotEffects", settings.shotEffects ? "1" : "0");
+    ini.Set("HOST", "ScreenshotOriginal", settings.shotOriginal ? "1" : "0");
+    ini.Set("HOST", "ScreenshotTwoFiles", settings.shotTwoFiles ? "1" : "0");
     ini.Set("HOST", "MenuHints", settings.menuHints ? "1" : "0");
     ini.Set("HOST", "DarkMenu", settings.darkMenu ? "1" : "0");
 #ifdef __APPLE__

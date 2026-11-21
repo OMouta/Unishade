@@ -1598,6 +1598,40 @@ void Open(const std::string& target)
     Spawn("open", { target });
 }
 
+bool CanCopyImages()
+{
+    return true;
+}
+
+bool CopyImage(const uint8_t* rgba, uint32_t width, uint32_t height)
+{
+    @autoreleasepool
+    {
+        NSBitmapImageRep* picture = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:nullptr
+                                                                           pixelsWide:width
+                                                                           pixelsHigh:height
+                                                                        bitsPerSample:8
+                                                                      samplesPerPixel:4
+                                                                             hasAlpha:YES
+                                                                             isPlanar:NO
+                                                                       colorSpaceName:NSDeviceRGBColorSpace
+                                                                          bytesPerRow:width * 4
+                                                                         bitsPerPixel:32];
+        if (!picture)
+            return false;
+        uint8_t* out = [picture bitmapData];
+        std::memcpy(out, rgba, size_t(width) * height * 4);
+        for (size_t i = 3; i < size_t(width) * height * 4; i += 4)
+            out[i] = 255;
+        NSData* png = [picture representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+        if (!png)
+            return false;
+        NSPasteboard* board = [NSPasteboard generalPasteboard];
+        [board clearContents];
+        return [board setData:png forType:NSPasteboardTypePNG];
+    }
+}
+
 bool MoveToTrash(const std::string& path)
 {
     @autoreleasepool

@@ -232,6 +232,13 @@ struct Settings
     // How solid the tray is, from 0.2 to 1, and whether its tiles are small.
     float menuOpacity = 1;
     bool smallTiles = false;
+    // What a screenshot holds: the game with effects, the game without them, or both, and then whether in a file each
+    // rather than side by side in one. One of the first two is always on.
+    bool shotEffects = true;
+    bool shotOriginal = false;
+    bool shotTwoFiles = false;
+    // Whether a screenshot can go to the clipboard.
+    bool copyScreenshots = false;
     // The tray, and the launcher's blocks and windows, in near-white type on near-black.
     bool darkMenu = false;
     // The tray says how its tiles work, until the user says they have it.
@@ -363,6 +370,9 @@ enum class Switch
     DiscordPresence,
     SkipTitleBar,
     SmallTiles,
+    ShotEffects,
+    ShotOriginal,
+    ShotTwoFiles,
     MenuHints,
     DarkMenu,
     Effects, // the effects of the game being played, without stopping the overlay
@@ -421,7 +431,8 @@ public:
     virtual void PointAtSettings(size_t effect, std::optional<size_t> active, std::optional<size_t> hovered) = 0;
     // Over the game. Compare is called in every frame, with whether its button is held.
     virtual void Compare(bool holding) = 0;
-    virtual void TakeScreenshot(bool beforeAfter) = 0;
+    // Saves what Settings' shot switches say, or with copy puts it on the clipboard instead, as one picture.
+    virtual void TakeScreenshot(bool copy) = 0;
     virtual void OpenScreenshots() = 0;
     virtual void CloseMenu() = 0;
     // The answer to the question about unsaved changes before quitting.
