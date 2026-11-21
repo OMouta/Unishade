@@ -109,6 +109,9 @@ struct Technique
     // The key that turns it on and off: a virtual-key code, then Ctrl, Shift and Alt, as presets write it.
     std::array<unsigned, 4> toggleKey{};
     bool toggleKeyInPreset = false; // rather than from the effect's own toggle annotations
+    // Milliseconds the graphics card spends on it, smoothed, while Runtime::timeTechniques is on. 0 when it did not
+    // run a few frames ago, or the graphics card has no timestamps.
+    float gpuMs = 0;
 };
 
 struct EffectGpu;
@@ -128,10 +131,10 @@ struct Effect
     bool compiled = false;
     bool cached = false; // taken from the compile cache
     std::string errors; // the compiler's errors and warnings
+    std::vector<fs::path> files; // the effect's file and every file it included, which are watched for changes
     // The preprocessor definitions the effect checks that can be set, with the value it was compiled with, by name.
     // ReShade's menu lists the same ones.
     std::vector<std::pair<std::string, std::string>> definitions;
-    std::vector<fs::path> files; // the effect's file and every file it included, which are watched for changes
     reshadefx::effect_module module;
     std::unordered_map<std::string, std::vector<uint32_t>> spirv; // SPIR-V code by entry point
     std::vector<Uniform> uniforms;
@@ -238,10 +241,10 @@ public:
     // size before run on the picture scaled to that size.
     void SetSize(uint32_t width, uint32_t height);
     uint32_t Width() const { return width; }
+    // The size effects run at and Output has, which stays behind SetSize while a new size waits for its effects.
     uint32_t Height() const { return height; }
 
     // Finds the effects again and compiles them on worker threads, starting at the next Update, since the frame
-    // The size effects run at and Output has, which stays behind SetSize while a new size waits for its effects.
     // being recorded may still use the current ones. Effects the current preset uses come first. The rest follow
     // on fewer threads at low priority, so a game keeps its cores.
     void Reload() { reloadRequested = true; }
@@ -358,15 +361,17 @@ private:
     // use any of them has for it.
     struct SharedTexture
     {
-        GpuImage image;
-        reshadefx::texture_desc desc;
-        std::string source; // the image it loads
     // Effect files that change on disk load again by themselves, unless this is set, as while the installer writes
     // them and reloads once it is done.
     bool holdFileChanges = false;
 
+        GpuImage image;
+        reshadefx::texture_desc desc;
+        std::string source; // the image it loads
         bool renderTarget = false;
         bool storage = false;
+    // Times each technique on the graphics card, for Technique::gpuMs. Only while something shows it.
+    bool timeTechniques = false;
         bool pooled = false;
         std::vector<size_t> users; // effects
         TextureImage loaded;       // decoded and waiting to be uploaded
@@ -407,11 +412,6 @@ private:
     void ApplyPreset(Effect& effect, size_t effectIndex);
     // Sets or, with an empty value, removes a definition in the preset's section for the effect.
     void PutDefinition(const std::string& file, const std::string& name, const std::string& value);
-    bool WritePreset(const fs::path& path, PresetIni preset);
-    // The preset with the effects as they are, as WritePreset saves it, in the given order.
-    PresetIni ComposePreset(PresetIni preset, const std::vector<std::string>& order) const;
-    void Enable(Technique& technique, bool enabled);
-    bool ImagesReady(Effect& effect);
     // What the watcher looks at: the effect folders, the effect files they had when the effects loaded, and every
     // file the effects were compiled from. A file written after since may not be what was compiled.
     struct WatchList
@@ -423,6 +423,11 @@ private:
         fs::file_time_type since;
     };
 
+    bool WritePreset(const fs::path& path, PresetIni preset);
+    // The preset with the effects as they are, as WritePreset saves it, in the given order.
+    PresetIni ComposePreset(PresetIni preset, const std::vector<std::string>& order) const;
+    void Enable(Technique& technique, bool enabled);
+    bool ImagesReady(Effect& effect);
     bool CreateGpu(Effect& effect);
     void PrepareEffects(std::chrono::steady_clock::duration budget);
     void DestroyGpu(Effect& effect);
@@ -452,6 +457,7 @@ private:
     bool resizePending = false;
     std::chrono::steady_clock::time_point resizeTime;
 
+    void ReadTimestamps(uint32_t slot);
     GpuImage backbuffer; // what passes without a render target write to
     GpuImage color;      // a copy of backbuffer, which effects read as COLOR
     GpuImage depth;      // effects read DEPTH from here, empty unless ProvideDepth: the game's depth is out of reach
@@ -462,17 +468,17 @@ private:
     GpuBuffer staging;
     GpuBuffer readback;
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
+    // The picture at its own size while that differs from the effects', which CopyIn scales from.
+    GpuImage scaled;
+    GpuBuffer scaledStaging;
+    bool hdr = false;
+    float sdrWhite = 1;
     std::map<std::string, SharedTexture> sharedTextures;
     std::vector<std::pair<std::vector<uint8_t>, VkSampler>> samplers;
     std::vector<std::pair<std::string, fs::path>> textureFiles; // lowercase relative path, full path
     bool textureFilesScanned = false;
     Setup setup;
     std::vector<Setup> setups; // submitted, until the graphics card is done with them
-    // The picture at its own size while that differs from the effects', which CopyIn scales from.
-    GpuImage scaled;
-    GpuBuffer scaledStaging;
-    bool hdr = false;
-    float sdrWhite = 1;
     std::vector<VkFormat> mipmapWarnings;
 
     std::vector<Effect> effects;
@@ -486,6 +492,21 @@ private:
     uint64_t presetGeneration = 0;
     bool dirty = false;
     // The definition SetDefinition changed last, until the effects compiled with it, and the value it had in the
+    // Timestamps before and after each technique, in a slot per frame. A slot is read when its frame comes round
+    // again, by when the graphics card is done with it, so reading never waits. No pool without timestamps.
+    static constexpr uint32_t kTimedFrames = 3;
+    static constexpr uint32_t kTimedTechniques = 128;
+    struct TimedTechnique
+    {
+        size_t technique = 0; // index into techniques when it ran, checked against effect and name when read
+        size_t effect = 0;
+        std::string name;
+    };
+    VkQueryPool timestamps = VK_NULL_HANDLE;
+    uint64_t timestampMask = 0;
+    double tickMs = 0;
+    std::array<std::vector<TimedTechnique>, kTimedFrames> timedTechniques;
+
     // effect's section, if any.
     struct DefinitionChange
     {
@@ -515,12 +536,12 @@ private:
     std::deque<Effect> finished;
 
     std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
+    bool replacing = false; // a load with replace runs, whose effects wait in finished until the preset's have arrived
     std::chrono::steady_clock::time_point lastFrame = startTime;
     float frameTime = 0;
     uint32_t frameCount = 0;
 };
 } // namespace fx
-    bool replacing = false; // a load with replace runs, whose effects wait in finished until the preset's have arrived
     // A thread looks at the effect files once a second, and sets filesChanged once they changed and settled.
     fs::file_time_type loadStarted;
     std::vector<fs::path> foundEffects; // by the last load

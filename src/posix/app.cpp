@@ -687,6 +687,7 @@ void App::RenderOverlay()
     const bool upscaled = false;
 #endif
     if (!upscaled)
+    runtime.timeTechniques = settings.debugInfo;
     {
         VkImageBlit blit{};
         blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };

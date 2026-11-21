@@ -2324,6 +2324,14 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
         if (opening)
             min.y += (1 - appear) * S(25.6f);
         const ImVec2 max = min + size * s;
+        // The time the graphics card spends on it, while debug info shows.
+        if (!effect.failed && effect.gpuMs > 0)
+        {
+            char ms[16];
+            std::snprintf(ms, sizeof(ms), "%.1f ms", effect.gpuMs);
+            look.detail = ms;
+            look.detailColor = Alpha(kOnColor, 0.55f);
+        }
         const float grow = (1 + 0.08f * drag) * press * (opening ? 0.7f + 0.3f * appear : 0.2f + 0.8f * appear);
         const float turn = -0.0524f * drag; // three degrees
         const float alpha = std::clamp(appear, 0.0f, 1.0f);

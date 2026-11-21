@@ -91,6 +91,7 @@ struct Effect
     bool kept = false;   // turned off, and still one of the preset's until it is removed
     std::string description; // what it does, in a line, where its file says
     std::string pack;        // the folder of effects it came in, or empty
+    float gpuMs = 0;         // milliseconds the graphics card spends on it, while debug info shows, or 0
 };
 
 // One setting of an effect, or of an add-on, with its value as floats or as ints.

@@ -980,6 +980,7 @@ launcher::Effects DescribeEffects(App& app)
         launcherState.broken.clear();
         for (const fx::Effect& effect : effects)
             if (!effect.compiled)
+        list[i].gpuMs = techniques[indices[i]].gpuMs;
                 launcherState.broken.push_back({ effect.file, effect.errors });
     }
 

@@ -1322,6 +1322,24 @@ bool Runtime::Init(const Settings& initial)
     if (vkCreatePipelineCache(gpu.device, &cacheInfo, nullptr, &pipelineCache) != VK_SUCCESS)
         pipelineCache = VK_NULL_HANDLE;
 
+    // Timestamps for how long each technique takes, where the queue has them. MoltenVK's depend on the Mac, so
+    // support is asked for rather than assumed.
+    uint32_t familyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(gpu.physicalDevice, &familyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> families(familyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(gpu.physicalDevice, &familyCount, families.data());
+    const uint32_t validBits = gpu.queueFamily < familyCount ? families[gpu.queueFamily].timestampValidBits : 0;
+    if (validBits && gpu.properties.limits.timestampPeriod > 0)
+    {
+        VkQueryPoolCreateInfo queryInfo{ VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+        queryInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        queryInfo.queryCount = kTimedFrames * kTimedTechniques * 2;
+        if (vkCreateQueryPool(gpu.device, &queryInfo, nullptr, &timestamps) != VK_SUCCESS)
+            timestamps = VK_NULL_HANDLE;
+        timestampMask = validBits >= 64 ? ~uint64_t(0) : (uint64_t(1) << validBits) - 1;
+        tickMs = gpu.properties.limits.timestampPeriod / 1e6;
+    }
+
     return CreateEmpty(blank, 1, 1, VK_FORMAT_R8G8B8A8_UNORM) && CreateDepth();
 }
 
@@ -1361,6 +1379,7 @@ void Runtime::ProvideDepth(bool provided)
 
 void Runtime::Shutdown()
 {
+    StopWatcher();
     StopLoader();
     JoinLoaders(true);
     if (!gpu.device)
@@ -1372,14 +1391,19 @@ void Runtime::Shutdown()
     if (pipelineCache)
         vkDestroyPipelineCache(gpu.device, pipelineCache, nullptr);
     pipelineCache = VK_NULL_HANDLE;
+    if (timestamps)
+        vkDestroyQueryPool(gpu.device, timestamps, nullptr);
+    timestamps = VK_NULL_HANDLE;
+    for (std::vector<TimedTechnique>& list : timedTechniques)
+        list.clear();
     for (auto& [desc, sampler] : samplers)
         vkDestroySampler(gpu.device, sampler, nullptr);
     samplers.clear();
     for (GpuImage* image : { &backbuffer, &color, &depth, &blank, &stencil, &scaled })
         gpu.DestroyImage(*image);
     gpu.DestroyBuffer(staging);
+    gpu.DestroyBuffer(scaledStaging);
     gpu.DestroyBuffer(readback);
-    StopWatcher();
 }
 
 void Runtime::SavePipelineCache()
@@ -1402,7 +1426,6 @@ void Runtime::StopLoader()
     summaryPending = false;
     presetSummaryPending = false;
     finished.clear();
-    gpu.DestroyBuffer(scaledStaging);
 }
 
 void Runtime::JoinLoaders(bool wait)
@@ -1630,6 +1653,15 @@ void Runtime::ReloadNow(bool replace)
         effectsComplete = false;
     replacing = replace;
     Log(LogLevel::Info, "Compiling %zu effects for %ux%u, %zu of them for the preset first...", jobs.size(), pictureWidth, pictureHeight, presetJobs);
+        // Nothing to wait for, so the effects there are go now.
+        if (replace)
+        {
+            ClearEffects();
+            if (!FitPicture())
+                return;
+        }
+        effectsComplete = true;
+        WatchEffects();
     const uint64_t current = generation;
     loaderRunning = true;
     presetLoaderRunning = true;
@@ -1653,15 +1685,6 @@ void Runtime::ReloadNow(bool replace)
                         for (size_t index; !cancelled() && (index = next++) < end;)
                         {
                             Effect effect;
-        // Nothing to wait for, so the effects there are go now.
-        if (replace)
-        {
-            ClearEffects();
-            if (!FitPicture())
-                return;
-        }
-        effectsComplete = true;
-        WatchEffects();
                             try
                             {
                                 CompileEffect(effect, jobs[index].path, jobs[index].definitions, options, cancelled);
@@ -1730,12 +1753,31 @@ void Runtime::Update()
     bool running, presetRunning;
     {
         std::lock_guard lock(finishedMutex);
+    if (!holdFileChanges && filesChanged.exchange(false))
+    {
+        Log(LogLevel::Info, "Effect files changed, so effects load again.");
+        ReloadNow(true);
+    }
         running = loaderRunning;
         presetRunning = presetLoaderRunning;
     }
     for (Effect& effect : arrived)
         AddEffect(std::move(effect));
     if (!arrived.empty())
+        // Effects being replaced stay until every new one the preset uses has arrived, so none is missing a frame.
+        if (!replacing || !presetRunning)
+            arrived.swap(finished);
+    }
+    const bool swapped = replacing && !presetRunning;
+    if (swapped)
+    {
+        replacing = false;
+        KeepChanges();
+        ClearEffects();
+        if (FitPicture())
+            effectsComplete = false;
+        else
+            arrived.clear();
         SortTechniques();
     const auto summary = [this](const char* what, size_t count) {
         size_t failed = 0, cached = 0;
@@ -1752,11 +1794,6 @@ void Runtime::Update()
     {
         presetSummaryPending = false;
         if (presetEffectCount)
-    if (!holdFileChanges && filesChanged.exchange(false))
-    {
-        Log(LogLevel::Info, "Effect files changed, so effects load again.");
-        ReloadNow(true);
-    }
             summary("Effects the preset uses loaded", std::min(presetEffectCount, effects.size()));
         // An effect that stops compiling would also leave the menu, and its definitions with it.
         bool reverted = false;
@@ -1764,20 +1801,6 @@ void Runtime::Update()
         {
             const auto effect = std::find_if(effects.begin(), effects.end(), [&](const Effect& loaded) { return Lowercase(loaded.file) == Lowercase(change->file); });
             if (effect != effects.end() && !effect->compiled)
-        // Effects being replaced stay until every new one the preset uses has arrived, so none is missing a frame.
-        if (!replacing || !presetRunning)
-            arrived.swap(finished);
-    }
-    const bool swapped = replacing && !presetRunning;
-    if (swapped)
-    {
-        replacing = false;
-        KeepChanges();
-        ClearEffects();
-        if (FitPicture())
-            effectsComplete = false;
-        else
-            arrived.clear();
             {
                 PutDefinition(change->file, change->name, change->previous.value_or(""));
                 Log(LogLevel::Warning, "%s did not compile with that value of %s, so it went back to the one before.", change->file.c_str(),
@@ -1811,29 +1834,6 @@ void Runtime::StopWatcher()
         watcher.join();
 }
 
-void Runtime::AddEffect(Effect&& effect)
-{
-    if (!effect.compiled)
-    {
-        // Only the first lines: a broken effect can report hundreds.
-        std::string first = effect.errors.substr(0, effect.errors.find('\n'));
-        Log(LogLevel::Info, "%s did not compile: %s", effect.file.c_str(), first.c_str());
-    }
-    const size_t index = effects.size();
-    effects.push_back(std::move(effect));
-    Effect& added = effects.back();
-    if (!added.compiled)
-        return;
-    ShareTextures(added, index);
-    for (size_t i = 0; i < added.module.techniques.size(); ++i)
-    {
-        const reshadefx::technique& declared = added.module.techniques[i];
-        Technique technique;
-        technique.name = declared.name;
-        technique.label = AnnotationString(declared.annotations, "ui_label");
-        technique.tooltip = AnnotationString(declared.annotations, "ui_tooltip");
-        technique.hidden = AnnotationInt(declared.annotations, "hidden", 0) != 0;
-        technique.enabledByDefault = AnnotationInt(declared.annotations, "enabled", 0) != 0;
         WatchEffects();
     }
     // Swapped in effects are all prepared before the frame, which has no others.
@@ -1910,6 +1910,29 @@ void Runtime::WatchFiles()
             filesChanged = true;
             watching = {};
         }
+void Runtime::AddEffect(Effect&& effect)
+{
+    if (!effect.compiled)
+    {
+        // Only the first lines: a broken effect can report hundreds.
+        std::string first = effect.errors.substr(0, effect.errors.find('\n'));
+        Log(LogLevel::Info, "%s did not compile: %s", effect.file.c_str(), first.c_str());
+    }
+    const size_t index = effects.size();
+    effects.push_back(std::move(effect));
+    Effect& added = effects.back();
+    if (!added.compiled)
+        return;
+    ShareTextures(added, index);
+    for (size_t i = 0; i < added.module.techniques.size(); ++i)
+    {
+        const reshadefx::technique& declared = added.module.techniques[i];
+        Technique technique;
+        technique.name = declared.name;
+        technique.label = AnnotationString(declared.annotations, "ui_label");
+        technique.tooltip = AnnotationString(declared.annotations, "ui_tooltip");
+        technique.hidden = AnnotationInt(declared.annotations, "hidden", 0) != 0;
+        technique.enabledByDefault = AnnotationInt(declared.annotations, "enabled", 0) != 0;
         technique.enabledInScreenshot = AnnotationInt(declared.annotations, "enabled_in_screenshot", 1) != 0;
         technique.timeout = std::max(0, AnnotationInt(declared.annotations, "timeout", 0));
         technique.effect = index;
@@ -2125,6 +2148,12 @@ void Runtime::ReloadKeepingChanges()
     // was and the preset stays unsaved.
     std::vector<std::string> order = SortingKeys();
     presetIni = ComposePreset(presetIni, order);
+{
+    KeepChanges();
+    Reload();
+}
+
+void Runtime::KeepChanges()
     sorting = std::move(order);
 }
 
@@ -2147,12 +2176,6 @@ PresetIni Runtime::ComposePreset(PresetIni preset, const std::vector<std::string
             preset.Set("", "Key" + key, FormatKey(technique.toggleKey));
     }
     // Techniques whose effect did not load stay in the preset, so it still works where they are installed. Their
-{
-    KeepChanges();
-    Reload();
-}
-
-void Runtime::KeepChanges()
     // sections stay as well, since only loaded effects write theirs.
     std::string value;
     if (preset.Get("", "Techniques", value))
@@ -3436,6 +3459,11 @@ void Runtime::CopyIn(VkCommandBuffer commands, const Source& source, bool effect
         CopySource(commands, source, target.image, width, height);
     else if ((source.pixels || source.memory) && upload.mapped)
     {
+    // While the picture's size waits for effects of its own, it comes in at that size and is scaled to theirs.
+    const bool scaling = scaled.image != VK_NULL_HANDLE;
+    const GpuImage& target = scaling ? scaled : backbuffer;
+    const GpuBuffer& upload = scaling ? scaledStaging : staging;
+    const uint32_t width = target.width, height = target.height;
         if (source.pixels)
             std::memcpy(upload.mapped, source.pixels, size_t(width) * height * 4);
         else
@@ -3469,19 +3497,19 @@ void Runtime::CopyIn(VkCommandBuffer commands, const Source& source, bool effect
 
 void Runtime::RenderEffects(VkCommandBuffer commands, bool enabled)
 {
-    // While the picture's size waits for effects of its own, it comes in at that size and is scaled to theirs.
-    const bool scaling = scaled.image != VK_NULL_HANDLE;
-    const GpuImage& target = scaling ? scaled : backbuffer;
-    const GpuBuffer& upload = scaling ? scaledStaging : staging;
-    const uint32_t width = target.width, height = target.height;
     if (!width || !height)
         return;
     const auto now = std::chrono::steady_clock::now();
     frameTime = std::chrono::duration<float, std::milli>(now - lastFrame).count();
     lastFrame = now;
     ++frameCount;
-    // Effects compiled for another size wait for the new one.
-    if (!enabled || resizePending)
+    const uint32_t slot = frameCount % kTimedFrames;
+    ReadTimestamps(slot);
+    const bool timing = timestamps && timeTechniques && enabled;
+    const uint32_t firstQuery = slot * kTimedTechniques * 2;
+    if (timing)
+        vkCmdResetQueryPool(commands, timestamps, firstQuery, kTimedTechniques * 2);
+    if (!enabled)
     {
         uimask::Restore(commands, backbuffer);
         return;
@@ -3514,6 +3542,15 @@ void Runtime::RenderEffects(VkCommandBuffer commands, bool enabled)
             {
                 VkImageCopy region{};
                 region.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        // Written once everything before has finished, which the barriers after every pass keep to this technique.
+        std::vector<TimedTechnique>& timed = timedTechniques[slot];
+        const bool measured = timing && timed.size() < kTimedTechniques;
+        const uint32_t query = firstQuery + static_cast<uint32_t>(timed.size()) * 2;
+        if (measured)
+        {
+            timed.push_back({ static_cast<size_t>(&technique - techniques.data()), technique.effect, technique.name });
+            vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps, query);
+        }
                 region.dstSubresource = region.srcSubresource;
                 region.extent = { width, height, 1 };
                 vkCmdCopyImage(commands, backbuffer.image, VK_IMAGE_LAYOUT_GENERAL, color.image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
@@ -3553,6 +3590,8 @@ void Runtime::RenderEffects(VkCommandBuffer commands, bool enabled)
     }
     uimask::Restore(commands, backbuffer);
 }
+        if (measured)
+            vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps, query + 1);
 
 std::vector<uint8_t> Runtime::ReadOutput()
 {
@@ -3560,6 +3599,46 @@ std::vector<uint8_t> Runtime::ReadOutput()
 }
 
 std::vector<uint8_t> Runtime::ReadSource(const Source& source)
+// Smooths each technique's time with what a slot measured, kTimedFrames frames ago. A technique the slot did not time
+// has no time, so one turned off, or timing that stopped, shows none.
+void Runtime::ReadTimestamps(uint32_t slot)
+{
+    std::vector<TimedTechnique>& timed = timedTechniques[slot];
+    std::array<uint64_t, kTimedTechniques * 4> results{}; // each query's value, then whether it is there
+    bool read = false;
+    if (!timed.empty() && !gpu.lost)
+    {
+        const VkResult result = vkGetQueryPoolResults(gpu.device, timestamps, slot * kTimedTechniques * 2, static_cast<uint32_t>(timed.size() * 2),
+                                                      sizeof(results), results.data(), sizeof(uint64_t) * 2,
+                                                      VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+        read = result == VK_SUCCESS || result == VK_NOT_READY;
+    }
+    // Timed in the order they run, so the slot's techniques come up in order.
+    size_t next = 0;
+    for (size_t i = 0; i < techniques.size(); ++i)
+    {
+        Technique& technique = techniques[i];
+        if (next >= timed.size() || timed[next].technique != i)
+        {
+            technique.gpuMs = 0;
+            continue;
+        }
+        const TimedTechnique& entry = timed[next];
+        const uint64_t* values = &results[next * 4];
+        ++next;
+        // Moved or loaded again since.
+        if (entry.effect != technique.effect || entry.name != technique.name)
+            technique.gpuMs = 0;
+        // Not there yet keeps the time it had.
+        else if (read && values[1] && values[3])
+        {
+            const float ms = static_cast<float>(static_cast<double>((values[2] - values[0]) & timestampMask) * tickMs);
+            technique.gpuMs = technique.gpuMs > 0 ? technique.gpuMs + (ms - technique.gpuMs) * 0.1f : ms;
+        }
+    }
+    timed.clear();
+}
+
 {
     return source.image ? ReadImage(source.image, source.x, source.y, source.foreign) : std::vector<uint8_t>();
 }
