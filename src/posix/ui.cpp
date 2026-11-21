@@ -430,18 +430,49 @@ void DrawDebugInfo(App& app)
     SetDark(app.settings.darkMenu);
     const FrameStats& stats = app.frameStats;
     const ImGuiIO& io = ImGui::GetIO();
-    const float pad = S(18), width = S(368), numbers = S(46), graph = S(88), strip = S(34), gap = S(12), label = S(20);
-    const float big = Css(35.2f);
-    const ImVec2 size(width, pad + numbers + gap + graph + gap + strip + S(8) + label + pad);
-    const ImVec2 min(std::round(io.DisplaySize.x - S(20) - size.x), std::round(S(20))), max = min + size;
+
+    // What the rows under the graphs say, each a name and its value.
+    struct Row
+    {
+        const char* name;
+        std::string value;
+        ImU32 color;
+    };
+    std::vector<Row> rows;
+    char text[64];
+    if (stats.ready)
+    {
+        snprintf(text, sizeof(text), "%.1f ms, %.1f at most", stats.averageMs, stats.worstMs);
+        rows.push_back({ "Frame time", text, kInk });
+        const double skipped = stats.SkippedPercent();
+        snprintf(text, sizeof(text), "%.0f%% of frames", skipped);
+        rows.push_back({ "Skipped", text, skipped >= 10 ? kCaution : kInk });
+    }
+    else
+        rows.push_back({ "Frame time", "Measuring", kMist });
+    snprintf(text, sizeof(text), "%u x %u", app.runtime.Width(), app.runtime.Height());
+#ifdef _WIN32
+    // The picture is already the smaller one where effects run below the game's size.
+    if (app.effectResolution != 100)
+        snprintf(text, sizeof(text), "%u x %u at %d%%", app.runtime.Width(), app.runtime.Height(), app.effectResolution);
+#endif
+    rows.push_back({ "Picture", text, kInk });
+    const auto& techniques = app.runtime.Techniques();
+    snprintf(text, sizeof(text), "%d on", static_cast<int>(std::count_if(techniques.begin(), techniques.end(), [](const auto& technique) { return technique.enabled; })));
+    rows.push_back({ "Effects", text, kInk });
+    rows.push_back({ "GPU", gpu.properties.deviceName, kInk });
+
+    const float pad = S(12), width = S(248), numbers = S(26), graph = S(40), strip = S(14), gap = S(8), row = S(17);
+    const float big = Css(22), small = Css(12.8f), rounding = S(16);
+    const ImVec2 size(width, pad + numbers + gap + graph + S(5) + strip + gap + row * static_cast<float>(rows.size()) + pad - S(3));
+    const ImVec2 min(std::round(io.DisplaySize.x - S(16) - size.x), std::round(S(16))), max = min + size;
     const float left = min.x + pad, right = max.x - pad;
     ImDrawList* draw = ImGui::GetForegroundDrawList();
-    Shadow(draw, min, max, S(24), S(12), S(40), 0.3f);
-    draw->AddRectFilled(min, max, Alpha(kPaper, 0.92f), S(24));
-    draw->AddRect(min + ImVec2(0.5f, 0.5f), max - ImVec2(0.5f, 0.5f), kEdge, S(24));
+    Shadow(draw, min, max, rounding, S(6), S(20), 0.22f);
+    draw->AddRectFilled(min, max, Alpha(kPaper, 0.92f), rounding);
+    draw->AddRect(min + ImVec2(0.5f, 0.5f), max - ImVec2(0.5f, 0.5f), kEdge, rounding);
 
-    // The two rates as big numbers, with the size of the picture effects run on at the right.
-    char text[64];
+    // The two rates as numbers, each with its name after it.
     float y = min.y + pad;
     const float middle = y + numbers / 2;
     const auto number = [&](float x, double value, const char* name) {
@@ -451,29 +482,21 @@ void DrawDebugInfo(App& app)
             snprintf(text, sizeof(text), "-");
         const float wide = Measure(text, big, true).x;
         Line(draw, x, x + wide + 1, middle, text, kInk, big, true);
-        const float named = Measure(name, kTextSmall).x;
-        Line(draw, x + wide + S(7), x + wide + S(7) + named + 1, middle + S(7), name, kMist, kTextSmall);
-        return x + wide + S(7) + named + S(18);
+        const float named = Measure(name, small).x;
+        Line(draw, x + wide + S(5), x + wide + S(5) + named + 1, middle + S(3.5f), name, kMist, small);
+        return x + wide + S(5) + named + S(14);
     };
     number(number(left, stats.shownFps, "shown"), stats.gameFps, "game");
-    snprintf(text, sizeof(text), "%u x %u", app.runtime.Width(), app.runtime.Height());
-#ifdef _WIN32
-    // The picture is already the smaller one where effects run below the game's size.
-    if (app.effectResolution != 100)
-        snprintf(text, sizeof(text), "%u x %u at %d%%", app.runtime.Width(), app.runtime.Height(), app.effectResolution);
-#endif
-    const float sized = Measure(text, kTextSmall).x;
-    Line(draw, right - sized, right + 1, middle + S(7), text, kMist, kTextSmall);
     y += numbers + gap;
 
     // A bar for each of the last 60 seconds, as high as the frames shown: green while nearly every frame of the game
     // is shown, yellow while some are left out and red while most are. The line over them is the game's own rate.
-    draw->AddRectFilled(ImVec2(left, y), ImVec2(right, y + graph), kWell, S(12));
+    draw->AddRectFilled(ImVec2(left, y), ImVec2(right, y + graph), kWell, S(8));
     float top = 30;
     for (size_t i = 0; i < stats.Seconds(); ++i)
         top = std::max({ top, stats.SecondAt(i).game, stats.SecondAt(i).shown });
     top *= 1.15f;
-    const float inset = S(8), slot = (right - left - inset * 2) / FrameStats::kSeconds;
+    const float inset = S(5), slot = (right - left - inset * 2) / FrameStats::kSeconds;
     const float base = y + graph - inset, room = graph - inset * 2;
     std::vector<ImVec2> rate;
     for (size_t i = 0; i < stats.Seconds(); ++i)
@@ -482,11 +505,11 @@ void DrawDebugInfo(App& app)
         const float x = right - inset - slot * static_cast<float>(stats.Seconds() - i);
         const float share = second.game > 0 ? second.shown / second.game : 1;
         const ImU32 color = Ring(share >= 0.95f ? 3 : share >= 0.6f ? 2 : 0);
-        draw->AddRectFilled(ImVec2(x + S(0.75f), base - std::max(room * second.shown / top, S(1))), ImVec2(x + slot - S(0.75f), base), color, S(1.5f));
+        draw->AddRectFilled(ImVec2(x + S(0.5f), base - std::max(room * second.shown / top, S(1))), ImVec2(x + slot - S(0.5f), base), color, S(1));
         rate.emplace_back(x + slot / 2, base - room * second.game / top);
     }
-    draw->AddPolyline(rate.data(), static_cast<int>(rate.size()), kInk, ImDrawFlags_None, S(1.6f));
-    y += graph + gap;
+    draw->AddPolyline(rate.data(), static_cast<int>(rate.size()), kInk, ImDrawFlags_None, S(1.2f));
+    y += graph + S(5);
 
     // The last frames' times as thin bars. The red ones took longer than the game takes to draw its next frame, so
     // Unishade cannot show every frame.
@@ -502,22 +525,19 @@ void DrawDebugInfo(App& app)
         draw->AddRectFilled(ImVec2(x, y + strip - std::max(strip * ms / longest, S(1))), ImVec2(x + std::max(thin - S(0.5f), 1.0f), y + strip),
                             ms > budget ? Ring(0) : kQuiet);
     }
-    y += strip + S(8);
+    y += strip + gap;
 
-    if (stats.ready)
-        snprintf(text, sizeof(text), "%.1f ms a frame, %.1f at most", stats.averageMs, stats.worstMs);
-    else
-        snprintf(text, sizeof(text), "Measuring");
-    Line(draw, left, right, y + label / 2, text, kMist, kTextSmall);
-    if (stats.ready)
+    // Names on the left and values against the right edge. A value too long for its room is cut short rather than
+    // drawn over its name.
+    for (const Row& entry : rows)
     {
-        const double skipped = stats.SkippedPercent();
-        snprintf(text, sizeof(text), "%.0f%% skipped", skipped);
-        const float wide = Measure(text, kTextSmall).x;
-        Line(draw, right - wide, right + 1, y + label / 2, text, skipped >= 10 ? kCaution : kMist, kTextSmall);
+        const float named = Measure(entry.name, small).x;
+        Line(draw, left, left + named + 1, y + row / 2, entry.name, kMist, small);
+        const float from = std::max(right - Measure(entry.value, small).x - 1, left + named + S(10));
+        Line(draw, from, right + 1, y + row / 2, entry.value, entry.color, small);
+        y += row;
     }
 }
-
 
 // Launcher
 
