@@ -815,6 +815,13 @@ void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
         if (size.Width != capture.size.Width || size.Height != capture.size.Height)
         {
             // The window changed size. Frames come at the new size once the pool is made again.
+        // SystemRelativeTime is on QueryPerformanceCounter's clock, which glfwGetTime reads too, from another start.
+        LARGE_INTEGER counter{}, frequency{};
+        QueryPerformanceCounter(&counter);
+        QueryPerformanceFrequency(&frequency);
+        const double age = static_cast<double>(counter.QuadPart) / static_cast<double>(frequency.QuadPart) -
+                           std::chrono::duration<double>(frame.SystemRelativeTime()).count();
+        const double captured = glfwGetTime() - std::max(age, 0.0);
             if (size.Width > 0 && size.Height > 0)
             {
                 capture.size = size;

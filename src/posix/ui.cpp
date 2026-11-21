@@ -444,6 +444,13 @@ void DrawDebugInfo(App& app)
     {
         snprintf(text, sizeof(text), "%.1f ms, %.1f at most", stats.averageMs, stats.worstMs);
         rows.push_back({ "Frame time", text, kInk });
+        // From when capture got the game's picture to when it was handed to the display, over new pictures only, so
+        // none while the game draws nothing.
+        if (stats.latencyMs > 0)
+            snprintf(text, sizeof(text), "%.1f ms", stats.latencyMs);
+        else
+            snprintf(text, sizeof(text), "-");
+        rows.push_back({ "Latency", text, kInk });
         const double skipped = stats.SkippedPercent();
         snprintf(text, sizeof(text), "%.0f%% of frames", skipped);
         rows.push_back({ "Skipped", text, skipped >= 10 ? kCaution : kInk });
@@ -973,6 +980,7 @@ launcher::Effects DescribeEffects(App& app)
     {
         list[i].on = techniques[indices[i]].enabled;
         list[i].kept = techniques[indices[i]].kept;
+        list[i].gpuMs = techniques[indices[i]].gpuMs;
     }
     if (launcherState.brokenFrom != effects.size())
     {
@@ -980,7 +988,6 @@ launcher::Effects DescribeEffects(App& app)
         launcherState.broken.clear();
         for (const fx::Effect& effect : effects)
             if (!effect.compiled)
-        list[i].gpuMs = techniques[indices[i]].gpuMs;
                 launcherState.broken.push_back({ effect.file, effect.errors });
     }
 

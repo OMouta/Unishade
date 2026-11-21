@@ -17,13 +17,20 @@ bool Near(double value, double expected, double tolerance)
     return std::abs(value - expected) <= tolerance;
 }
 
-// Shows frames for some seconds at shownRate, while the game draws gameRate frames a second.
-void Run(FrameStats& stats, double from, double seconds, int gameRate, int shownRate, double milliseconds)
+// Shows frames for some seconds at shownRate, while the game draws gameRate frames a second. Each of the game's
+// frames is latency seconds old when first shown, or comes without a capture time at 0.
+void Run(FrameStats& stats, double from, double seconds, int gameRate, int shownRate, double milliseconds, double latency = 0)
 {
+    uint64_t lastSerial = UINT64_MAX;
+    double captured = 0;
     for (int frame = 0; frame <= static_cast<int>(seconds * shownRate); ++frame)
     {
         const double time = from + static_cast<double>(frame) / shownRate;
-        stats.Shown(time, static_cast<uint64_t>(time * gameRate), milliseconds);
+        const uint64_t serial = static_cast<uint64_t>(time * gameRate);
+        if (serial != lastSerial)
+            captured = latency > 0 ? time - latency : 0;
+        lastSerial = serial;
+        stats.Shown(time, serial, milliseconds, captured);
     }
 }
 } // namespace
@@ -60,8 +67,17 @@ int main()
     FrameStats restarted;
     Run(restarted, 10, 2, 60, 60, 1.0);
     for (int frame = 0; frame <= 120; ++frame)
-        restarted.Shown(12.1 + frame / 60.0, static_cast<uint64_t>(frame), 1.0);
+        restarted.Shown(12.1 + frame / 60.0, static_cast<uint64_t>(frame), 1.0, 0);
     ok &= Check(Near(restarted.gameFps, 60, 2), "a serial that starts over does not give a wrong rate");
+
+    // A picture is as old as it was when first shown, however often the menu shows it again.
+    FrameStats aged;
+    ok &= Check(aged.latencyMs == 0, "no latency is known before a frame is shown");
+    Run(aged, 10, 3, 30, 120, 1.0, 0.025);
+    ok &= Check(Near(aged.latencyMs, 25, 0.5), "the latency is the age of each new picture when shown");
+    FrameStats untimed;
+    Run(untimed, 10, 3, 60, 60, 1.0);
+    ok &= Check(untimed.ready && untimed.latencyMs == 0, "frames without a capture time give no latency");
 
     FrameStats kept;
     Run(kept, 0, 90, 60, 60, 1.0);

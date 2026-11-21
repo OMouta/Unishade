@@ -708,7 +708,7 @@ void App::RenderOverlay()
     menuHovered = io.WantCaptureMouse;
     menuTyping = io.WantTextInput;
     EndUi(overlay);
-    frameStats.Shown(Now(), frame.serial, (Now() - started) * 1000);
+    frameStats.Shown(Now(), frame.serial, (Now() - started) * 1000, frame.captured);
 
     if (screenshot)
         SaveScreenshot();

@@ -28,9 +28,13 @@ struct FrameStats
     double freshFps = 0;
     double averageMs = 0;
     double worstMs = 0;
+    // How old the game's picture is when it is shown, from when capture got it, over the frames with a new one. 0
+    // when none of the last second's came with a capture time.
+    double latencyMs = 0;
 
-    // A frame was shown at time, in seconds, after milliseconds of work.
-    void Shown(double time, uint64_t serial, double milliseconds)
+    // A frame was shown at time, in seconds, after milliseconds of work. captured is when capture got the game's
+    // picture in it, on the same clock, or 0 when that is not known.
+    void Shown(double time, uint64_t serial, double milliseconds, double captured)
     {
         // Capture started over, or nothing was shown for a while, as when the game is behind another window: the
         // time in between says nothing about either rate.
@@ -41,6 +45,8 @@ struct FrameStats
             startSerial = serial;
             shown = fresh = 0;
             sumMs = peakMs = 0;
+            latencies = 0;
+            sumLatencyMs = 0;
         }
         else
         {
@@ -48,6 +54,12 @@ struct FrameStats
             fresh += serial != lastSerial;
             sumMs += milliseconds;
             peakMs = std::max(peakMs, milliseconds);
+            // A frame shown again, as the menu's renders do, would only add the time it waited.
+            if (serial != lastSerial && captured > 0)
+            {
+                ++latencies;
+                sumLatencyMs += std::max(time - captured, 0.0) * 1000;
+            }
         }
         lastSerial = serial;
         lastTime = time;
@@ -62,11 +74,14 @@ struct FrameStats
         freshFps = fresh / elapsed;
         averageMs = shown ? sumMs / shown : 0;
         worstMs = peakMs;
+        latencyMs = latencies ? sumLatencyMs / latencies : 0;
         seconds[secondCount++ % kSeconds] = { static_cast<float>(gameFps), static_cast<float>(shownFps) };
         start = time;
         startSerial = serial;
         shown = fresh = 0;
         sumMs = peakMs = 0;
+        latencies = 0;
+        sumLatencyMs = 0;
     }
 
     // The share of the game's frames that were never shown, in percent.
@@ -107,6 +122,8 @@ private:
     int fresh = 0;
     double sumMs = 0;
     double peakMs = 0;
+    int latencies = 0;
+    double sumLatencyMs = 0;
     std::array<Second, kSeconds> seconds{};
     size_t secondCount = 0;
     std::array<float, kFrames> frames{};

@@ -638,6 +638,9 @@ void CaptureThread(::Window target)
         damage.Clear();
         changed = false;
         last = std::chrono::steady_clock::now();
+        // XDamage's events carry the X server's time, which does not map onto Unishade's clock, so a frame counts from
+        // when its copy starts. Damage that came during the wait above is older than that by up to the wait.
+        back.captured = glfwGetTime();
 
         if (buffer)
         {

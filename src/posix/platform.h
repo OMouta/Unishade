@@ -166,6 +166,7 @@ struct Frame
     uint32_t width = 0;
     uint32_t height = 0;
     uint64_t serial = 0;
+    double captured = 0; // when the system captured the picture, in glfwGetTime's seconds
     VkImage image = VK_NULL_HANDLE;
     uint32_t x = 0;
     uint32_t y = 0;

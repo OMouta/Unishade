@@ -261,6 +261,10 @@ void UpdateStream(SCStream* stream, uint64_t generation)
     platform::Frame& back = _back;
     back.width = uint32_t(width);
     back.height = uint32_t(height);
+    // ScreenCaptureKit stamps frames on the host time clock, which glfwGetTime does not read, so the age moves over.
+    const CMTime presented = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+    const double age = CMTIME_IS_NUMERIC(presented) ? CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock())) - CMTimeGetSeconds(presented) : 0;
+    back.captured = glfwGetTime() - std::max(age, 0.0);
     back.pixels.clear();
     back.image = VK_NULL_HANDLE; // set by TakeFrame on the graphics card
     if (capture.onGpu && CVPixelBufferGetIOSurface(image))
