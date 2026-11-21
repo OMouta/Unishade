@@ -182,6 +182,7 @@ void App::Run()
         glfwWaitEventsTimeout(std::max(timeout, 0.001));
         platform::PollHotkeys();
         runtime.Update();
+        const bool installing = setup.Read().running;
         if (setup.TakeFinished())
         {
             effectsCheckTime = -10;
@@ -195,6 +196,9 @@ void App::Run()
                 runtime.Reload();
             }
         }
+        // The installer's files load once it is done, above, not as it writes them. Whether it runs is read before
+        // that check, so a run that ends in between still holds file changes until its reload.
+        runtime.holdFileChanges = installing;
         TakeScreenshots();
         addons.Update();
 
@@ -632,7 +636,8 @@ void App::RenderOverlay()
     // Effects work at the size of the game's picture. Where the graphics card cannot make room for that, the overlay
     // hides rather than cover the game with nothing.
     runtime.SetSize(frame.width, frame.height);
-    if (runtime.Width() != frame.width || runtime.Height() != frame.height)
+    // The effects' size stays behind the picture's while a new one waits for its effects, so only none is a failure.
+    if (!runtime.Width() || !runtime.Height())
     {
         // A size still being prepared, or a lost graphics card, says nothing about room for effects.
         if (runtime.Loading() || gpu.lost)
@@ -661,8 +666,8 @@ void App::RenderOverlay()
     int width = 1, height = 1;
     glfwGetCursorPos(overlay.window, &x, &y);
     glfwGetWindowSize(overlay.window, &width, &height);
-    runtime.mouseX = static_cast<float>(x * frame.width / std::max(width, 1));
-    runtime.mouseY = static_cast<float>(y * frame.height / std::max(height, 1));
+    runtime.mouseX = static_cast<float>(x * runtime.Width() / std::max(width, 1));
+    runtime.mouseY = static_cast<float>(y * runtime.Height() / std::max(height, 1));
     // Effects can leave themselves out of screenshots, so only a frame rendered knowing it is one is saved. A
     // request made in this frame's menu is taken by the next frame.
     const bool screenshot = screenshotRequested;

@@ -93,6 +93,8 @@ constexpr const char* kCompatibilityMacros =
 
 // A new size waits this long for the next before effects are compiled for it.
 constexpr auto kResizeDelay = std::chrono::milliseconds(250);
+// How often the effect files are looked at for changes.
+constexpr auto kWatchInterval = std::chrono::seconds(1);
 // How long Update may spend preparing effects on the graphics card, between individual effects.
 constexpr auto kPrepareBudget = std::chrono::milliseconds(8);
 // The compile cache drops the entries used longest ago beyond these, down to three quarters. Effects the preset
@@ -294,6 +296,24 @@ void LowerThreadPriority()
     // Linux sets the nice value of a single thread through its thread ID.
     setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), 10);
 #endif
+}
+
+// Every .fx file in the effect folders.
+std::vector<fs::path> FindEffectFiles(const std::vector<fs::path>& roots)
+{
+    std::vector<fs::path> files;
+    for (const fs::path& root : roots)
+    {
+        std::error_code error;
+        for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, error), end; it != end; it.increment(error))
+        {
+            if (error)
+                break;
+            if (it->is_regular_file(error) && Lowercase(it->path().extension().string()) == ".fx")
+                files.push_back(it->path());
+        }
+    }
+    return files;
 }
 
 // Windows has only rand, which ReShade uses there, and whose largest value is the default maximum of random uniforms.
@@ -823,6 +843,7 @@ bool ReadCache(Effect& effect, const fs::path& entry, const Definitions& macros)
     VisitCompiled(in, effect);
     if (!in.ok || in.at != data.size())
         return false;
+    effect.files.assign(paths.begin(), paths.end());
     // The entry was used now, which keeps it when the cache is pruned.
     std::error_code error;
     fs::last_write_time(entry, fs::file_time_type::clock::now(), error);
@@ -1213,6 +1234,9 @@ bool CompileEffect(Effect& effect, const fs::path& path, const Definitions& defi
 
     const bool preprocessed = pp.append_file(path);
     effect.errors = pp.errors();
+    effect.files = { path };
+    for (const fs::path& included : pp.included_files())
+        effect.files.push_back(included);
     if (!preprocessed || (cancelled && cancelled()))
         return false;
     // Left out as in ReShade: short names, and the ones ReShade or the effect's includes set.
@@ -1266,6 +1290,7 @@ bool CompileEffect(Effect& effect, const fs::path& path, const Definitions& defi
 
 Runtime::~Runtime()
 {
+    StopWatcher();
     StopLoader();
     JoinLoaders(true);
 }
@@ -1350,10 +1375,11 @@ void Runtime::Shutdown()
     for (auto& [desc, sampler] : samplers)
         vkDestroySampler(gpu.device, sampler, nullptr);
     samplers.clear();
-    for (GpuImage* image : { &backbuffer, &color, &depth, &blank, &stencil })
+    for (GpuImage* image : { &backbuffer, &color, &depth, &blank, &stencil, &scaled })
         gpu.DestroyImage(*image);
     gpu.DestroyBuffer(staging);
     gpu.DestroyBuffer(readback);
+    StopWatcher();
 }
 
 void Runtime::SavePipelineCache()
@@ -1376,6 +1402,7 @@ void Runtime::StopLoader()
     summaryPending = false;
     presetSummaryPending = false;
     finished.clear();
+    gpu.DestroyBuffer(scaledStaging);
 }
 
 void Runtime::JoinLoaders(bool wait)
@@ -1423,56 +1450,102 @@ bool Runtime::CreateTargets()
 
 void Runtime::SetSize(uint32_t newWidth, uint32_t newHeight)
 {
-    const auto now = std::chrono::steady_clock::now();
-    if (newWidth == width && newHeight == height)
-    {
-        if (resizePending && now - resizeTime >= kResizeDelay)
-            ReloadNow();
+    if (newWidth == pictureWidth && newHeight == pictureHeight)
         return;
-    }
-    // The first size applies right away. After that the picture goes on without effects until the size has
-    // stayed the same for a moment, so dragging a window's corner does not compile every effect for every size
-    // on the way.
-    const bool first = !width || !height;
-    DestroyAllGpu();
-    width = newWidth;
-    height = newHeight;
-    if (!CreateTargets())
+    pictureWidth = newWidth;
+    pictureHeight = newHeight;
+    // A load for another size is no use anymore, and the one it stopped has to run again.
+    const bool stopped = replacing;
+    if (replacing)
     {
         StopLoader();
-        width = height = compiledWidth = compiledHeight = 0;
-        resizePending = false;
+        replacing = false;
+    }
+    // The first size applies right away. After that the effects for the size before go on, on the picture scaled
+    // to it, until the size has stayed the same for a moment, so dragging a window's corner does not compile every
+    // effect for every size on the way.
+    if (width && height && CreateScaled())
+    {
+        resizePending = stopped || pictureWidth != width || pictureHeight != height;
+        resizeTime = std::chrono::steady_clock::now();
         return;
     }
-    if (first)
+    DestroyAllGpu();
+    if (FitPicture())
         ReloadNow();
-    else if (width == compiledWidth && height == compiledHeight)
+}
+
+// The picture at its own size, while that differs from the size the effects have.
+bool Runtime::CreateScaled()
+{
+    vkDeviceWaitIdle(gpu.device);
+    gpu.DestroyImage(scaled);
+    gpu.DestroyBuffer(scaledStaging);
+    if (pictureWidth == width && pictureHeight == height)
+        return true;
+    if (!gpu.CreateImage(scaled, pictureWidth, pictureHeight, 1, backbuffer.format, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) ||
+        !gpu.CreateBuffer(scaledStaging, VkDeviceSize(pictureWidth) * pictureHeight * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true))
     {
-        // Back at the size the effects have.
-        resizePending = false;
-        loadedCount = totalCount.load();
+        Log(LogLevel::Warning, "Could not create a %ux%u image to scale the picture from, so effects compile for it right away.", pictureWidth,
+            pictureHeight);
+        return false;
     }
-    else
+    VkCommandBuffer commands = gpu.BeginCommands();
+    if (!commands)
+        return false;
+    InitLayout(commands, scaled);
+    return gpu.SubmitAndWait(commands);
+}
+
+void Runtime::SetHdr(bool on, float white)
+{
+    sdrWhite = white;
+    if (on == hdr)
+        return;
+    hdr = on;
+    Log(LogLevel::Info, "The game's picture is %s now, so effects compile again for it.", on ? "HDR, in scRGB" : "SDR");
+    if (!width || !height)
+        return;
+    // Unlike for a new size, the effects there are cannot go on meanwhile, since their images have the other format.
+    // So the images are made again at once, at the picture's size, and the picture shows without effects until the
+    // new ones are in.
+    StopLoader();
+    replacing = false;
+    KeepChanges();
+    ClearEffects();
+    gpu.DestroyImage(scaled);
+    gpu.DestroyBuffer(scaledStaging);
+    width = pictureWidth;
+    height = pictureHeight;
+    if (!CreateTargets())
     {
-        // A load for the old size is no use anymore, and the effects it left out make that size need a new one.
-        if (loaderRunning)
-        {
-            StopLoader();
-            compiledWidth = compiledHeight = 0;
-        }
-        resizePending = true;
-        resizeTime = now;
-        loadedCount = 0;
+        width = height = pictureWidth = pictureHeight = 0;
+        resizePending = false;
+        return;
     }
 }
 
-void Runtime::ReloadNow()
+// Gives the images effects work on the picture's size, once no effect uses the ones for the size before.
+bool Runtime::FitPicture()
 {
-    reloadRequested = false;
-    resizePending = false;
+    if (pictureWidth == width && pictureHeight == height)
+        return true;
+    vkDeviceWaitIdle(gpu.device);
+    gpu.DestroyImage(scaled);
+    gpu.DestroyBuffer(scaledStaging);
+    width = pictureWidth;
+    height = pictureHeight;
+    if (CreateTargets())
+        return true;
+    // Sizes are tried again from the start, by the next SetSize.
     StopLoader();
-    if (!width || !height)
-        return;
+    width = height = pictureWidth = pictureHeight = 0;
+    resizePending = replacing = false;
+    return false;
+}
+
+void Runtime::ClearEffects()
+{
     vkDeviceWaitIdle(gpu.device);
     DestroyAllGpu();
     SavePipelineCache();
@@ -1480,8 +1553,27 @@ void Runtime::ReloadNow()
     techniques.clear();
     sharedTextures.clear();
     textureFilesScanned = false;
-    compiledWidth = width;
-    compiledHeight = height;
+    std::lock_guard lock(watchMutex);
+    watching = {};
+    filesChanged = false;
+}
+
+void Runtime::ReloadNow(bool replace)
+{
+    reloadRequested = false;
+    resizePending = false;
+    replacing = false;
+    StopLoader();
+    if (!width || !height)
+        return;
+    if (replace)
+        KeepChanges();
+    else
+    {
+        ClearEffects();
+        if (!FitPicture())
+            return;
+    }
 
     // Effects the preset uses compile first, so the picture has its effects as soon as possible. So does the one
     // whose definition changed, since Update checks it compiled once those are done.
@@ -1493,27 +1585,21 @@ void Runtime::ReloadNow()
 
     std::vector<CompileJob> jobs;
     std::set<std::string> seen;
-    for (const fs::path& root : settings.effectPaths)
+    loadStarted = fs::file_time_type::clock::now();
+    foundEffects = FindEffectFiles(settings.effectPaths);
+    for (const fs::path& path : foundEffects)
     {
-        std::error_code error;
-        for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, error), end; it != end; it.increment(error))
-        {
-            if (error)
-                break;
-            if (!it->is_regular_file(error) || Lowercase(it->path().extension().string()) != ".fx")
-                continue;
-            const std::string file = it->path().filename().string();
-            // Presets name effects by file, so the first file of a name wins, as in ReShade.
-            if (!seen.insert(Lowercase(file)).second)
-                continue;
-            CompileJob job{ it->path(), {}, used.count(Lowercase(file)) != 0 };
-            // The first definition of a name wins, so the effect's own come first.
-            if (const auto found = presetDefinitions.effects.find(file); found != presetDefinitions.effects.end())
-                job.definitions = found->second;
-            job.definitions.insert(job.definitions.end(), presetDefinitions.global.begin(), presetDefinitions.global.end());
-            job.definitions.insert(job.definitions.end(), settings.definitions.begin(), settings.definitions.end());
-            jobs.push_back(std::move(job));
-        }
+        const std::string file = path.filename().string();
+        // Presets name effects by file, so the first file of a name wins, as in ReShade.
+        if (!seen.insert(Lowercase(file)).second)
+            continue;
+        CompileJob job{ path, {}, used.count(Lowercase(file)) != 0 };
+        // The first definition of a name wins, so the effect's own come first.
+        if (const auto found = presetDefinitions.effects.find(file); found != presetDefinitions.effects.end())
+            job.definitions = found->second;
+        job.definitions.insert(job.definitions.end(), presetDefinitions.global.begin(), presetDefinitions.global.end());
+        job.definitions.insert(job.definitions.end(), settings.definitions.begin(), settings.definitions.end());
+        jobs.push_back(std::move(job));
     }
     std::stable_sort(jobs.begin(), jobs.end(), [](const CompileJob& a, const CompileJob& b) { return a.preset > b.preset; });
     const size_t presetJobs = std::count_if(jobs.begin(), jobs.end(), [](const CompileJob& job) { return job.preset; });
@@ -1521,8 +1607,8 @@ void Runtime::ReloadNow()
     // Each phase keeps its entries in a folder of its own, and takes an entry from the other's when the preset
     // starts or stops using an effect.
     CompileOptions presetOptions;
-    presetOptions.width = width;
-    presetOptions.height = height;
+    presetOptions.width = pictureWidth;
+    presetOptions.height = pictureHeight;
     presetOptions.vendor = gpu.properties.vendorID;
     presetOptions.device = gpu.properties.deviceID;
     presetOptions.includePaths = settings.effectPaths;
@@ -1534,13 +1620,16 @@ void Runtime::ReloadNow()
     loadedCount = 0;
     totalCount = jobs.size();
     presetEffectCount = presetJobs;
-    effectsComplete = jobs.empty();
     if (jobs.empty())
     {
         Log(LogLevel::Warning, "No effects were found. Install them from the launcher.");
         return;
     }
-    Log(LogLevel::Info, "Compiling %zu effects for %ux%u, %zu of them for the preset first...", jobs.size(), width, height, presetJobs);
+    // The effects being replaced are complete or not until the new ones are swapped in.
+    if (!replace)
+        effectsComplete = false;
+    replacing = replace;
+    Log(LogLevel::Info, "Compiling %zu effects for %ux%u, %zu of them for the preset first...", jobs.size(), pictureWidth, pictureHeight, presetJobs);
     const uint64_t current = generation;
     loaderRunning = true;
     presetLoaderRunning = true;
@@ -1564,6 +1653,15 @@ void Runtime::ReloadNow()
                         for (size_t index; !cancelled() && (index = next++) < end;)
                         {
                             Effect effect;
+        // Nothing to wait for, so the effects there are go now.
+        if (replace)
+        {
+            ClearEffects();
+            if (!FitPicture())
+                return;
+        }
+        effectsComplete = true;
+        WatchEffects();
                             try
                             {
                                 CompileEffect(effect, jobs[index].path, jobs[index].definitions, options, cancelled);
@@ -1627,12 +1725,11 @@ void Runtime::Update()
     if (resizePending && std::chrono::steady_clock::now() - resizeTime >= kResizeDelay)
         ReloadNow();
     if (reloadRequested)
-        ReloadNow();
+        ReloadNow(true);
     std::deque<Effect> arrived;
     bool running, presetRunning;
     {
         std::lock_guard lock(finishedMutex);
-        arrived.swap(finished);
         running = loaderRunning;
         presetRunning = presetLoaderRunning;
     }
@@ -1655,6 +1752,11 @@ void Runtime::Update()
     {
         presetSummaryPending = false;
         if (presetEffectCount)
+    if (!holdFileChanges && filesChanged.exchange(false))
+    {
+        Log(LogLevel::Info, "Effect files changed, so effects load again.");
+        ReloadNow(true);
+    }
             summary("Effects the preset uses loaded", std::min(presetEffectCount, effects.size()));
         // An effect that stops compiling would also leave the menu, and its definitions with it.
         bool reverted = false;
@@ -1662,6 +1764,20 @@ void Runtime::Update()
         {
             const auto effect = std::find_if(effects.begin(), effects.end(), [&](const Effect& loaded) { return Lowercase(loaded.file) == Lowercase(change->file); });
             if (effect != effects.end() && !effect->compiled)
+        // Effects being replaced stay until every new one the preset uses has arrived, so none is missing a frame.
+        if (!replacing || !presetRunning)
+            arrived.swap(finished);
+    }
+    const bool swapped = replacing && !presetRunning;
+    if (swapped)
+    {
+        replacing = false;
+        KeepChanges();
+        ClearEffects();
+        if (FitPicture())
+            effectsComplete = false;
+        else
+            arrived.clear();
             {
                 PutDefinition(change->file, change->name, change->previous.value_or(""));
                 Log(LogLevel::Warning, "%s did not compile with that value of %s, so it went back to the one before.", change->file.c_str(),
@@ -1671,7 +1787,8 @@ void Runtime::Update()
                 reverted = true;
             }
         }
-        if (!reverted)
+        // Not again for effects that only loaded again, for a new size or a changed file.
+        if (!reverted && !swapped)
             for (const std::string& missing : MissingTechniques())
                 Report(LogLevel::Warning, "The preset uses %s, which is not installed.", missing.c_str());
     }
@@ -1681,7 +1798,17 @@ void Runtime::Update()
         effectsComplete = true;
         summary("Effects loaded", effects.size());
     }
-    PrepareEffects(kPrepareBudget);
+}
+
+void Runtime::StopWatcher()
+{
+    {
+        std::lock_guard lock(watchMutex);
+        watchStop = true;
+    }
+    watchWake.notify_all();
+    if (watcher.joinable())
+        watcher.join();
 }
 
 void Runtime::AddEffect(Effect&& effect)
@@ -1707,6 +1834,82 @@ void Runtime::AddEffect(Effect&& effect)
         technique.tooltip = AnnotationString(declared.annotations, "ui_tooltip");
         technique.hidden = AnnotationInt(declared.annotations, "hidden", 0) != 0;
         technique.enabledByDefault = AnnotationInt(declared.annotations, "enabled", 0) != 0;
+        WatchEffects();
+    }
+    // Swapped in effects are all prepared before the frame, which has no others.
+    PrepareEffects(swapped ? std::chrono::steady_clock::duration::max() : kPrepareBudget);
+}
+
+// Effects that changed on disk load again: the watcher sees their files and the effect folders.
+void Runtime::WatchEffects()
+{
+    WatchList list;
+    list.roots = settings.effectPaths;
+    list.found = foundEffects;
+    list.since = loadStarted;
+    for (const Effect& effect : effects)
+        list.files.insert(list.files.end(), effect.files.begin(), effect.files.end());
+    {
+        std::lock_guard lock(watchMutex);
+        list.generation = ++watchGeneration;
+        watching = std::move(list);
+    }
+    if (!watcher.joinable())
+        watcher = std::thread([this] { WatchFiles(); });
+}
+
+// Compares the effect files from one look to the next. A change counts once a look finds nothing new since the one
+// before, so an editor saving in two steps, or several files saved together, give one reload, and never one of a
+// file half written. Effects still loading are not watched: the next load reads the files again.
+void Runtime::WatchFiles()
+{
+    LowerThreadPriority();
+    uint64_t seen = 0;
+    std::map<fs::path, fs::file_time_type> previous;
+    bool changed = false;
+    std::unique_lock lock(watchMutex);
+    while (!watchStop)
+    {
+        watchWake.wait_for(lock, kWatchInterval, [this] { return watchStop; });
+        if (watchStop || !watching.generation)
+            continue;
+        const WatchList list = watching;
+        lock.unlock();
+
+        std::vector<fs::path> found = FindEffectFiles(list.roots);
+        // A file that is gone reads as the earliest time.
+        std::map<fs::path, fs::file_time_type> times;
+        std::error_code error;
+        for (const fs::path& file : found)
+            times.emplace(file, fs::last_write_time(file, error));
+        for (const fs::path& file : list.files)
+            times.emplace(file, fs::last_write_time(file, error));
+        bool settled = false;
+        if (list.generation != seen)
+        {
+            // The first look compares with the files as the load found them. Times ahead of the clock, as files
+            // copied from a computer whose clock was ahead can have, would count on every load and are left out.
+            seen = list.generation;
+            std::vector<fs::path> before = list.found;
+            std::sort(found.begin(), found.end());
+            std::sort(before.begin(), before.end());
+            const fs::file_time_type now = fs::file_time_type::clock::now();
+            changed = found != before || std::any_of(times.begin(), times.end(), [&list, now](const auto& entry) {
+                          return (entry.second > list.since && entry.second <= now) || entry.second == fs::file_time_type::min();
+                      });
+        }
+        else if (times != previous)
+            changed = true;
+        else
+            settled = changed;
+        previous = std::move(times);
+
+        lock.lock();
+        if (settled && watching.generation == list.generation)
+        {
+            filesChanged = true;
+            watching = {};
+        }
         technique.enabledInScreenshot = AnnotationInt(declared.annotations, "enabled_in_screenshot", 1) != 0;
         technique.timeout = std::max(0, AnnotationInt(declared.annotations, "timeout", 0));
         technique.effect = index;
@@ -1923,7 +2126,6 @@ void Runtime::ReloadKeepingChanges()
     std::vector<std::string> order = SortingKeys();
     presetIni = ComposePreset(presetIni, order);
     sorting = std::move(order);
-    Reload();
 }
 
 PresetIni Runtime::ComposePreset(PresetIni preset, const std::vector<std::string>& order) const
@@ -1945,6 +2147,12 @@ PresetIni Runtime::ComposePreset(PresetIni preset, const std::vector<std::string
             preset.Set("", "Key" + key, FormatKey(technique.toggleKey));
     }
     // Techniques whose effect did not load stay in the preset, so it still works where they are installed. Their
+{
+    KeepChanges();
+    Reload();
+}
+
+void Runtime::KeepChanges()
     // sections stay as well, since only loaded effects write theirs.
     std::string value;
     if (preset.Get("", "Techniques", value))
@@ -3111,7 +3319,7 @@ bool Runtime::ImagesReady(Effect& effect)
 // Prepares the effects that are on outside the frame, as far as the time allows.
 void Runtime::PrepareEffects(std::chrono::steady_clock::duration budget)
 {
-    if (!width || !height || resizePending || gpu.lost)
+    if (!width || !height || gpu.lost)
     {
         preparingEffects = false;
         return;
@@ -3225,24 +3433,34 @@ void Runtime::CopyIn(VkCommandBuffer commands, const Source& source, bool effect
     if (source.image)
         // Straight from the capture on the graphics card. Alpha is whatever the window has, as in games where
         // ReShade runs.
-        CopySource(commands, source, backbuffer.image, width, height);
-    else if ((source.pixels || source.memory) && staging.mapped)
+        CopySource(commands, source, target.image, width, height);
+    else if ((source.pixels || source.memory) && upload.mapped)
     {
         if (source.pixels)
-            std::memcpy(staging.mapped, source.pixels, size_t(width) * height * 4);
+            std::memcpy(upload.mapped, source.pixels, size_t(width) * height * 4);
         else
             // From the platform's buffer in one pass, rather than copying it out first.
             for (uint32_t y = 0; y < height; ++y)
             {
                 const uint32_t* row = reinterpret_cast<const uint32_t*>(source.memory + y * source.stride);
-                uint32_t* out = static_cast<uint32_t*>(staging.mapped) + size_t(y) * width;
+                uint32_t* out = static_cast<uint32_t*>(upload.mapped) + size_t(y) * width;
                 for (uint32_t x = 0; x < width; ++x)
                     out[x] = row[x] | 0xFF000000u;
             }
         VkBufferImageCopy copy{};
         copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
         copy.imageExtent = { width, height, 1 };
-        vkCmdCopyBufferToImage(commands, staging.buffer, backbuffer.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+        vkCmdCopyBufferToImage(commands, upload.buffer, target.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+    }
+    if (scaling)
+    {
+        FullBarrier(commands);
+        VkImageBlit blit{};
+        blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blit.srcOffsets[1] = { int32_t(width), int32_t(height), 1 };
+        blit.dstSubresource = blit.srcSubresource;
+        blit.dstOffsets[1] = { int32_t(backbuffer.width), int32_t(backbuffer.height), 1 };
+        vkCmdBlitImage(commands, scaled.image, VK_IMAGE_LAYOUT_GENERAL, backbuffer.image, VK_IMAGE_LAYOUT_GENERAL, 1, &blit, VK_FILTER_LINEAR);
     }
     FullBarrier(commands);
     if (effects)
@@ -3251,6 +3469,11 @@ void Runtime::CopyIn(VkCommandBuffer commands, const Source& source, bool effect
 
 void Runtime::RenderEffects(VkCommandBuffer commands, bool enabled)
 {
+    // While the picture's size waits for effects of its own, it comes in at that size and is scaled to theirs.
+    const bool scaling = scaled.image != VK_NULL_HANDLE;
+    const GpuImage& target = scaling ? scaled : backbuffer;
+    const GpuBuffer& upload = scaling ? scaledStaging : staging;
+    const uint32_t width = target.width, height = target.height;
     if (!width || !height)
         return;
     const auto now = std::chrono::steady_clock::now();

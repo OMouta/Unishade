@@ -10,6 +10,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <deque>
 #include <functional>
 #include <future>
@@ -130,6 +131,7 @@ struct Effect
     // The preprocessor definitions the effect checks that can be set, with the value it was compiled with, by name.
     // ReShade's menu lists the same ones.
     std::vector<std::pair<std::string, std::string>> definitions;
+    std::vector<fs::path> files; // the effect's file and every file it included, which are watched for changes
     reshadefx::effect_module module;
     std::unordered_map<std::string, std::vector<uint32_t>> spirv; // SPIR-V code by entry point
     std::vector<Uniform> uniforms;
@@ -232,12 +234,14 @@ public:
     void Shutdown();
 
     // The size of the game's picture. Effects are compiled for it, so a new size compiles them again once it
-    // has stayed the same for a moment. Until then the picture is shown without effects.
+    // has stayed the same for a moment. Until the effects the preset uses have compiled for it, the ones for the
+    // size before run on the picture scaled to that size.
     void SetSize(uint32_t width, uint32_t height);
     uint32_t Width() const { return width; }
     uint32_t Height() const { return height; }
 
     // Finds the effects again and compiles them on worker threads, starting at the next Update, since the frame
+    // The size effects run at and Output has, which stays behind SetSize while a new size waits for its effects.
     // being recorded may still use the current ones. Effects the current preset uses come first. The rest follow
     // on fewer threads at low priority, so a game keeps its cores.
     void Reload() { reloadRequested = true; }
@@ -357,6 +361,10 @@ private:
         GpuImage image;
         reshadefx::texture_desc desc;
         std::string source; // the image it loads
+    // Effect files that change on disk load again by themselves, unless this is set, as while the installer writes
+    // them and reloads once it is done.
+    bool holdFileChanges = false;
+
         bool renderTarget = false;
         bool storage = false;
         bool pooled = false;
@@ -381,7 +389,16 @@ private:
 
     void StopLoader();
     void JoinLoaders(bool wait);
-    void ReloadNow();
+    // With replace, the effects there are go on until the new ones the preset uses have arrived, and Update swaps
+    // them in at once, with the changes made to the old ones.
+    void ReloadNow(bool replace = false);
+    void KeepChanges();
+    void ClearEffects();
+    bool FitPicture();
+    bool CreateScaled();
+    void WatchEffects();
+    void WatchFiles();
+    void StopWatcher();
     void AddEffect(Effect&& effect);
     void ShareTextures(Effect& effect, size_t index);
     void SortTechniques();
@@ -395,6 +412,17 @@ private:
     PresetIni ComposePreset(PresetIni preset, const std::vector<std::string>& order) const;
     void Enable(Technique& technique, bool enabled);
     bool ImagesReady(Effect& effect);
+    // What the watcher looks at: the effect folders, the effect files they had when the effects loaded, and every
+    // file the effects were compiled from. A file written after since may not be what was compiled.
+    struct WatchList
+    {
+        uint64_t generation = 0; // 0 while there is nothing to watch
+        std::vector<fs::path> roots;
+        std::vector<fs::path> found;
+        std::vector<fs::path> files;
+        fs::file_time_type since;
+    };
+
     bool CreateGpu(Effect& effect);
     void PrepareEffects(std::chrono::steady_clock::duration budget);
     void DestroyGpu(Effect& effect);
@@ -417,9 +445,10 @@ private:
     Settings settings;
     uint32_t width = 0;
     uint32_t height = 0;
-    // Effects are compiled for one size. When the picture changes size they wait until it has settled.
-    uint32_t compiledWidth = 0;
-    uint32_t compiledHeight = 0;
+    // Effects are compiled for one size, width by height. When the picture changes size they wait until it has
+    // settled, and the picture is scaled to theirs meanwhile.
+    uint32_t pictureWidth = 0;
+    uint32_t pictureHeight = 0;
     bool resizePending = false;
     std::chrono::steady_clock::time_point resizeTime;
 
@@ -439,6 +468,11 @@ private:
     bool textureFilesScanned = false;
     Setup setup;
     std::vector<Setup> setups; // submitted, until the graphics card is done with them
+    // The picture at its own size while that differs from the effects', which CopyIn scales from.
+    GpuImage scaled;
+    GpuBuffer scaledStaging;
+    bool hdr = false;
+    float sdrWhite = 1;
     std::vector<VkFormat> mipmapWarnings;
 
     std::vector<Effect> effects;
@@ -486,3 +520,15 @@ private:
     uint32_t frameCount = 0;
 };
 } // namespace fx
+    bool replacing = false; // a load with replace runs, whose effects wait in finished until the preset's have arrived
+    // A thread looks at the effect files once a second, and sets filesChanged once they changed and settled.
+    fs::file_time_type loadStarted;
+    std::vector<fs::path> foundEffects; // by the last load
+    std::thread watcher;
+    std::mutex watchMutex;
+    std::condition_variable watchWake;
+    bool watchStop = false;
+    WatchList watching;
+    uint64_t watchGeneration = 0;
+    std::atomic<bool> filesChanged = false;
+
