@@ -1471,12 +1471,12 @@ void WindowView(const Model& model, Host& host)
         // Picture makes the texture, and only then is its tint known.
         const bool has = !game.picture.empty() && Picture(game.picture, square - std::round(square * 0.14f) * 2) != ImTextureID_Invalid;
         const ImU32 tint = Backdrop(has ? PictureTint(game.picture) : 0, game.id);
-        const ImU32 other = Ring(std::hash<std::string>{}(game.id) + 3);
         ImDrawList* draw = ImGui::GetWindowDrawList();
         const int start = draw->VtxBuffer.Size;
         draw->AddRectFilled(min, max, kWhite, S(kBlockRounding));
-        ImGui::ShadeVertsLinearColorGradientKeepAlpha(draw, start, draw->VtxBuffer.Size, min, max, Mix(tint, IM_COL32_BLACK, 0.45f),
-                                                      Mix(Mix(tint, other, 0.55f), IM_COL32_BLACK, 0.3f));
+        // One color getting darker, so the square stands out on it. A second color mixed in turns it to mud.
+        ImGui::ShadeVertsLinearColorGradientKeepAlpha(draw, start, draw->VtxBuffer.Size, min, max, Mix(tint, IM_COL32_BLACK, 0.3f),
+                                                      Mix(tint, IM_COL32_BLACK, 0.72f));
         const ImVec2 center = (min + max) * 0.5f;
         const ImVec2 squareMin(std::round(center.x - square / 2), std::round(center.y - square / 2));
         GameSquare(draw, squareMin, square, S(22), game.name, game.picture, game.id);
