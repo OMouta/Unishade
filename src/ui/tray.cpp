@@ -2829,7 +2829,7 @@ float Tray(Frame& f, std::optional<ImVec2> place, float pageWidth, bool& compari
     const float rounding = S(kRounding);
     if (!place)
     {
-        Shadow(ImGui::GetBackgroundDrawList(), min, max, rounding, S(32), S(80), 0.5f * fade);
+        Shadow(ImGui::GetBackgroundDrawList(), min, max, rounding, S(14), S(40), 0.32f * fade);
         // The game behind it, blurred and saturated by the host, as the design's backdrop-filter. Without it, the
         // white alone.
         if (const ImTextureID frost = GameImage(GameView::Frost); frost != ImTextureID_Invalid)
