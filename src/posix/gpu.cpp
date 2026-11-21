@@ -23,6 +23,48 @@ bool HasExtension(const std::vector<VkExtensionProperties>& extensions, const ch
 constexpr uint64_t kFenceTimeout = 2'000'000'000;
 constexpr uint64_t kAcquireTimeout = 250'000'000;
 
+// scRGB, as Windows composes HDR: linear, with 1 at 80 nits.
+constexpr VkFormat kHdrFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+
+// For an scRGB swapchain: menu clears the image Dear ImGui draws into and leaves it to be read, otherwise the pass keeps
+// what was copied into a swapchain image and presents it, as Surface::renderPass does. Both have renderPass's dependency,
+// since a pipeline made for one pass works in another of the same format only when they differ in layouts and load and
+// store operations at most: Dear ImGui's pipeline, made for renderPass, draws in the menu's pass, and backdrop's menu
+// pipeline in the swapchain's.
+VkRenderPass CreatePass(VkFormat format, bool menu)
+{
+    VkAttachmentDescription attachment{};
+    attachment.format = format;
+    attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    attachment.loadOp = menu ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachment.initialLayout = menu ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    attachment.finalLayout = menu ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    VkAttachmentReference reference{ 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &reference;
+    VkSubpassDependency dependency{};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    dependency.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    VkRenderPassCreateInfo info{ VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
+    info.attachmentCount = 1;
+    info.pAttachments = &attachment;
+    info.subpassCount = 1;
+    info.pSubpasses = &subpass;
+    info.dependencyCount = 1;
+    info.pDependencies = &dependency;
+    VkRenderPass pass = VK_NULL_HANDLE;
+    return vkCreateRenderPass(gpu.device, &info, nullptr, &pass) == VK_SUCCESS ? pass : VK_NULL_HANDLE;
+}
+
 int DeviceRank(VkPhysicalDeviceType type)
 {
     switch (type)
@@ -92,6 +134,14 @@ bool Gpu::Init(bool headless, std::string& error)
             return false;
         }
         extensions.assign(required, required + count);
+#ifdef _WIN32
+        // Lets the overlay present an HDR game's picture in scRGB.
+        if (HasExtension(available, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME))
+        {
+            extensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+            swapchainColorSpace = true;
+        }
+#endif
     }
     VkInstanceCreateFlags flags = 0;
 #ifdef VK_KHR_portability_enumeration
@@ -593,6 +643,8 @@ bool Surface::Create(GLFWwindow* glfwWindow, bool wantLowLatency, std::string& e
         }
     }
     this->colorSpace = colorSpace;
+    sdrFormat = format;
+    sdrColorSpace = colorSpace;
 
     // Dear ImGui draws on top of what was copied into the image, then it is presented.
     VkAttachmentDescription attachment{};
@@ -689,6 +741,17 @@ bool Surface::CreateSwapchain()
             break;
         }
 
+    // scRGB while asked for and listed. Dear ImGui keeps drawing in the SDR format, into menu.
+    const bool wasHdr = hdr;
+    hdr = wantHdr && HdrAvailable();
+    if (hdr && !presentPass)
+        presentPass = CreatePass(kHdrFormat, false);
+    if (hdr && !menuPass)
+        menuPass = CreatePass(sdrFormat, true);
+    hdr = hdr && presentPass && menuPass;
+    format = hdr ? kHdrFormat : sdrFormat;
+    colorSpace = hdr ? VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT : sdrColorSpace;
+
     VkSwapchainCreateInfoKHR info{ VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR };
     info.surface = surface;
     info.minImageCount = minImageCount;
@@ -704,13 +767,47 @@ bool Surface::CreateSwapchain()
     info.clipped = VK_TRUE;
     info.oldSwapchain = swapchain;
     VkSwapchainKHR created = VK_NULL_HANDLE;
-    const VkResult result = vkCreateSwapchainKHR(gpu.device, &info, nullptr, &created);
+    VkResult result = vkCreateSwapchainKHR(gpu.device, &info, nullptr, &created);
+    if (result != VK_SUCCESS && hdr)
+    {
+        // The old swapchain is retired even though this failed, and a retired one cannot be passed on again.
+        Log(LogLevel::Warning, "Could not make an HDR swapchain (Vulkan error %d), so the overlay stays SDR.", result);
+        hdrFailed = true;
+        hdr = false;
+        info.imageFormat = format = sdrFormat;
+        info.imageColorSpace = colorSpace = sdrColorSpace;
+        info.oldSwapchain = VK_NULL_HANDLE;
+        result = vkCreateSwapchainKHR(gpu.device, &info, nullptr, &created);
+    }
     DestroySwapchain();
     if (result != VK_SUCCESS)
         return false;
     swapchain = created;
     Log(LogLevel::Info, "The %s presents in %s mode.", lowLatency ? "overlay" : "launcher",
         mode == VK_PRESENT_MODE_MAILBOX_KHR ? "mailbox" : mode == VK_PRESENT_MODE_IMMEDIATE_KHR ? "immediate" : "FIFO");
+    if (hdr != wasHdr)
+        Log(LogLevel::Info, "The %s presents in %s.", lowLatency ? "overlay" : "launcher", hdr ? "HDR, as scRGB" : "SDR");
+
+    if (hdr)
+    {
+        if (!gpu.CreateImage(menu, extent.width, extent.height, 1, sdrFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT))
+        {
+            DestroySwapchain();
+            return false;
+        }
+        VkFramebufferCreateInfo menuInfo{ VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
+        menuInfo.renderPass = menuPass;
+        menuInfo.attachmentCount = 1;
+        menuInfo.pAttachments = &menu.target;
+        menuInfo.width = extent.width;
+        menuInfo.height = extent.height;
+        menuInfo.layers = 1;
+        if (vkCreateFramebuffer(gpu.device, &menuInfo, nullptr, &menuFramebuffer) != VK_SUCCESS)
+        {
+            DestroySwapchain();
+            return false;
+        }
+    }
 
     vkGetSwapchainImagesKHR(gpu.device, swapchain, &imageCount, nullptr);
     images.resize(imageCount);
@@ -727,7 +824,7 @@ bool Surface::CreateSwapchain()
         views.push_back(view);
 
         VkFramebufferCreateInfo framebufferInfo{ VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
-        framebufferInfo.renderPass = renderPass;
+        framebufferInfo.renderPass = hdr ? presentPass : renderPass;
         framebufferInfo.attachmentCount = 1;
         framebufferInfo.pAttachments = &view;
         framebufferInfo.width = extent.width;
@@ -764,6 +861,10 @@ void Surface::DestroySwapchain()
     views.clear();
     renderDone.clear();
     images.clear();
+    if (menuFramebuffer)
+        vkDestroyFramebuffer(gpu.device, menuFramebuffer, nullptr);
+    menuFramebuffer = VK_NULL_HANDLE;
+    gpu.DestroyImage(menu);
     if (swapchain)
         vkDestroySwapchainKHR(gpu.device, swapchain, nullptr);
     swapchain = VK_NULL_HANDLE;
@@ -799,6 +900,10 @@ void Surface::Destroy()
     DestroySwapchain();
     if (renderPass)
         vkDestroyRenderPass(gpu.device, renderPass, nullptr);
+    for (VkRenderPass pass : { presentPass, menuPass })
+        if (pass)
+            vkDestroyRenderPass(gpu.device, pass, nullptr);
+    presentPass = menuPass = VK_NULL_HANDLE;
     DestroySync();
     if (commands)
         vkFreeCommandBuffers(gpu.device, gpu.commandPool, 1, &commands);
@@ -880,7 +985,48 @@ void Surface::BeginRenderPass()
     info.renderPass = renderPass;
     info.framebuffer = framebuffers[index];
     info.renderArea.extent = extent;
+    // Dear ImGui's pipeline works in menuPass too, which has renderPass's format.
+    const VkClearValue clear{};
+    if (hdr)
+    {
+        info.renderPass = menuPass;
+        info.framebuffer = menuFramebuffer;
+        info.clearValueCount = 1;
+        info.pClearValues = &clear;
+    }
     vkCmdBeginRenderPass(commands, &info, VK_SUBPASS_CONTENTS_INLINE);
+}
+
+void Surface::BeginComposite()
+{
+    vkCmdEndRenderPass(commands);
+    FullBarrier(commands);
+    VkRenderPassBeginInfo info{ VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+    info.renderPass = presentPass;
+    info.framebuffer = framebuffers[index];
+    info.renderArea.extent = extent;
+    vkCmdBeginRenderPass(commands, &info, VK_SUBPASS_CONTENTS_INLINE);
+}
+
+void Surface::SetHdr(bool on, float white)
+{
+    sdrWhite = white;
+    if (on != wantHdr)
+        needsRecreate = true;
+    wantHdr = on;
+}
+
+bool Surface::HdrAvailable() const
+{
+    if (!gpu.swapchainColorSpace || hdrFailed || !surface)
+        return false;
+    uint32_t count = 0;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(gpu.physicalDevice, surface, &count, nullptr);
+    std::vector<VkSurfaceFormatKHR> formats(count);
+    vkGetPhysicalDeviceSurfaceFormatsKHR(gpu.physicalDevice, surface, &count, formats.data());
+    return std::any_of(formats.begin(), formats.end(), [](const VkSurfaceFormatKHR& f) {
+        return f.format == kHdrFormat && f.colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT;
+    });
 }
 
 void Surface::EndFrame()

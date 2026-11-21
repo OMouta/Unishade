@@ -389,6 +389,11 @@ void App::StartCapture(const platform::Window& window)
     effectResolution = EffectResolution(game);
     platform::SetFrameScale(effectResolution);
     Log(LogLevel::Info, "Effect resolution: %d%%.", effectResolution);
+    hdrOutput = HdrOutput(game);
+    Log(LogLevel::Info, "HDR output: %s.", hdrOutput ? "on" : "off");
+    // Now rather than at the first render, so effects do not compile for SDR first.
+    platform::SetHdrOutput(hdrOutput && overlay.surface.HdrAvailable());
+    nextHdrCheck = Now() + 1;
 #endif
     if (!startHintShown)
     {
@@ -633,6 +638,18 @@ void App::UpdateOverlayInterval()
 
 void App::RenderOverlay()
 {
+#ifdef _WIN32
+    // An HDR game's picture stays HDR while the setting allows it and the overlay's swapchain can be scRGB, which its
+    // surface lists while the display has HDR on. Each frame says which it is, since frames captured before a change
+    // keep their format, and the swapchain and effects follow it.
+    if (Now() >= nextHdrCheck)
+    {
+        nextHdrCheck = Now() + 1;
+        platform::SetHdrOutput(hdrOutput && overlay.surface.HdrAvailable());
+    }
+    overlay.surface.SetHdr(frame.hdr, frame.sdrWhite);
+    runtime.SetHdr(frame.hdr, frame.sdrWhite);
+#endif
     // Effects work at the size of the game's picture. Where the graphics card cannot make room for that, the overlay
     // hides rather than cover the game with nothing.
     runtime.SetSize(frame.width, frame.height);
@@ -657,11 +674,20 @@ void App::RenderOverlay()
     Surface& surface = overlay.surface;
     if (!surface.BeginFrame())
         return;
+#ifdef _WIN32
+    // The swapchain could not be scRGB after all, so capture goes back to SDR from the next frame.
+    if (frame.hdr && !surface.hdr)
+    {
+        platform::SetHdrOutput(false);
+        nextHdrCheck = Now() + 1;
+    }
+#endif
     // The previous frame's commands are done, so its buffer can go back to the platform. A frame in memory is copied
     // to the graphics card during Render, so only frames on the graphics card are held here.
     inFlight = frame.image ? frame.hold : nullptr;
     lastOverlayFrame = Now();
     runtime.menuOpen = menuOpen;
+    runtime.timeTechniques = settings.debugInfo;
     double x = 0, y = 0;
     int width = 1, height = 1;
     glfwGetCursorPos(overlay.window, &x, &y);
@@ -687,7 +713,6 @@ void App::RenderOverlay()
     const bool upscaled = false;
 #endif
     if (!upscaled)
-    runtime.timeTechniques = settings.debugInfo;
     {
         VkImageBlit blit{};
         blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
@@ -1378,6 +1403,15 @@ void App::UpdateEffectResolution()
         Log(LogLevel::Info, "Effect resolution: %d%% for %s.", percent, game.empty() ? "every game" : game.c_str());
     effectResolution = percent;
     platform::SetFrameScale(effectResolution);
+
+void App::UpdateHdrOutput()
+{
+    const bool on = HdrOutput(game);
+    if (on != hdrOutput)
+        Log(LogLevel::Info, "HDR output: %s for %s.", on ? "on" : "off", game.empty() ? "every game" : game.c_str());
+    hdrOutput = on;
+    nextHdrCheck = 0;
+}
 }
 #endif
 

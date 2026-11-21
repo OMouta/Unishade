@@ -1683,6 +1683,13 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
         if (!page)
         {
             const size_t count = f.game->uiMask.size();
+        if (performance.hdrOutput)
+        {
+            fields.push_back(Switched("hdr", "HDR output", *performance.hdrOutput,
+                                      [&f](bool on) { f.host.SetPerformance(f.gameIndex, PerformanceSetting::HdrOutput, on ? 1 : 0); }, {}, grid));
+            fields.push_back(Note("Keeps an HDR game in HDR. Most effects are made for SDR and can look wrong in HDR, and add-ons that work on the picture pause.",
+                                  kMist, width));
+        }
             const std::string label = count ? "Game interface: " + std::to_string(count) + (count == 1 ? " area" : " areas") : "Game interface";
             fields.push_back(Actions("interface", label, { { "Mark", PillStyle::Text } }, [](int) { state->masking = true; }, width));
             fields.push_back(Note("Mark the game's own interface, such as a health bar or the chat, and effects leave it as the game drew it.", kMist, width));
@@ -2317,13 +2324,6 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
         look.dot = Animate(ImGui::GetID("dot"), effect.on ? 1.0f : 0.0f, 0.3f, Curve::Out);
         look.spot = std::max(0.0f, Animate(ImGui::GetID("spot"), effect.on ? 1.0f : 0.0f, 0.4f, Curve::Spring));
         look.dotScale = Animate(ImGui::GetID("dot scale"), dotHovered ? 1.15f : 1, 0.25f, Curve::Spring);
-        look.small = small;
-        look.cooking = cooking;
-        look.phase = cooking ? static_cast<float>(std::fmod(now / 1.1 + 0.09 * static_cast<double>(i) / 1.1, 1.0)) : 0;
-        ImVec2 min = origin + (at + ImVec2(0, lift)) * s;
-        if (opening)
-            min.y += (1 - appear) * S(25.6f);
-        const ImVec2 max = min + size * s;
         // The time the graphics card spends on it, while debug info shows.
         if (!effect.failed && effect.gpuMs > 0)
         {
@@ -2332,6 +2332,13 @@ void DrawTiles(Frame& f, ImVec2 origin, const std::vector<TileItem>& modelTiles,
             look.detail = ms;
             look.detailColor = Alpha(kOnColor, 0.55f);
         }
+        look.small = small;
+        look.cooking = cooking;
+        look.phase = cooking ? static_cast<float>(std::fmod(now / 1.1 + 0.09 * static_cast<double>(i) / 1.1, 1.0)) : 0;
+        ImVec2 min = origin + (at + ImVec2(0, lift)) * s;
+        if (opening)
+            min.y += (1 - appear) * S(25.6f);
+        const ImVec2 max = min + size * s;
         const float grow = (1 + 0.08f * drag) * press * (opening ? 0.7f + 0.3f * appear : 0.2f + 0.8f * appear);
         const float turn = -0.0524f * drag; // three degrees
         const float alpha = std::clamp(appear, 0.0f, 1.0f);

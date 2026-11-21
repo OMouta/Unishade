@@ -264,7 +264,7 @@ void CreatePass(Pass& pass, const reshadefx::effect_module& module, const reshad
     vkUpdateDescriptorSets(gpu.device, 1, &write, 0, nullptr);
 }
 
-void Create()
+void Create(VkFormat format)
 {
     reshadefx::preprocessor preprocessor;
     preprocessor.append_string(kSource, "uimask.fx");
@@ -326,8 +326,8 @@ void Create()
 
         CreatePass(m.mask, module, passes[0], VK_FORMAT_R8_UNORM, false, false, shaders);
         CreatePass(m.seed, module, passes[1], VK_FORMAT_R16G16B16A16_SFLOAT, false, false, shaders);
-        CreatePass(m.fill, module, passes[2], VK_FORMAT_B8G8R8A8_UNORM, true, false, shaders);
-        CreatePass(m.restore, module, passes[3], VK_FORMAT_B8G8R8A8_UNORM, true, true, shaders);
+        CreatePass(m.fill, module, passes[2], format, true, false, shaders);
+        CreatePass(m.restore, module, passes[3], format, true, true, shaders);
     }
     catch (...)
     {
@@ -389,7 +389,7 @@ void Resize(VkCommandBuffer commands, const GpuImage& picture)
     const uint32_t halfWidth = (picture.width + 1) / 2, halfHeight = (picture.height + 1) / 2;
     const uint32_t levels = static_cast<uint32_t>(std::floor(std::log2(std::max(halfWidth, halfHeight)))) + 1;
     if (!gpu.CreateImage(m.covered, picture.width, picture.height, 1, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT) ||
-        !gpu.CreateImage(m.original, picture.width, picture.height, 1, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) ||
+        !gpu.CreateImage(m.original, picture.width, picture.height, 1, picture.format, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) ||
         !gpu.CreateImage(m.pyramid, halfWidth, halfHeight, levels, VK_FORMAT_R16G16B16A16_SFLOAT,
                          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT))
         throw std::runtime_error("the graphics card has no room for its images");
@@ -481,7 +481,7 @@ bool Fill(VkCommandBuffer commands, const GpuImage& picture)
     try
     {
         if (!m.made)
-            Create();
+            Create(picture.format);
         if (m.picture != picture.image || m.covered.width != picture.width || m.covered.height != picture.height)
             Resize(commands, picture);
         if (m.changed)

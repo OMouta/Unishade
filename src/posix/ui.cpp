@@ -1505,6 +1505,11 @@ public:
             SetEffectResolution(folder, value);
             app.UpdateEffectResolution();
         }
+        else if (setting == launcher::PerformanceSetting::HdrOutput)
+        {
+            SetHdrOutput(folder, value != 0);
+            app.UpdateHdrOutput();
+        }
 #endif
         else
             return;
@@ -1811,6 +1816,7 @@ launcher::Performance PerformanceOf(const std::string& folder)
 #endif
     return performance;
 }
+    performance.hdrOutput = HdrOutput(folder);
 
 // Starts each install once its add-on let go of its files, and finishes the ones that are done.
 void FollowInstalls(App& app)
@@ -2448,6 +2454,13 @@ void GiveBack(launcher::Model& model)
     {
         launcherState.effects = std::move(model.effects->list);
         launcherState.broken = std::move(model.effects->broken);
+    // Dear ImGui's colors are sRGB, which an scRGB swapchain would take as linear and show dim, so it drew into the
+    // surface's menu, which goes over the picture at the display's SDR white.
+    if (ui.surface.hdr)
+    {
+        ui.surface.BeginComposite();
+        backdrop::DrawMenu(ui.surface.commands, ui.surface.menu, ui.surface.sdrWhite);
+    }
     }
 }
 
@@ -2497,20 +2510,23 @@ void DrawGamePictures(App& app, VkCommandBuffer commands, const GpuImage& output
         const float radius = kFrostBlur * MenuScale(app, display) * static_cast<float>(output.width) / display.x / 4;
         const uint32_t width4 = output.width / 4, height4 = output.height / 4;
         frost.ready = Fit(commands, frost, width4, height4, false) && backdrop::Make(commands, frostScratch, width4, height4) &&
-                      backdrop::Shrink(commands, output, frost.target) && backdrop::Blur(commands, frost.target, frostScratch, radius, kFrostSaturation);
+                      backdrop::Shrink(commands, output, frost.target, white) &&
+                      backdrop::Blur(commands, frost.target, frostScratch, radius, kFrostSaturation);
         frost.window = window;
     }
     if (previewing)
     {
+    const float white = app.runtime.SdrWhite();
         // Once a second while the game is played, so it costs the game next to nothing.
         nextPreview = now + (app.inFront ? 1.0 : kPreviewInterval);
         const uint32_t divisor = std::max(2u, (output.width + kPreviewWidth - 1) / kPreviewWidth);
-        preview.ready = Fit(commands, preview, output.width / divisor, output.height / divisor, true) && backdrop::Shrink(commands, output, preview.target);
+        preview.ready =
+            Fit(commands, preview, output.width / divisor, output.height / divisor, true) && backdrop::Shrink(commands, output, preview.target, white);
         preview.window = window;
     }
     if (screenshot)
     {
-        shot.ready = Fit(commands, shot, output.width / 2, output.height / 2, false) && backdrop::Shrink(commands, output, shot.target);
+        shot.ready = Fit(commands, shot, output.width / 2, output.height / 2, false) && backdrop::Shrink(commands, output, shot.target, white);
         shot.window = window;
     }
 }

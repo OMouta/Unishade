@@ -471,6 +471,7 @@ struct Slot
     UINT width = 0;
     UINT height = 0;
     bool shared = false;
+    DXGI_FORMAT format = DXGI_FORMAT_B8G8R8A8_UNORM; // R16G16B16A16_FLOAT for an HDR frame kept HDR
     HANDLE handle = nullptr; // the shared texture's, until Vulkan imports it
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -502,6 +503,8 @@ struct Capture
     std::optional<float> sdrWhite;
     ULONGLONG nextHdrCheck = 0;
     std::atomic<int> scale = 100; // SetFrameScale's
+    std::atomic<bool> hdrOutput = false; // SetHdrOutput's
+    bool hdrImport = false; // Vulkan can import shared R16G16B16A16_FLOAT textures
     // Held while a frame is copied, so stopping waits for it.
     std::mutex copying;
     // The rest is shared with the threads frames arrive on.
@@ -575,14 +578,14 @@ bool CreateDevice()
     return true;
 }
 
-// Whether Vulkan can make an image of a shared Direct3D 11 texture of the captured format, to copy from.
-bool CanImport()
+// Whether Vulkan can make an image of a shared Direct3D 11 texture of the format, to copy from.
+bool CanImport(VkFormat format = VK_FORMAT_B8G8R8A8_UNORM)
 {
     VkPhysicalDeviceExternalImageFormatInfo externalInfo{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO };
     externalInfo.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
     VkPhysicalDeviceImageFormatInfo2 info{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2 };
     info.pNext = &externalInfo;
-    info.format = VK_FORMAT_B8G8R8A8_UNORM;
+    info.format = format;
     info.type = VK_IMAGE_TYPE_2D;
     info.tiling = VK_IMAGE_TILING_OPTIMAL;
     info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
@@ -593,12 +596,12 @@ bool CanImport()
            (external.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT);
 }
 
-// A slot no frame holds, of the size and kind frames are copied into now, made when there is none and room for one.
-// Called with capture.mutex held.
-std::shared_ptr<Slot> FreeSlot(UINT width, UINT height, bool shared)
+// A slot no frame holds, of the size, kind and format frames are copied into now, made when there is none and room for
+// one. Called with capture.mutex held.
+std::shared_ptr<Slot> FreeSlot(UINT width, UINT height, bool shared, DXGI_FORMAT format)
 {
     std::erase_if(capture.slots, [&](const std::shared_ptr<Slot>& slot) {
-        return slot.use_count() == 1 && (slot->width != width || slot->height != height || slot->shared != shared);
+        return slot.use_count() == 1 && (slot->width != width || slot->height != height || slot->shared != shared || slot->format != format);
     });
     for (const std::shared_ptr<Slot>& slot : capture.slots)
         if (slot.use_count() == 1)
@@ -610,12 +613,13 @@ std::shared_ptr<Slot> FreeSlot(UINT width, UINT height, bool shared)
     slot->width = width;
     slot->height = height;
     slot->shared = shared;
+    slot->format = format;
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width = width;
     desc.Height = height;
     desc.MipLevels = 1;
     desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.Format = format;
     desc.SampleDesc = { 1, 0 };
     if (shared)
     {
@@ -671,10 +675,10 @@ winrt::com_ptr<ID3DBlob> CompileShader(const char* entry, const char* target)
     return code;
 }
 
-// Draws the frame into target, which is width by height: smaller for effects below 100%, and an HDR frame as SDR.
-// Whether it is HDR comes from the frame's own format, since a frame captured before HDR was turned on or off can still
-// arrive.
-void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& desc, ID3D11RenderTargetView* target, UINT width, UINT height)
+// Draws the frame into target, which is width by height: smaller for effects below 100%, and an HDR frame as SDR unless
+// keepHdr. Whether it is HDR comes from the frame's own format, since a frame captured before HDR was turned on or off
+// can still arrive.
+void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& desc, ID3D11RenderTargetView* target, UINT width, UINT height, bool keepHdr)
 {
     if (!d3d.sampler)
     {
@@ -730,7 +734,7 @@ void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& desc, ID3D11R
         d3d.context->CopyResource(d3d.readable.get(), frame);
         view = d3d.readableView;
     }
-    const bool hdr = desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+    const bool hdr = desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT && !keepHdr;
     if (hdr)
     {
         const float sdrWhite[4] = { capture.sdrWhite.value_or(80) / 80 };
@@ -760,14 +764,15 @@ void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& desc, ID3D11R
     d3d.context->OMSetRenderTargets(0, nullptr, nullptr);
 }
 
-// Draws the frame into the slot. A frame copied through memory is drawn into a texture of the slot's size first.
+// Draws the frame into the slot, keeping an HDR frame HDR when the slot has its format. A frame copied through memory is
+// drawn into a texture of the slot's size first.
 void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& desc, Slot& slot)
 {
     if (slot.shared)
     {
         if (!slot.target)
             winrt::check_hresult(d3d.device->CreateRenderTargetView(slot.texture.get(), nullptr, slot.target.put()));
-        DrawFrame(frame, desc, slot.target.get(), slot.width, slot.height);
+        DrawFrame(frame, desc, slot.target.get(), slot.width, slot.height, slot.format == DXGI_FORMAT_R16G16B16A16_FLOAT);
         return;
     }
     D3D11_TEXTURE2D_DESC drawn{};
@@ -789,7 +794,7 @@ void DrawFrame(ID3D11Texture2D* frame, const D3D11_TEXTURE2D_DESC& desc, Slot& s
         winrt::check_hresult(d3d.device->CreateTexture2D(&drawn, nullptr, d3d.drawn.put()));
         winrt::check_hresult(d3d.device->CreateRenderTargetView(d3d.drawn.get(), nullptr, d3d.drawnTarget.put()));
     }
-    DrawFrame(frame, desc, d3d.drawnTarget.get(), slot.width, slot.height);
+    DrawFrame(frame, desc, d3d.drawnTarget.get(), slot.width, slot.height, false);
     d3d.context->CopyResource(slot.texture.get(), d3d.drawn.get());
 }
 
@@ -810,11 +815,6 @@ void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
         }
         if (!frame || !capture.running)
             return;
-        UpdateHdr(pool);
-        const SizeInt32 size = frame.ContentSize();
-        if (size.Width != capture.size.Width || size.Height != capture.size.Height)
-        {
-            // The window changed size. Frames come at the new size once the pool is made again.
         // SystemRelativeTime is on QueryPerformanceCounter's clock, which glfwGetTime reads too, from another start.
         LARGE_INTEGER counter{}, frequency{};
         QueryPerformanceCounter(&counter);
@@ -822,6 +822,11 @@ void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
         const double age = static_cast<double>(counter.QuadPart) / static_cast<double>(frequency.QuadPart) -
                            std::chrono::duration<double>(frame.SystemRelativeTime()).count();
         const double captured = glfwGetTime() - std::max(age, 0.0);
+        UpdateHdr(pool);
+        const SizeInt32 size = frame.ContentSize();
+        if (size.Width != capture.size.Width || size.Height != capture.size.Height)
+        {
+            // The window changed size. Frames come at the new size once the pool is made again.
             if (size.Width > 0 && size.Height > 0)
             {
                 capture.size = size;
@@ -839,10 +844,12 @@ void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
         const UINT height = std::max(desc.Height * scale / 100, 1u);
 
         const bool shared = capture.onGpu;
+        // An HDR frame stays HDR only on the graphics card, where Vulkan copies it as it is.
+        const bool keepHdr = desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT && shared && capture.hdrImport && capture.hdrOutput;
         std::shared_ptr<Slot> slot;
         {
             std::lock_guard lock(capture.mutex);
-            slot = FreeSlot(width, height, shared);
+            slot = FreeSlot(width, height, shared, keepHdr ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM);
         }
         if (!slot)
             return;
@@ -851,13 +858,16 @@ void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
             d3d.context->Unmap(slot->texture.get(), 0);
             slot->mapped = {};
         }
-        if (width != desc.Width || height != desc.Height || desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+        if (width != desc.Width || height != desc.Height || (desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT && !keepHdr))
             DrawFrame(texture.get(), desc, *slot);
         else
             d3d.context->CopyResource(slot->texture.get(), texture.get());
         Frame copied;
         copied.width = width;
         copied.height = height;
+        copied.hdr = keepHdr;
+        copied.sdrWhite = capture.sdrWhite.value_or(80) / 80;
+        copied.captured = captured;
         if (shared)
         {
             // Vulkan reads the texture as soon as the host takes the frame, so the copy has to be done by then.
@@ -905,7 +915,7 @@ VkImage Import(Slot& slot)
     VkImageCreateInfo info{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
     info.pNext = &external;
     info.imageType = VK_IMAGE_TYPE_2D;
-    info.format = VK_FORMAT_B8G8R8A8_UNORM;
+    info.format = slot.format == DXGI_FORMAT_R16G16B16A16_FLOAT ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_B8G8R8A8_UNORM;
     info.extent = { slot.width, slot.height, 1 };
     info.mipLevels = 1;
     info.arrayLayers = 1;
@@ -1579,6 +1589,7 @@ bool StartCapture(const Window& window, std::string& error)
         wgc::GraphicsCaptureItem item{ nullptr };
         winrt::check_hresult(interop->CreateForWindow(Handle(window.id), winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(item)));
         const bool onGpu = d3d.shareable && gpu.win32Memory && CanImport();
+        capture.hdrImport = onGpu && CanImport(VK_FORMAT_R16G16B16A16_SFLOAT);
         capture.window = Handle(window.id);
         capture.sdrWhite = HdrWhiteLevel(capture.window);
         capture.nextHdrCheck = GetTickCount64() + kHdrCheckInterval;
@@ -1666,6 +1677,12 @@ void SetCaptureIdle(bool idle)
 void SetFrameScale(int percent)
 {
     capture.scale = percent;
+}
+
+void SetHdrOutput(bool on)
+{
+    if (capture.hdrOutput.exchange(on) != on)
+        Log(LogLevel::Info, "HDR output %s: an HDR game's picture %s.", on ? "on" : "off", on ? "stays HDR" : "is turned into SDR");
 }
 
 bool TakeFrame(Frame& frame)

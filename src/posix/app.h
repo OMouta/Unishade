@@ -111,6 +111,9 @@ public:
     // a picture this much of the game's size, upscaled to it.
     void UpdateEffectResolution();
     int effectResolution = 100;
+    // Reads HDR output of the game being played again, such as after Performance changed it.
+    void UpdateHdrOutput();
+    bool hdrOutput = false;
 #endif
     // The frame rates and frame times the debug view shows.
     FrameStats frameStats;
@@ -229,6 +232,9 @@ private:
     // is the time between two of them, looked up again now and then since the overlay moves with the game.
     double overlayInterval = 1.0 / 60;
     double nextRefreshCheck = 0;
+#ifdef _WIN32
+    double nextHdrCheck = 0; // when the overlay's surface is asked again whether it can show HDR
+#endif
     bool renderHeld = false; // a render was held back and is due once overlayInterval has passed
     double lastLauncherFrame = 0;
     double lastAutoSave = 0;

@@ -452,7 +452,7 @@ std::string PerformanceSection(const std::string& game)
 }
 
 // What a game's section of performance settings holds.
-constexpr const char* kPerformanceKeys[] = { "FrameRateLimit", "EffectResolution", "UiMask" };
+constexpr const char* kPerformanceKeys[] = { "FrameRateLimit", "EffectResolution", "HdrOutput", "UiMask" };
 } // namespace
 
 int FrameRateLimit(const std::string& game)
@@ -507,6 +507,26 @@ void SetEffectResolution(const std::string& game, int percent)
     const fs::path path = DataDirectory() / "Unishade.ini";
     IniText ini(ReadFile(path));
     ini.Set(PerformanceSection(game), "EffectResolution", std::to_string(percent));
+    if (!WriteFile(path, ini.Text()))
+        Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
+}
+
+bool HdrOutput(const std::string& game)
+{
+    const IniText ini(ReadFile(DataDirectory() / "Unishade.ini"));
+    std::string value;
+    bool on = ini.Get("PERFORMANCE", "HdrOutput", value) && atoi(value.c_str()) != 0;
+    // An empty value is a game without its own.
+    if (!game.empty() && ini.Get(PerformanceSection(game), "HdrOutput", value) && !value.empty())
+        on = atoi(value.c_str()) != 0;
+    return on;
+}
+
+void SetHdrOutput(const std::string& game, bool on)
+{
+    const fs::path path = DataDirectory() / "Unishade.ini";
+    IniText ini(ReadFile(path));
+    ini.Set(PerformanceSection(game), "HdrOutput", on ? "1" : "0");
     if (!WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
 }

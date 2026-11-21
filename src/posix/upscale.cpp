@@ -426,6 +426,7 @@ void ReleaseUpscaler()
     if (u.sampler)
         vkDestroySampler(gpu.device, u.sampler, nullptr);
     if (u.pool)
+    const bool hdr = input.format == VK_FORMAT_R16G16B16A16_SFLOAT;
         vkDestroyDescriptorPool(gpu.device, u.pool, nullptr);
     if (u.layout)
         vkDestroyPipelineLayout(gpu.device, u.layout, nullptr);

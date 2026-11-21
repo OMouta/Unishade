@@ -102,6 +102,10 @@ void SetFrameRateLimit(const std::string& game, int fps);
 // Unishade.ini for a saved game with its own, otherwise in [PERFORMANCE], which an empty game reads and sets.
 int EffectResolution(const std::string& game);
 void SetEffectResolution(const std::string& game, int percent);
+// Whether an HDR game's picture stays HDR for effects and the overlay, where the display shows HDR, rather than turned
+// into SDR. Off unless set, since most effects are made for SDR. Kept as HdrOutput beside EffectResolution.
+bool HdrOutput(const std::string& game);
+void SetHdrOutput(const std::string& game, bool on);
 // The parts of a game's picture that are its own interface, which effects leave as the game drew them: the left, top,
 // width and height of each, in fractions of the picture's. Kept as UiMask beside the game's performance settings, and
 // for every game without its own with an empty name.

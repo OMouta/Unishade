@@ -175,6 +175,10 @@ struct Frame
     std::shared_ptr<void> hold;
     const uint8_t* memory = nullptr;
     size_t stride = 0;
+    // An HDR game's picture kept HDR, as SetHdrOutput allows: image is R16G16B16A16_SFLOAT in scRGB rather than BGRA,
+    // with SDR white at sdrWhite in scRGB's units, where 1 is 80 nits. Never in memory.
+    bool hdr = false;
+    float sdrWhite = 1;
 };
 
 // Starts copying the window. Frames arrive on another thread, which calls glfwPostEmptyEvent so the main loop
@@ -191,6 +195,9 @@ bool TakeFrame(Frame& frame);
 // Frames come at this percentage of the window's size from the next one on, for effects that run on a smaller
 // picture. 100 until set. Windows only, as the effect resolution is for now.
 void SetFrameScale(int percent);
+// Whether an HDR game's frames stay HDR from the next one on, rather than turned into SDR, for an overlay that can show
+// them. Only frames on the graphics card do. Off until set. Windows only, the one system whose capture sees HDR.
+void SetHdrOutput(bool on);
 #endif
 // Set when capture stopped by itself, such as when the window closed. Cleared by StartCapture.
 std::string CaptureError();

@@ -1169,9 +1169,9 @@ Definitions EffectMacros(const Definitions& definitions, const CompileOptions& o
         { "BUFFER_HEIGHT", std::to_string(options.height) },
         { "BUFFER_RCP_WIDTH", "(1.0 / BUFFER_WIDTH)" },
         { "BUFFER_RCP_HEIGHT", "(1.0 / BUFFER_HEIGHT)" },
-        { "BUFFER_COLOR_SPACE", "1" },   // sRGB
-        { "BUFFER_COLOR_FORMAT", "87" }, // B8G8R8A8_UNORM, in ReShade's numbering
-        { "BUFFER_COLOR_BIT_DEPTH", "8" },
+        { "BUFFER_COLOR_SPACE", options.hdr ? "2" : "1" },    // scRGB or sRGB
+        { "BUFFER_COLOR_FORMAT", options.hdr ? "10" : "87" }, // R16G16B16A16_FLOAT or B8G8R8A8_UNORM, in ReShade's numbering
+        { "BUFFER_COLOR_BIT_DEPTH", options.hdr ? "16" : "8" },
     };
     for (const auto& [name, value] : definitions)
         if (!name.empty())
@@ -1446,9 +1446,10 @@ bool Runtime::CreateTargets()
         gpu.DestroyImage(*image);
     gpu.DestroyBuffer(staging);
     const VkImageUsageFlags transfer = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    const VkFormat format = hdr ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_B8G8R8A8_UNORM;
     // Sampled by FSR, which reads the output when it upscales.
-    if (!gpu.CreateImage(backbuffer, width, height, 1, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | transfer) ||
-        !gpu.CreateImage(color, width, height, 1, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | transfer) ||
+    if (!gpu.CreateImage(backbuffer, width, height, 1, format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | transfer) ||
+        !gpu.CreateImage(color, width, height, 1, format, VK_IMAGE_USAGE_SAMPLED_BIT | transfer) ||
         !gpu.CreateBuffer(staging, VkDeviceSize(width) * height * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true))
     {
         Log(LogLevel::Error, "Could not create %ux%u images for effects.", width, height);
@@ -1546,6 +1547,7 @@ void Runtime::SetHdr(bool on, float white)
         resizePending = false;
         return;
     }
+    ReloadNow();
 }
 
 // Gives the images effects work on the picture's size, once no effect uses the ones for the size before.
@@ -1635,6 +1637,7 @@ void Runtime::ReloadNow(bool replace)
     presetOptions.vendor = gpu.properties.vendorID;
     presetOptions.device = gpu.properties.deviceID;
     presetOptions.includePaths = settings.effectPaths;
+    presetOptions.hdr = hdr;
     presetOptions.cacheDirectory = CacheDirectory() / "preset-effects";
     presetOptions.otherCacheDirectory = CacheDirectory() / "effects";
     CompileOptions libraryOptions = presetOptions;
@@ -1646,13 +1649,6 @@ void Runtime::ReloadNow(bool replace)
     if (jobs.empty())
     {
         Log(LogLevel::Warning, "No effects were found. Install them from the launcher.");
-        return;
-    }
-    // The effects being replaced are complete or not until the new ones are swapped in.
-    if (!replace)
-        effectsComplete = false;
-    replacing = replace;
-    Log(LogLevel::Info, "Compiling %zu effects for %ux%u, %zu of them for the preset first...", jobs.size(), pictureWidth, pictureHeight, presetJobs);
         // Nothing to wait for, so the effects there are go now.
         if (replace)
         {
@@ -1662,6 +1658,13 @@ void Runtime::ReloadNow(bool replace)
         }
         effectsComplete = true;
         WatchEffects();
+        return;
+    }
+    // The effects being replaced are complete or not until the new ones are swapped in.
+    if (!replace)
+        effectsComplete = false;
+    replacing = replace;
+    Log(LogLevel::Info, "Compiling %zu effects for %ux%u, %zu of them for the preset first...", jobs.size(), pictureWidth, pictureHeight, presetJobs);
     const uint64_t current = generation;
     loaderRunning = true;
     presetLoaderRunning = true;
@@ -1750,20 +1753,17 @@ void Runtime::Update()
     if (reloadRequested)
         ReloadNow(true);
     std::deque<Effect> arrived;
-    bool running, presetRunning;
-    {
-        std::lock_guard lock(finishedMutex);
     if (!holdFileChanges && filesChanged.exchange(false))
     {
         Log(LogLevel::Info, "Effect files changed, so effects load again.");
         ReloadNow(true);
     }
+    bool running, presetRunning;
+    {
+        std::lock_guard lock(finishedMutex);
         running = loaderRunning;
         presetRunning = presetLoaderRunning;
     }
-    for (Effect& effect : arrived)
-        AddEffect(std::move(effect));
-    if (!arrived.empty())
         // Effects being replaced stay until every new one the preset uses has arrived, so none is missing a frame.
         if (!replacing || !presetRunning)
             arrived.swap(finished);
@@ -1778,6 +1778,9 @@ void Runtime::Update()
             effectsComplete = false;
         else
             arrived.clear();
+    for (Effect& effect : arrived)
+        AddEffect(std::move(effect));
+    if (!arrived.empty())
         SortTechniques();
     const auto summary = [this](const char* what, size_t count) {
         size_t failed = 0, cached = 0;
@@ -1821,19 +1824,6 @@ void Runtime::Update()
         effectsComplete = true;
         summary("Effects loaded", effects.size());
     }
-}
-
-void Runtime::StopWatcher()
-{
-    {
-        std::lock_guard lock(watchMutex);
-        watchStop = true;
-    }
-    watchWake.notify_all();
-    if (watcher.joinable())
-        watcher.join();
-}
-
         WatchEffects();
     }
     // Swapped in effects are all prepared before the frame, which has no others.
@@ -1910,6 +1900,19 @@ void Runtime::WatchFiles()
             filesChanged = true;
             watching = {};
         }
+}
+
+void Runtime::StopWatcher()
+{
+    {
+        std::lock_guard lock(watchMutex);
+        watchStop = true;
+    }
+    watchWake.notify_all();
+    if (watcher.joinable())
+        watcher.join();
+}
+
 void Runtime::AddEffect(Effect&& effect)
 {
     if (!effect.compiled)
@@ -2145,15 +2148,15 @@ bool Runtime::WritePreset(const fs::path& path, PresetIni preset)
 void Runtime::ReloadKeepingChanges()
 {
     // The effects that arrive take their state from presetIni, so it takes the changes, while the file stays as it
-    // was and the preset stays unsaved.
-    std::vector<std::string> order = SortingKeys();
-    presetIni = ComposePreset(presetIni, order);
 {
     KeepChanges();
     Reload();
 }
 
 void Runtime::KeepChanges()
+    // was and the preset stays unsaved.
+    std::vector<std::string> order = SortingKeys();
+    presetIni = ComposePreset(presetIni, order);
     sorting = std::move(order);
 }
 
@@ -3456,14 +3459,14 @@ void Runtime::CopyIn(VkCommandBuffer commands, const Source& source, bool effect
     if (source.image)
         // Straight from the capture on the graphics card. Alpha is whatever the window has, as in games where
         // ReShade runs.
-        CopySource(commands, source, target.image, width, height);
-    else if ((source.pixels || source.memory) && upload.mapped)
-    {
     // While the picture's size waits for effects of its own, it comes in at that size and is scaled to theirs.
     const bool scaling = scaled.image != VK_NULL_HANDLE;
     const GpuImage& target = scaling ? scaled : backbuffer;
     const GpuBuffer& upload = scaling ? scaledStaging : staging;
     const uint32_t width = target.width, height = target.height;
+        CopySource(commands, source, target.image, width, height);
+    else if ((source.pixels || source.memory) && upload.mapped)
+    {
         if (source.pixels)
             std::memcpy(upload.mapped, source.pixels, size_t(width) * height * 4);
         else
@@ -3539,9 +3542,6 @@ void Runtime::RenderEffects(VkCommandBuffer commands, bool enabled)
         for (const PassGpu& p : g.techniques[technique.index])
         {
             if (colorStale)
-            {
-                VkImageCopy region{};
-                region.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
         // Written once everything before has finished, which the barriers after every pass keep to this technique.
         std::vector<TimedTechnique>& timed = timedTechniques[slot];
         const bool measured = timing && timed.size() < kTimedTechniques;
@@ -3551,6 +3551,9 @@ void Runtime::RenderEffects(VkCommandBuffer commands, bool enabled)
             timed.push_back({ static_cast<size_t>(&technique - techniques.data()), technique.effect, technique.name });
             vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps, query);
         }
+            {
+                VkImageCopy region{};
+                region.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
                 region.dstSubresource = region.srcSubresource;
                 region.extent = { width, height, 1 };
                 vkCmdCopyImage(commands, backbuffer.image, VK_IMAGE_LAYOUT_GENERAL, color.image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
@@ -3587,18 +3590,15 @@ void Runtime::RenderEffects(VkCommandBuffer commands, bool enabled)
         // A technique with a timeout turns itself off once it has run that long.
         if (technique.timeout > 0 && (technique.timeLeft -= frameTime) <= 0)
             Enable(technique, false);
+        if (measured)
+            vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps, query + 1);
     }
     uimask::Restore(commands, backbuffer);
 }
-        if (measured)
-            vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps, query + 1);
 
 std::vector<uint8_t> Runtime::ReadOutput()
 {
     return ReadImage(backbuffer.image, 0, 0, false);
-}
-
-std::vector<uint8_t> Runtime::ReadSource(const Source& source)
 // Smooths each technique's time with what a slot measured, kTimedFrames frames ago. A technique the slot did not time
 // has no time, so one turned off, or timing that stopped, shows none.
 void Runtime::ReadTimestamps(uint32_t slot)
@@ -3639,18 +3639,21 @@ void Runtime::ReadTimestamps(uint32_t slot)
     timed.clear();
 }
 
+}
+
+std::vector<uint8_t> Runtime::ReadSource(const Source& source)
 {
     return source.image ? ReadImage(source.image, source.x, source.y, source.foreign) : std::vector<uint8_t>();
 }
 
-// Copies width by height pixels at (x, y) of a BGRA image into memory, as RGBA. Waits for this copy only: the
-// barrier before it orders it after the frames submitted before.
+// Copies width by height pixels at (x, y) of a BGRA image, or an scRGB one while Hdr, into memory, as RGBA. Waits for
+// this copy only: the barrier before it orders it after the frames submitted before.
 std::vector<uint8_t> Runtime::ReadImage(VkImage image, uint32_t x, uint32_t y, bool foreign)
 {
     std::vector<uint8_t> pixels;
     if (!width || !height || !image)
         return pixels;
-    const VkDeviceSize size = VkDeviceSize(width) * height * 4;
+    const VkDeviceSize size = VkDeviceSize(width) * height * (hdr ? 8 : 4);
     if (readback.size != size)
     {
         gpu.DestroyBuffer(readback);
@@ -3680,6 +3683,34 @@ std::vector<uint8_t> Runtime::ReadImage(VkImage image, uint32_t x, uint32_t y, b
     pixels.resize(size);
     std::memcpy(pixels.data(), readback.mapped, size);
     for (size_t i = 0; i < size; i += 4)
+    if (hdr)
+    {
+        // RGBA in half floats, turned into SDR as capture does: divided by SDR white, clamped and encoded as sRGB. Each
+        // half float's value is looked up, which is faster than working out every pixel.
+        std::vector<uint8_t> encoded(65536);
+        for (uint32_t bits = 0; bits < encoded.size(); ++bits)
+        {
+            const uint32_t exponent = (bits >> 10) & 0x1F, mantissa = bits & 0x3FF;
+            float value = std::numeric_limits<float>::infinity();
+            if (exponent == 0)
+                value = std::ldexp(float(mantissa), -24);
+            else if (exponent < 31)
+                value = std::ldexp(float(mantissa | 0x400), int(exponent) - 25);
+            // Below zero, and not a number, is black.
+            value = (bits & 0x8000) || (exponent == 31 && mantissa) ? 0 : std::min(value / sdrWhite, 1.0f);
+            const float srgb = value <= 0.0031308f ? value * 12.92f : 1.055f * std::pow(value, 1 / 2.4f) - 0.055f;
+            encoded[bits] = static_cast<uint8_t>(std::lround(srgb * 255));
+        }
+        const uint16_t* halves = static_cast<const uint16_t*>(readback.mapped);
+        pixels.resize(size / 2);
+        for (size_t i = 0; i < pixels.size(); i += 4)
+        {
+            for (size_t c = 0; c < 3; ++c)
+                pixels[i + c] = encoded[halves[i + c]];
+            pixels[i + 3] = 255;
+        }
+        return pixels;
+    }
     {
         std::swap(pixels[i], pixels[i + 2]);
         pixels[i + 3] = 255;

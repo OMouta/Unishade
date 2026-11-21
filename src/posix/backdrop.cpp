@@ -34,7 +34,14 @@ float4 shrink(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
     float2 across = float2(Step.x, -Step.y);
     // Effects leave anything in the picture's alpha, which would show through where the interface draws it.
     float4 sum = tex2D(Input, uv + Step.xy) + tex2D(Input, uv - Step.xy) + tex2D(Input, uv + across) + tex2D(Input, uv - across);
-    return float4(sum.rgb * 0.25, 1);
+    float3 color = sum.rgb * 0.25;
+    // An scRGB picture becomes SDR as capture makes it: divided by SDR white, which Step.w has, clamped and encoded.
+    if (Step.w > 0)
+    {
+        color = saturate(color / Step.w);
+        color = lerp(color * 12.92, 1.055 * pow(color, 1.0 / 2.4) - 0.055, step(0.0031308, color));
+    }
+    return float4(color, 1);
 }
 
 float3 Gaussian(float2 uv)
@@ -62,11 +69,31 @@ float4 tint(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
     return float4(saturate(luma + (color - luma) * Step.z), 1);
 }
 
+// The menu over an scRGB picture. Dear ImGui drew it in SDR over nothing, so its alpha is premultiplied. It is decoded
+// from sRGB and brought to SDR white, which Step.x has.
+float4 menu(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
+{
+    float4 drawn = tex2D(Input, uv);
+    float3 color = saturate(drawn.rgb / max(drawn.a, 0.0001));
+    color = lerp(color / 12.92, pow((color + 0.055) / 1.055, 2.4), step(0.04045, color));
+    return float4(color * Step.x * drawn.a, drawn.a);
+}
+
+// An scRGB picture as SDR at its own size, each pixel read at its middle, so the filter does not blend them.
+float4 sdr(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
+{
+    float3 color = saturate(tex2D(Input, uv).rgb / Step.w);
+    color = lerp(color * 12.92, 1.055 * pow(color, 1.0 / 2.4) - 0.055, step(0.0031308, color));
+    return float4(color, 1);
+}
+
 technique Backdrop
 {
     pass { VertexShader = vs; PixelShader = shrink; }
     pass { VertexShader = vs; PixelShader = blur; }
     pass { VertexShader = vs; PixelShader = tint; }
+    pass { VertexShader = vs; PixelShader = menu; }
+    pass { VertexShader = vs; PixelShader = sdr; }
 }
 )";
 
@@ -95,6 +122,15 @@ struct Backdrop
     VkPipeline tint = VK_NULL_HANDLE;
     Slot slots[kSlots];
     uint32_t used = 0; // slots this frame
+    // Drawing the menu over an scRGB picture, in a render pass of that format, with a slot of its own since it is drawn
+    // in every frame of the overlay.
+    VkRenderPass menuPass = VK_NULL_HANDLE;
+    VkPipeline menu = VK_NULL_HANDLE;
+    Slot menuSlot;
+    // SDR copies for add-ons, with slots of their own, one for each set of commands that can wait on the graphics card
+    // while the other records.
+    VkPipeline sdr = VK_NULL_HANDLE;
+    Slot sdrSlots[2];
 };
 Backdrop b;
 
@@ -104,7 +140,9 @@ void Check(VkResult result, const char* what)
         throw std::runtime_error(std::string("could not ") + what + " (VkResult " + std::to_string(result) + ")");
 }
 
-VkPipeline CreatePipeline(VkShaderModule vertex, const std::string& vertexEntry, VkShaderModule pixel, const std::string& pixelEntry)
+// blend draws premultiplied alpha over what the target has, keeping its alpha.
+VkPipeline CreatePipeline(VkShaderModule vertex, const std::string& vertexEntry, VkShaderModule pixel, const std::string& pixelEntry,
+                          VkRenderPass renderPass, bool blend)
 {
     VkPipelineShaderStageCreateInfo stages[2]{};
     stages[0] = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
@@ -127,11 +165,22 @@ VkPipeline CreatePipeline(VkShaderModule vertex, const std::string& vertexEntry,
     raster.lineWidth = 1.0f;
     VkPipelineMultisampleStateCreateInfo multisample{ VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    VkPipelineColorBlendAttachmentState blend{};
-    blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendAttachmentState blendState{};
+    blendState.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    if (blend)
+    {
+        blendState.blendEnable = VK_TRUE;
+        blendState.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        blendState.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        blendState.colorBlendOp = VK_BLEND_OP_ADD;
+        blendState.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        blendState.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        blendState.alphaBlendOp = VK_BLEND_OP_ADD;
+        blendState.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
+    }
     VkPipelineColorBlendStateCreateInfo blending{ VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
     blending.attachmentCount = 1;
-    blending.pAttachments = &blend;
+    blending.pAttachments = &blendState;
     const VkDynamicState dynamic[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
     VkPipelineDynamicStateCreateInfo dynamicState{ VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
     dynamicState.dynamicStateCount = 2;
@@ -147,7 +196,7 @@ VkPipeline CreatePipeline(VkShaderModule vertex, const std::string& vertexEntry,
     info.pColorBlendState = &blending;
     info.pDynamicState = &dynamicState;
     info.layout = b.layout;
-    info.renderPass = b.renderPass;
+    info.renderPass = renderPass;
     VkPipeline pipeline = VK_NULL_HANDLE;
     Check(vkCreateGraphicsPipelines(gpu.device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline), "create a pipeline");
     return pipeline;
@@ -164,7 +213,7 @@ void Create()
     if (!preprocessor.errors().empty() || !parser.parse(preprocessor.output(), codegen.get()))
         throw std::runtime_error("the shader did not compile: " + preprocessor.errors() + parser.errors());
     const reshadefx::effect_module& module = codegen->module();
-    if (module.techniques.size() != 1 || module.techniques[0].passes.size() != 3)
+    if (module.techniques.size() != 1 || module.techniques[0].passes.size() != 5)
         throw std::runtime_error("the shader has no technique");
     const std::vector<reshadefx::pass>& passes = module.techniques[0].passes;
 
@@ -175,7 +224,9 @@ void Create()
     };
     try
     {
-        for (const std::string& name : { passes[0].vs_entry_point, passes[0].ps_entry_point, passes[1].ps_entry_point, passes[2].ps_entry_point })
+        for (const std::string& name :
+             { passes[0].vs_entry_point, passes[0].ps_entry_point, passes[1].ps_entry_point, passes[2].ps_entry_point, passes[3].ps_entry_point,
+               passes[4].ps_entry_point })
         {
             if (shaders.count(name))
                 continue;
@@ -203,9 +254,12 @@ void Create()
         layoutInfo.setLayoutCount = 2;
         layoutInfo.pSetLayouts = b.setLayouts;
         Check(vkCreatePipelineLayout(gpu.device, &layoutInfo, nullptr, &b.layout), "create a pipeline layout");
-        const VkDescriptorPoolSize sizes[] = { { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kSlots }, { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kSlots } };
+        // The frame's slots, the menu's and the two for SDR copies.
+        constexpr uint32_t kAllSlots = kSlots + 3;
+        const VkDescriptorPoolSize sizes[] = { { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kAllSlots },
+                                               { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kAllSlots } };
         VkDescriptorPoolCreateInfo poolInfo{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-        poolInfo.maxSets = kSlots * 2;
+        poolInfo.maxSets = kAllSlots * 2;
         poolInfo.poolSizeCount = 2;
         poolInfo.pPoolSizes = sizes;
         Check(vkCreateDescriptorPool(gpu.device, &poolInfo, nullptr, &b.pool), "create a descriptor pool");
@@ -236,14 +290,36 @@ void Create()
         passInfo.subpassCount = 1;
         passInfo.pSubpasses = &subpass;
         Check(vkCreateRenderPass(gpu.device, &passInfo, nullptr, &b.renderPass), "create a render pass");
+        // Only for making the menu's pipeline, which then works in the swapchain's pass: the same format and dependency
+        // as gpu.cpp gives that one.
+        VkSubpassDependency dependency{};
+        dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependency.dstSubpass = 0;
+        dependency.srcStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dependency.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        attachment.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        passInfo.dependencyCount = 1;
+        passInfo.pDependencies = &dependency;
+        Check(vkCreateRenderPass(gpu.device, &passInfo, nullptr, &b.menuPass), "create a render pass");
 
         const std::string& vertex = passes[0].vs_entry_point;
-        b.shrink = CreatePipeline(shaders[vertex], vertex, shaders[passes[0].ps_entry_point], passes[0].ps_entry_point);
-        b.blur = CreatePipeline(shaders[vertex], vertex, shaders[passes[1].ps_entry_point], passes[1].ps_entry_point);
-        b.tint = CreatePipeline(shaders[vertex], vertex, shaders[passes[2].ps_entry_point], passes[2].ps_entry_point);
+        b.shrink = CreatePipeline(shaders[vertex], vertex, shaders[passes[0].ps_entry_point], passes[0].ps_entry_point, b.renderPass, false);
+        b.blur = CreatePipeline(shaders[vertex], vertex, shaders[passes[1].ps_entry_point], passes[1].ps_entry_point, b.renderPass, false);
+        b.tint = CreatePipeline(shaders[vertex], vertex, shaders[passes[2].ps_entry_point], passes[2].ps_entry_point, b.renderPass, false);
+        b.menu = CreatePipeline(shaders[vertex], vertex, shaders[passes[3].ps_entry_point], passes[3].ps_entry_point, b.menuPass, true);
+        b.sdr = CreatePipeline(shaders[vertex], vertex, shaders[passes[4].ps_entry_point], passes[4].ps_entry_point, b.renderPass, false);
 
+        std::vector<Slot*> slots;
         for (Slot& slot : b.slots)
+            slots.push_back(&slot);
+        slots.push_back(&b.menuSlot);
+        for (Slot& slot : b.sdrSlots)
+            slots.push_back(&slot);
+        for (Slot* each : slots)
         {
+            Slot& slot = *each;
             if (!gpu.CreateBuffer(slot.constants, sizeof(float) * 4, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true))
                 throw std::runtime_error("could not create a buffer");
             VkDescriptorSetAllocateInfo allocation{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
@@ -365,15 +441,46 @@ void Begin(VkCommandBuffer commands)
     FullBarrier(commands);
 }
 
-bool Shrink(VkCommandBuffer commands, const GpuImage& input, const Target& target)
+bool Shrink(VkCommandBuffer commands, const GpuImage& input, const Target& target, float sdrWhite)
 {
     // Four taps a quarter of target's pixel out from its middle, each blending four of input's pixels when target is a
     // quarter of input's size.
-    const float step[4] = { 0.25f / float(target.image.width), 0.25f / float(target.image.height), 0, 0 };
+    const bool hdr = input.format == VK_FORMAT_R16G16B16A16_SFLOAT;
+    const float step[4] = { 0.25f / float(target.image.width), 0.25f / float(target.image.height), 0, hdr ? sdrWhite : 0 };
     return Draw(commands, b.shrink, input.view, target, step);
 }
 
 bool Blur(VkCommandBuffer commands, const Target& target, const Target& scratch, float radius, float saturation)
+bool ToSdr(VkCommandBuffer commands, const GpuImage& input, const Target& target, float sdrWhite, int slot)
+{
+    const float step[4] = { 0, 0, 0, sdrWhite };
+    return slot >= 0 && slot < int(std::size(b.sdrSlots)) && Draw(commands, b.sdr, input.view, target, step, &b.sdrSlots[slot]);
+}
+
+bool DrawMenu(VkCommandBuffer commands, const GpuImage& menu, float sdrWhite)
+{
+    if (!Ready())
+        return false;
+    const float white[4] = { sdrWhite, 0, 0, 0 };
+    std::memcpy(b.menuSlot.constants.mapped, white, sizeof(white));
+    const VkDescriptorImageInfo image{ b.sampler, menu.view, VK_IMAGE_LAYOUT_GENERAL };
+    VkWriteDescriptorSet write{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+    write.dstSet = b.menuSlot.sets[1];
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &image;
+    vkUpdateDescriptorSets(gpu.device, 1, &write, 0, nullptr);
+
+    vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, b.menu);
+    vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, b.layout, 0, 2, b.menuSlot.sets, 0, nullptr);
+    const VkViewport viewport{ 0, 0, float(menu.width), float(menu.height), 0, 1 };
+    const VkRect2D scissor{ { 0, 0 }, { menu.width, menu.height } };
+    vkCmdSetViewport(commands, 0, 1, &viewport);
+    vkCmdSetScissor(commands, 0, 1, &scissor);
+    vkCmdDraw(commands, 3, 1, 0, 0);
+    return true;
+}
+
 {
     // radius is the standard deviation, and the shader takes 4 steps to one.
     const float spacing = std::max(radius, 0.0f) / 4;
@@ -386,14 +493,18 @@ void Release()
 {
     if (!gpu.device)
         return;
-    for (VkPipeline pipeline : { b.shrink, b.blur, b.tint })
+    for (VkPipeline pipeline : { b.shrink, b.blur, b.tint, b.menu, b.sdr })
         if (pipeline)
             vkDestroyPipeline(gpu.device, pipeline, nullptr);
-    if (b.renderPass)
-        vkDestroyRenderPass(gpu.device, b.renderPass, nullptr);
+    for (VkRenderPass pass : { b.renderPass, b.menuPass })
+        if (pass)
+            vkDestroyRenderPass(gpu.device, pass, nullptr);
     for (Slot& slot : b.slots)
         gpu.DestroyBuffer(slot.constants);
     if (b.sampler)
+    for (Slot& slot : b.sdrSlots)
+        gpu.DestroyBuffer(slot.constants);
+    gpu.DestroyBuffer(b.menuSlot.constants);
         vkDestroySampler(gpu.device, b.sampler, nullptr);
     if (b.pool)
         vkDestroyDescriptorPool(gpu.device, b.pool, nullptr);

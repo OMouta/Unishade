@@ -169,12 +169,14 @@ struct Performance
     int frameRate = 0; // 0 shows every frame the game draws
     std::optional<int> effectResolution; // where effects can run on a smaller picture
 };
+    std::optional<bool> hdrOutput;       // where an HDR game's picture can stay HDR
 
 enum class PerformanceSetting
 {
     FrameRate,
     EffectResolution,
 };
+    HdrOutput, // 1 for on
 
 // The choices Performance offers, besides a custom frame rate between the slowest and fastest.
 inline constexpr int kFrameRates[] = { 0, 120, 60 };

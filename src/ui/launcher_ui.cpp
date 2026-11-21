@@ -75,6 +75,8 @@ constexpr int kCustom = static_cast<int>(std::size(kFrameRates));
 constexpr char kRateNote[] = "The most frames a second Unishade shows. A lower limit leaves more of the GPU to the game.";
 constexpr char kResolutionNote[] =
     "Effects run on a smaller picture that FSR upscales to the game's size. Lower is faster and softer, and screenshots get smaller.";
+constexpr char kHdrNote[] =
+    "Keeps an HDR game in HDR. Most effects are made for SDR and can look wrong in HDR, and add-ons that work on the picture pause.";
 
 // What shows over the page: the launcher's own windows, the picker, and the questions that wait for an answer.
 enum class Modal
@@ -667,6 +669,9 @@ void PerformanceFields(Flow& flow, Host& host, const Performance& performance, s
     if (resolution >= 0)
         host.SetPerformance(game, PerformanceSetting::EffectResolution, kEffectResolutions[resolution]);
     Note(flow, kResolutionNote);
+    if (performance.hdrOutput)
+        if (const std::optional<bool> on = OnOff(flow, "hdr", "HDR output", *performance.hdrOutput, kHdrNote))
+            host.SetPerformance(game, PerformanceSetting::HdrOutput, *on ? 1 : 0);
 }
 
 void ShortcutFields(Flow& flow, Host& host, const Settings& settings)
