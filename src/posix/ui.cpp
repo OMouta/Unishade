@@ -486,11 +486,11 @@ void DrawDebugInfo(App& app)
         Line(draw, x + wide + S(5), x + wide + S(5) + named + 1, middle + S(3.5f), name, kMist, small);
         return x + wide + S(5) + named + S(14);
     };
-    number(number(left, stats.shownFps, "shown"), stats.gameFps, "game");
+    number(number(left, stats.shownFps, "shown"), stats.gameFps, "captured");
     y += numbers + gap;
 
     // A bar for each of the last 60 seconds, as high as the frames shown: green while nearly every frame of the game
-    // is shown, yellow while some are left out and red while most are. The line over them is the game's own rate.
+    // is shown, yellow while some are left out and red while most are. The line over them is the rate capture gets.
     draw->AddRectFilled(ImVec2(left, y), ImVec2(right, y + graph), kWell, S(8));
     float top = 30;
     for (size_t i = 0; i < stats.Seconds(); ++i)

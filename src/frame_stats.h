@@ -5,9 +5,10 @@
 #include <cstddef>
 #include <cstdint>
 
-// What the debug view shows: how many frames a second the game draws and Unishade shows, and how long Unishade works
-// on each. Counted from the frames Unishade shows, each with the serial of the game's frame in it, which goes up by
-// one for every frame captured.
+// What the debug view shows: how many frames a second capture gets from the game and Unishade shows, and how long
+// Unishade works on each. Counted from the frames Unishade shows, each with the serial of the game's frame in it,
+// which goes up by one for every frame capture gets, shown or not. Frames the system drops before capture gets them
+// are not counted, so the game may draw more than this says.
 struct FrameStats
 {
     static constexpr size_t kSeconds = 60; // of frame rates kept for the graph

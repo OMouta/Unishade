@@ -798,10 +798,16 @@ void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
     std::lock_guard copying(capture.copying);
     try
     {
-        // Only the newest frame matters.
+        // Only the newest frame is shown. The ones before it are frames the game drew all the same, so the serial counts
+        // them, and the frame rates see them as skipped rather than not at all.
         wgc::Direct3D11CaptureFrame frame{ nullptr };
-        for (wgc::Direct3D11CaptureFrame next = pool.TryGetNextFrame(); next; next = pool.TryGetNextFrame())
+        uint64_t drawn = 0;
+        for (wgc::Direct3D11CaptureFrame next = pool.TryGetNextFrame(); next; next = pool.TryGetNextFrame(), ++drawn)
             frame = next;
+        {
+            std::lock_guard lock(capture.mutex);
+            capture.serial += drawn;
+        }
         if (!frame || !capture.running)
             return;
         UpdateHdr(pool);
@@ -867,7 +873,7 @@ void OnFrameArrived(const wgc::Direct3D11CaptureFramePool& pool)
             std::lock_guard lock(capture.mutex);
             if (!capture.running)
                 return;
-            copied.serial = ++capture.serial;
+            copied.serial = capture.serial;
             capture.ready = std::move(copied);
         }
         glfwPostEmptyEvent();
