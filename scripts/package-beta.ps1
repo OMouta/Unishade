@@ -39,10 +39,16 @@ if ($exitCode -eq 2) { throw "Setup left out effects or presets. See $log" }
 if ($exitCode -ne 0) { throw "Setup failed with exit code $exitCode. See $log" }
 
 # The Add-ons page installs the official add-ons from this version's release, which a beta does not have. They go in
-# from this build instead, with the files they need from the addresses in official.ini.
+# from this build instead, with the files they need from the addresses in official.ini. Sections for other systems,
+# whose add-on comes first and is not a .dll, are left out.
 $addons = Join-Path $folder 'Addons'
+$otherSystem = $false
 foreach ($line in Get-Content "$repo/src/addons/official.ini") {
+    if ($line -match '^\[') { $otherSystem = $false; continue }
     if ($line -notmatch '^([^;\[=]+\.[^=]+)=(\S+) (\S+)$') { continue }
+    $path = $Matches[1]
+    if (-not $path.Contains('/') -and -not $path.EndsWith('.dll')) { $otherSystem = $true }
+    if ($otherSystem) { continue }
     $file = Join-Path $addons $Matches[1]
     $hash = $Matches[2]
     $url = $Matches[3]

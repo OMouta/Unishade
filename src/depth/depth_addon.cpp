@@ -6,6 +6,7 @@
 // The files it needs are in Addons/Depth: depth-anything-v2-small.onnx, onnxruntime.dll and DirectML.dll.
 
 #include "depth_model.h"
+#include "depth_shared.h"
 #include <addons/unishade_addon.h>
 
 #include <d3d11_4.h>
@@ -33,21 +34,16 @@ namespace
 {
 using Clock = std::chrono::steady_clock;
 
-constexpr wchar_t kModelFile[] = L"depth-anything-v2-small.onnx";
+using namespace depth;
+
+constexpr wchar_t kModelFile[] = L"" DEPTH_MODEL_FILE;
 // The model's input and output go between the Direct3D 11 and 12 devices in textures, since only textures can be
 // shared between them, and DirectML takes buffers. The textures hold the values in order, in rows of this many bytes,
 // so Direct3D 12 copies them to and from packed buffers. Rows this wide keep the largest input under 16384 of them.
 constexpr UINT kRowBytes = 16 * D3D12_TEXTURE_DATA_PITCH_ALIGNMENT;
-// The longest side of the picture depth is estimated from, for each choice of Detail, in the multiples of 14 Depth
-// Anything V2 expects.
-constexpr int kSizes[] = { 924, 518, 392, 266 };
-// The shortest the other side may be: 16 of the model's patches, which Medium gives a 16:9 frame. With fewer than 14,
-// as Low gave one, the model returns a blur that does not follow the picture, and with fewer than 16 the farthest
-// things stop short of the far plane. A smaller picture is stretched to it.
-constexpr int kShortestSide = 224;
-constexpr auto kStatisticsInterval = std::chrono::seconds(30);
 
-// Preprocess turns the frame into the model's input. Peak, Smooth and Upsample turn its output into DEPTH.
+// Preprocess turns the frame into the model's input. Peak, Smooth and Upsample turn its output into DEPTH. They follow
+// kShaderShared.
 constexpr char kShaders[] = R"(
 cbuffer Sizes : register(b0)
 {
@@ -65,19 +61,6 @@ RWByteAddressBuffer Keys : register(u1);
 RWStructuredBuffer<float4> State : register(u2);
 RWTexture2D<float> Depth : register(u3);
 RWTexture2D<float4> GuideTarget : register(u4);
-
-static const float3 Mean = float3(0.485, 0.456, 0.406);
-static const float3 Std = float3(0.229, 0.224, 0.225);
-// Blend factor for the depth scale, so the whole image does not pulse when something close enters or leaves the view.
-static const float PeakSmoothing = 0.2;
-// Unishade's RESHADE_DEPTH_LINEARIZATION_FAR_PLANE.
-static const float FarPlane = 1000.0;
-// The model only knows how far things are relative to each other. The nearest thing in view is put at this fraction
-// of the far plane, and anything more than 1 / Nearest times farther than it on the far plane.
-static const float Nearest = 0.01;
-// How far, in model pixels and in color, an output value reaches when upsampled.
-static const float SpatialSigma = 1.0;
-static const float ColorSigma = 0.1;
 
 void Store(uint index, float value)
 {
@@ -156,9 +139,7 @@ void Smooth()
     State[0] = float4(state.x + (peak - state.x) * PeakSmoothing, 0, 1, 0);
 }
 
-// Upsamples the output to the frame's size with a joint bilateral filter: each nearby output value counts by how close
-// the color it was estimated from is to this pixel's, so depth edges follow the frame's edges instead of blurring
-// across them. Values that match no color still count a little, by distance alone.
+// Upsamples the output to the frame's size with a joint bilateral filter, as Weight says.
 [numthreads(16, 16, 1)]
 void Upsample(uint3 id : SV_DispatchThreadID)
 {
@@ -176,26 +157,15 @@ void Upsample(uint3 id : SV_DispatchThreadID)
             float2 offset = texel - position;
             texel = clamp(texel, 0, int2(ModelSize) - 1);
             float3 difference = Guide.Load(int3(texel, 0)).rgb - color;
-            float weight = exp(-dot(offset, offset) / (2 * SpatialSigma * SpatialSigma)) *
-                           (exp(-dot(difference, difference) / (2 * ColorSigma * ColorSigma)) + 1e-3);
+            float weight = Weight(offset, difference);
             sum += weight * Load(texel.y * ModelSize.x + texel.x);
             weights += weight;
         }
-
-    // The output is inverse depth, so distance goes with its reciprocal, which also keeps flat surfaces flat. It is
-    // stored as the non-linear depth ReShade linearizes by default: linear = z / (far - z * (far - 1)), solved for z.
-    float closeness = sum / weights / max(Smoothed[0].x, 1e-6);
-    float distance01 = Nearest / max(closeness, Nearest);
-    Depth[id.xy] = distance01 * FarPlane / (1 + distance01 * (FarPlane - 1));
+    Depth[id.xy] = StoredDepth(sum / weights / max(Smoothed[0].x, 1e-6));
 }
 )";
 
 constexpr const char* kEntryPoints[] = { "Preprocess", "Peak", "Smooth", "Upsample" };
-
-const UnishadeSetting kSettings[] = {
-    { "Detail", "Detail", "Depth is estimated from a smaller picture. Lower is faster, and effects that use depth lose fine detail.",
-      UNISHADE_SETTING_CHOICE, 1, 0, 3, "Ultra\0High\0Medium\0Low\0" },
-};
 
 std::wstring Wide(const char* text)
 {
@@ -345,10 +315,11 @@ Depth::Depth(const UnishadeHost& unishade) : host(unishade), directory(Wide(unis
                                            createdContext.put()));
     device = created.as<ID3D11Device5>();
     context = createdContext.as<ID3D11DeviceContext4>();
+    const std::string source = std::string("#define CONSTANT static const\n") + kShaderShared + kShaders;
     for (size_t i = 0; i < std::size(kEntryPoints); ++i)
     {
         winrt::com_ptr<ID3DBlob> code, errors;
-        if (FAILED(D3DCompile(kShaders, sizeof(kShaders) - 1, "depth", nullptr, nullptr, kEntryPoints[i], "cs_5_0", 0, 0, code.put(), errors.put())))
+        if (FAILED(D3DCompile(source.data(), source.size(), "depth", nullptr, nullptr, kEntryPoints[i], "cs_5_0", 0, 0, code.put(), errors.put())))
             throw std::runtime_error(errors ? static_cast<const char*>(errors->GetBufferPointer()) : "Compute shaders are unavailable on this graphics card.");
         winrt::check_hresult(device->CreateComputeShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, shaders[i].put()));
     }
@@ -597,12 +568,10 @@ void Depth::ReleaseShared()
 // it.
 void Depth::Resize(const D3D11_TEXTURE2D_DESC& frame, int longest)
 {
-    const bool landscape = frame.Width >= frame.Height;
-    const float ratio = landscape ? static_cast<float>(frame.Height) / frame.Width : static_cast<float>(frame.Width) / frame.Height;
     size = longest;
-    const int shortSide = std::max(kShortestSide, static_cast<int>(std::lround(size * ratio / 14)) * 14);
-    width = landscape ? size : shortSide;
-    height = landscape ? shortSide : size;
+    const ModelSize model = ModelSizeFor(frame.Width, frame.Height, longest);
+    width = model.width;
+    height = model.height;
     sourceWidth = frame.Width;
     sourceHeight = frame.Height;
     lastInput.reset();
@@ -749,8 +718,7 @@ void Depth::Frame(const UnishadeFrame& frame)
         const float farPlane[4] = { 1, 1, 1, 1 };
         context->ClearUnorderedAccessViewFloat(depthTarget.get(), farPlane);
     }
-    const int detail = std::clamp(static_cast<int>(frame.settings[0]), 0, static_cast<int>(std::size(kSizes)) - 1);
-    Update(color.get(), frame.picture, kSizes[detail]);
+    Update(color.get(), frame.picture, LongestSide(frame));
     winrt::check_hresult(context->Signal(hostFence.get(), frame.signal));
     context->Flush();
 }
@@ -875,8 +843,8 @@ void Destroy(void* addon)
 
 const UnishadeAddon kAddon = {
     UNISHADE_ADDON_VERSION,
-    "Depth",
-    "Estimates how far everything in the game's picture is, for effects that use depth.",
+    kName,
+    kDescription,
     UNISHADE_ADDON_WRITES_DEPTH,
     kSettings,
     static_cast<uint32_t>(std::size(kSettings)),

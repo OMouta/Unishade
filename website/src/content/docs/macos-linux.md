@@ -6,7 +6,7 @@ order: 6
 
 Unishade is the same on Windows, macOS and Linux, and presets move between them unchanged. This page has what's particular to a Mac or to Linux. To install, see [Install Unishade](/docs/).
 
-The Depth and DLSS5 add-ons are for Windows.
+The Depth add-on runs on Macs with Apple silicon. DLSS5 is for Windows, and Linux has neither.
 
 ## macOS
 

@@ -73,21 +73,43 @@ if(BUILD_TESTING)
     add_test(NAME launcher_ui_tests COMMAND launcher_ui_tests)
 endif()
 
-# The host, in src/posix for every system. It compiles effects with ReShade's effect compiler and runs them on Vulkan.
-include(src/posix/posix.cmake)
-if(NOT WIN32)
-    return()
+# The Depth add-on on macOS, Depth.dylib, runs ONNX Runtime's library for macOS, which Microsoft publishes for Apple
+# silicon only. So only a build for arm64 alone has it, and Unishade offers it only there.
+set(DEPTH_MACOS OFF)
+if(APPLE AND (CMAKE_OSX_ARCHITECTURES STREQUAL "arm64" OR (NOT CMAKE_OSX_ARCHITECTURES AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")))
+    set(DEPTH_MACOS ON)
 endif()
 
+# The host, in src/posix for every system. It compiles effects with ReShade's effect compiler and runs them on Vulkan.
+include(src/posix/posix.cmake)
+
 # ONNX Runtime's headers come from its NuGet package for DirectML, whose three files are the ones of ONNX Runtime 1.24.4
-# with Windows line endings. The package is the one download whose hash is checked, and only the headers leave it.
-set(ONNXRUNTIME_DIR "${CMAKE_BINARY_DIR}/onnxruntime")
-set(ONNXRUNTIME_INCLUDE "${ONNXRUNTIME_DIR}/build/native/include")
-if(NOT EXISTS "${ONNXRUNTIME_INCLUDE}/dml_provider_factory.h")
-    fetch_file("https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/1.24.4/microsoft.ml.onnxruntime.directml.1.24.4.nupkg"
-        57e9f11b73437bef7a309496135d4c1f96b1a8e9ddba60013fa27bfc1d788681 "${CMAKE_BINARY_DIR}/onnxruntime-directml-1.24.4.zip")
-    file(ARCHIVE_EXTRACT INPUT "${CMAKE_BINARY_DIR}/onnxruntime-directml-1.24.4.zip" DESTINATION "${ONNXRUNTIME_DIR}"
-        PATTERNS build/native/include/onnxruntime_c_api.h build/native/include/onnxruntime_ep_c_api.h build/native/include/dml_provider_factory.h)
+# with Windows line endings. The package is the one download whose hash is checked, and only the headers leave it. The
+# Mac takes the same C API header, since the Core ML provider needs no header of its own.
+if(WIN32 OR DEPTH_MACOS)
+    set(ONNXRUNTIME_DIR "${CMAKE_BINARY_DIR}/onnxruntime")
+    set(ONNXRUNTIME_INCLUDE "${ONNXRUNTIME_DIR}/build/native/include")
+    if(NOT EXISTS "${ONNXRUNTIME_INCLUDE}/dml_provider_factory.h")
+        fetch_file("https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/1.24.4/microsoft.ml.onnxruntime.directml.1.24.4.nupkg"
+            57e9f11b73437bef7a309496135d4c1f96b1a8e9ddba60013fa27bfc1d788681 "${CMAKE_BINARY_DIR}/onnxruntime-directml-1.24.4.zip")
+        file(ARCHIVE_EXTRACT INPUT "${CMAKE_BINARY_DIR}/onnxruntime-directml-1.24.4.zip" DESTINATION "${ONNXRUNTIME_DIR}"
+            PATTERNS build/native/include/onnxruntime_c_api.h build/native/include/onnxruntime_ep_c_api.h build/native/include/dml_provider_factory.h)
+    endif()
+endif()
+
+# Depth estimation on macOS, Depth.dylib. Its model and libonnxruntime.dylib go in Addons/Depth. The linker signs it ad
+# hoc, which is all Apple silicon asks of a library a program without the hardened runtime loads, so the file the
+# official list hashes is the file published.
+if(DEPTH_MACOS)
+    add_library(depth_addon SHARED src/depth/depth_addon_macos.mm src/depth/depth_model.cpp)
+    set_target_properties(depth_addon PROPERTIES OUTPUT_NAME Depth PREFIX "")
+    target_include_directories(depth_addon PRIVATE src "${ONNXRUNTIME_INCLUDE}")
+    target_compile_options(depth_addon PRIVATE -Wall -Wextra -Wno-missing-field-initializers $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+    target_link_libraries(depth_addon PRIVATE "-framework Foundation" "-framework Metal")
+endif()
+
+if(NOT WIN32)
+    return()
 endif()
 
 # Depth estimation as an add-on of the Vulkan host, Depth.dll. Its model and ONNX Runtime go in Addons/Depth.

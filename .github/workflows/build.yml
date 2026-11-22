@@ -262,7 +262,7 @@ jobs:
       # The app promises macOS 13, which the runner's own version or a newer MoltenVK from Homebrew would quietly break.
       - name: Check the oldest macOS the app runs on
         run: |
-          for binary in build/Unishade.app/Contents/MacOS/Unishade build/Unishade.app/Contents/Frameworks/libMoltenVK.dylib; do
+          for binary in build/Unishade.app/Contents/MacOS/Unishade build/Unishade.app/Contents/Frameworks/libMoltenVK.dylib build/Depth.dylib; do
             vtool -show-build "$binary"
             vtool -show-build "$binary" | awk -v file="$binary" '
               $1 == "minos" { found = 1; split($2, v, "."); if (v[1] + 0 > 13 || (v[1] + 0 == 13 && v[2] + 0 > 0)) high = 1 }
@@ -277,7 +277,9 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Unishade-macOS
-          path: build/Unishade-macOS.zip
+          path: |
+            build/Unishade-macOS.zip
+            build/Depth.dylib
           if-no-files-found: error
 
   release:
@@ -310,9 +312,10 @@ jobs:
           RELEASE_TAG: v${{ needs.build.outputs.version }}
         run: |
           mkdir upload
-          # Depth.dll and Unishade_nvngx.dll are where src/addons/official.ini points the Add-ons page.
+          # Depth.dll, Depth.dylib and Unishade_nvngx.dll are where src/addons/official.ini points the Add-ons page.
           cp release/build/Release/Unishade.exe release/build/Release/Depth.dll release/build/Release/Unishade_nvngx.dll \
-            "release/build/installer/Unishade-Setup-${RELEASE_TAG#v}.exe" release/LICENSE release/Unishade-linux-x64.tar.gz release/Unishade-macOS.zip upload/
+            "release/build/installer/Unishade-Setup-${RELEASE_TAG#v}.exe" release/LICENSE release/Unishade-linux-x64.tar.gz release/Unishade-macOS.zip \
+            release/Depth.dylib upload/
           # The SHA-256 of every file, in the format sha256sum -c reads.
           (cd upload && sha256sum -- * > ../SHA256SUMS.txt)
           mv SHA256SUMS.txt upload/

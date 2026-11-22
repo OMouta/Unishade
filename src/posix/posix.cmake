@@ -294,6 +294,9 @@ set(OFFICIAL_ADDONS_TARGETS "")
 if(WIN32)
     set(OFFICIAL_ADDONS_BINARIES "Depth.dll=$<TARGET_FILE:depth_addon>|Unishade_nvngx.dll=$<TARGET_FILE:Unishade_nvngx>")
     set(OFFICIAL_ADDONS_TARGETS depth_addon Unishade_nvngx)
+elseif(DEPTH_MACOS)
+    set(OFFICIAL_ADDONS_BINARIES "Depth.dylib=$<TARGET_FILE:depth_addon>")
+    set(OFFICIAL_ADDONS_TARGETS depth_addon)
 endif()
 add_custom_command(OUTPUT "${OFFICIAL_ADDONS_SOURCE}"
     COMMAND "${CMAKE_COMMAND}" "-DLIST=${CMAKE_SOURCE_DIR}/src/addons/official.ini" "-DOUTPUT=${OFFICIAL_ADDONS_SOURCE}"
@@ -305,10 +308,10 @@ add_custom_command(OUTPUT "${OFFICIAL_ADDONS_SOURCE}"
 set(POSIX_SOURCES
     "${LOGO_SOURCE}"
     "${FONTS_SOURCE}"
+    "${FSR_SOURCE}"
     "${OFFICIAL_ADDONS_SOURCE}"
     "${POSIX_DIR}/addons.cpp"
     "${POSIX_DIR}/app.cpp"
-    "${FSR_SOURCE}"
     "${POSIX_DIR}/backdrop.cpp"
     "${POSIX_DIR}/config.cpp"
     "${POSIX_DIR}/effects.cpp"
@@ -320,10 +323,10 @@ set(POSIX_SOURCES
     "${POSIX_DIR}/setup.cpp"
     "${POSIX_DIR}/ui.cpp"
     "${POSIX_DIR}/uimask.cpp"
+    "${POSIX_DIR}/upscale.cpp"
     # The launcher every platform shares.
     "${POSIX_DIR}/../ui/kit.cpp"
     "${POSIX_DIR}/../ui/launcher_ui.cpp"
-    "${POSIX_DIR}/upscale.cpp"
     "${POSIX_DIR}/../ui/tray.cpp")
 if(APPLE)
     list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_macos.mm" "${POSIX_DIR}/emoji_macos.cpp")
