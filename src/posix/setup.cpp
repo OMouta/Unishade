@@ -68,7 +68,8 @@ fs::path MakeWorkFolder()
 #else
 // Downloads with curl, which macOS and nearly every Linux system have. Only https, redirects included, except for
 // the sources given on the command line, which tests can point at local files. Throws on failure or when cancelled.
-void Download(const std::string& url, const fs::path& path, const std::atomic<bool>& cancel, uintmax_t limit, bool fromCommandLine = false)
+void Download(const std::string& url, const fs::path& path, const std::atomic<bool>& cancel, uintmax_t limit, bool fromCommandLine = false,
+              const std::function<void(uintmax_t received)>& progress = {})
 {
     const bool local = fromCommandLine && url.rfind("file://", 0) == 0;
     if (url.rfind("https://", 0) != 0 && !local)
@@ -111,6 +112,8 @@ void Download(const std::string& url, const fs::path& path, const std::atomic<bo
                 throw Cancelled{};
             throw std::runtime_error(tooLarge ? url + " is larger than Unishade accepts." : "The download of " + url + " timed out.");
         }
+        if (progress && !error)
+            progress(size);
         usleep(50'000);
     }
     const uintmax_t size = fs::file_size(path, error);
@@ -167,6 +170,14 @@ struct Sha256State
     }
 };
 } // namespace
+
+#ifndef _WIN32
+void DownloadFile(const std::string& url, const fs::path& path, const std::atomic<bool>& cancel, uintmax_t limit,
+                  const std::function<void(uintmax_t received)>& progress)
+{
+    Download(url, path, cancel, limit, false, progress);
+}
+#endif
 
 std::string Sha256(const std::string& data)
 {

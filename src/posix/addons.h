@@ -115,7 +115,7 @@ public:
     const std::vector<Official>& OfficialList() const { return official; }
     // Downloads an official add-on's files into the Addons folder and checks each one's SHA-256, replacing what is
     // there. Stop the add-on before installing it again. Blocks, so call it from a thread of its own. Throws
-    // std::runtime_error with a message to show, or on Windows net.h's Cancelled once cancel is set. progress gets the
+    // std::runtime_error with a message to show, or something else once cancel is set. progress gets the
     // file's index and its bytes so far.
     static void Install(const Official& addon, const std::atomic<bool>& cancel,
                         const std::function<void(size_t file, uint64_t received, uint64_t total)>& progress = {});

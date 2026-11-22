@@ -1,7 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -45,6 +47,13 @@ private:
 
 // Lowercase hex. Exposed for tests.
 std::string Sha256(const std::string& data);
+
+#ifndef _WIN32
+// Downloads an https address to a file with curl, as effects download, refusing more than limit bytes. Throws
+// std::runtime_error with a message to show, or something else once cancel is set. progress gets the bytes so far.
+void DownloadFile(const std::string& url, const std::filesystem::path& path, const std::atomic<bool>& cancel, uintmax_t limit,
+                  const std::function<void(uintmax_t received)>& progress);
+#endif
 
 // Where the effect packages and presets come from. Tests point them at local files.
 struct SetupSources

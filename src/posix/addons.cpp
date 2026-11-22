@@ -47,6 +47,9 @@ constexpr char kExtension[] = ".dylib";
 #else
 constexpr char kExtension[] = ".so";
 #endif
+#ifndef _WIN32
+constexpr uintmax_t kAddonLimit = 1ull << 30; // as net.h has it for Windows
+#endif
 constexpr uint32_t kBeforeEffects = UNISHADE_ADDON_WRITES_DEPTH | UNISHADE_ADDON_CHANGES_PICTURE;
 constexpr uint32_t kAfterEffects = UNISHADE_ADDON_READS_RESULT | UNISHADE_ADDON_CHANGES_RESULT;
 constexpr uint32_t kFrameFlags = kBeforeEffects | kAfterEffects;
@@ -1668,7 +1671,6 @@ void Addons::Update()
 void Addons::Install(const Official& addon, const std::atomic<bool>& cancel,
                      const std::function<void(size_t file, uint64_t received, uint64_t total)>& progress)
 {
-#ifdef _WIN32
     // Each file downloads under another name, and they take their places once all of them are whole and checked, so a
     // failed install leaves what was there.
     std::vector<fs::path> parts;
@@ -1681,11 +1683,21 @@ void Addons::Install(const Official& addon, const std::atomic<bool>& cancel,
             fs::create_directories(path.parent_path());
             fs::path part = path;
             part += ".part";
+            parts.push_back(part);
+#ifdef _WIN32
             Download(Wide(file.url), part, file.sha256, kAddonLimit, cancel, [&](uint64_t received, uint64_t total) {
                 if (progress)
                     progress(i, received, total);
             });
-            parts.push_back(part);
+#else
+            // curl does not say how large the file is, so the bar moves on as each file finishes.
+            DownloadFile(file.url, part, cancel, kAddonLimit, [&](uintmax_t received) {
+                if (progress)
+                    progress(i, received, 0);
+            });
+            if (Sha256(ReadFile(part)) != file.sha256)
+                throw std::runtime_error(file.url + " is not the file Unishade expects. Try again later.");
+#endif
         }
         for (size_t i = 0; i < addon.files.size(); ++i)
         {
@@ -1700,11 +1712,6 @@ void Addons::Install(const Official& addon, const std::atomic<bool>& cancel,
             fs::remove(part, ignored);
         throw;
     }
-#else
-    (void)cancel;
-    (void)progress;
-    throw std::runtime_error(addon.name + " is for Windows only.");
-#endif
 }
 
 void Addons::SetBypassed(const std::string& file, bool bypassed)
