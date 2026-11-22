@@ -234,11 +234,11 @@ void Addon::EvaluateHdr(float white)
         CreateConverter();
     if (!given)
     {
-        const D3D12_RESOURCE_DESC picture = color->GetDesc();
+        const D3D12_RESOURCE_DESC source = color->GetDesc();
         D3D12_RESOURCE_DESC description{};
         description.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        description.Width = picture.Width;
-        description.Height = picture.Height;
+        description.Width = source.Width;
+        description.Height = source.Height;
         description.DepthOrArraySize = 1;
         description.MipLevels = 1;
         // As Unishade's SDR pictures, which DLSS5 is known to take.
