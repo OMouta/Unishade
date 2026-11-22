@@ -181,9 +181,11 @@ struct State
     int seenSize = 0;
     bool moving = false;
     ImVec2 moveOffset;
-    // Marking the game's interface, in place of the tray, and where the area being dragged started.
+    // Marking the game's interface, in place of the tray, and where the area being dragged started. With detection on,
+    // a drag can mark scene instead.
     bool masking = false;
     ImVec2 maskFrom;
+    bool maskScene = false;
     bool sizing = false;
     int sizeFrom = 100;
     float sizeAt = 0;
@@ -1697,6 +1699,8 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
             const std::string label = count ? "Game interface: " + std::to_string(count) + (count == 1 ? " area" : " areas") : "Game interface";
             fields.push_back(Actions("interface", label, { { "Mark", PillStyle::Text } }, [](int) { state->masking = true; }, width));
             fields.push_back(Note("Mark the game's own interface, such as a health bar or the chat, and effects leave it as the game drew it.", kMist, width));
+            fields.push_back(Switched("detect", "Detect the game's interface", f.game->detectUi,
+                                      [&f](bool on) { f.host.SetPerformance(f.gameIndex, PerformanceSetting::DetectUi, on ? 1 : 0); }, {}, grid));
         }
         break;
     }
@@ -1771,6 +1775,9 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
                                  {}, grid));
         if (settings.debugInfo)
             fields.push_back(debugInfo());
+        if (settings.uiMaskShown)
+            fields.push_back(Switched("uimask", "Show the interface mask", *settings.uiMaskShown,
+                                      [&f](bool on) { f.host.SetSwitch(Switch::UiMaskShown, on); }, "Tints what effects leave as the game drew it.", grid));
         fields.push_back(Heading("Presets"));
         fields.push_back(Switched("autosave", "Save changes automatically", settings.autoSavePresets,
                                   [&f](bool on) { f.host.SetSwitch(Switch::AutoSavePresets, on); },
@@ -3043,8 +3050,10 @@ void MaskEditor(Frame& f)
                      ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar(2);
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    std::vector<std::array<float, 4>> areas = f.game->uiMask;
+    std::vector<std::array<float, 5>> areas = f.game->uiMask;
     bool changed = false;
+    // Scene only means something to detection.
+    const bool scene = state->maskScene && f.game->detectUi;
     // A line that shows on any picture: white with a dark one around it.
     const auto outline = [&](ImVec2 min, ImVec2 max, float alpha) {
         draw->AddRect(min, max, IM_COL32(0, 0, 0, static_cast<int>(120 * alpha)), S(3.2f), 0, S(4.8f));
@@ -3065,14 +3074,15 @@ void MaskEditor(Frame& f)
     if (ImGui::IsItemDeactivated() && room && to.x - from.x > S(8) && to.y - from.y > S(8))
     {
         const ImVec2 min = ImClamp(from / display, ImVec2(0, 0), ImVec2(1, 1)), max = ImClamp(to / display, ImVec2(0, 0), ImVec2(1, 1));
-        areas.push_back({ min.x, min.y, max.x - min.x, max.y - min.y });
+        areas.push_back({ min.x, min.y, max.x - min.x, max.y - min.y, scene ? 1.0f : 0.0f });
         changed = true;
     }
 
     for (size_t i = 0; i < areas.size(); ++i)
     {
         const ImVec2 min = ImVec2(areas[i][0], areas[i][1]) * display, max = min + ImVec2(areas[i][2], areas[i][3]) * display;
-        draw->AddRectFilled(min, max, IM_COL32(255, 255, 255, 30), S(3.2f));
+        // Scene is darkened, interface lightened.
+        draw->AddRectFilled(min, max, areas[i][4] != 0 ? IM_COL32(0, 0, 0, 90) : IM_COL32(255, 255, 255, 30), S(3.2f));
         outline(min, max, 1);
         ImGui::PushID(static_cast<int>(i));
         const float button = S(25.6f);
@@ -3096,10 +3106,15 @@ void MaskEditor(Frame& f)
         outline(from, to, 0.7f);
 
     // What to do, and the way out, at the top of the game.
-    const char* hint = room ? "Drag over the game's interface to keep effects off it." : "That is as many areas as there can be.";
+    const char* hint = !room ? "That is as many areas as there can be."
+                       : scene ? "Drag over what detection took for interface to keep effects on it."
+                               : "Drag over the game's interface to keep effects off it.";
+    // With detection on, the other kind is a click away.
+    const char* other = !f.game->detectUi ? nullptr : scene ? "Mark interface" : "Mark scene";
     const float pad = S(9.6f), gap = S(6.4f), height = S(kButton) + pad * 2;
     const float text = Measure(hint, kTextBody, true).x, clear = PillWidth("Clear", PillStyle::Text), done = PillWidth("Done", PillStyle::Black);
-    const float width = pad + S(9.6f) + text + S(16) + clear + gap + done + pad;
+    const float swap = other ? PillWidth(other, PillStyle::Text) + gap : 0;
+    const float width = pad + S(9.6f) + text + S(16) + swap + clear + gap + done + pad;
     const ImVec2 min(std::round((display.x - width) / 2), S(25.6f)), max = min + ImVec2(width, height);
     // Clicks on the bar are not the start of an area.
     ImGui::SetCursorScreenPos(min);
@@ -3109,6 +3124,8 @@ void MaskEditor(Frame& f)
     draw->AddRectFilled(min, max, kTray, height / 2);
     draw->AddRect(min + ImVec2(0.5f, 0.5f), max - ImVec2(0.5f, 0.5f), spectrum::kEdge, height / 2, 0, 1.0f);
     Line(draw, min.x + pad + S(9.6f), min.x + pad + S(9.6f) + text + 1, min.y + height / 2, hint, kInk, kTextBody, true);
+    if (other && PillButton(other, ImVec2(max.x - pad - done - gap - clear - swap, min.y + pad), S(kButton), PillStyle::Text))
+        state->maskScene = !scene;
     if (PillButton("Clear", ImVec2(max.x - pad - done - gap - clear, min.y + pad), S(kButton), PillStyle::Text, !areas.empty()))
     {
         areas.clear();

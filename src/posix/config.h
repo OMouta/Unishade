@@ -106,11 +106,14 @@ void SetEffectResolution(const std::string& game, int percent);
 // into SDR. Off unless set, since most effects are made for SDR. Kept as HdrOutput beside EffectResolution.
 bool HdrOutput(const std::string& game);
 void SetHdrOutput(const std::string& game, bool on);
-// The parts of a game's picture that are its own interface, which effects leave as the game drew them: the left, top,
-// width and height of each, in fractions of the picture's. Kept as UiMask beside the game's performance settings, and
-// for every game without its own with an empty name.
-std::vector<std::array<float, 4>> UiMask(const std::string& game);
-void SetUiMask(const std::string& game, const std::vector<std::array<float, 4>>& areas);
+// The parts of a game's picture marked as its own interface, which effects leave as the game drew them, or as scene that
+// detection must leave out: the left, top, width and height of each, in fractions of the picture's, then 1 for scene.
+// Kept as UiMask beside the game's performance settings, and for every game without its own with an empty name.
+std::vector<std::array<float, 5>> UiMask(const std::string& game);
+void SetUiMask(const std::string& game, const std::vector<std::array<float, 5>>& areas);
+// Whether a game's interface is also found by itself, kept as DetectUi beside UiMask. Off unless set.
+bool DetectUi(const std::string& game);
+void SetDetectUi(const std::string& game, bool on);
 // Moves a game's own performance settings to its new name, leaving the old one without.
 void RenamePerformance(const std::string& from, const std::string& to);
 // Forgets a removed game's own performance settings.

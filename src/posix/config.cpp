@@ -452,7 +452,7 @@ std::string PerformanceSection(const std::string& game)
 }
 
 // What a game's section of performance settings holds.
-constexpr const char* kPerformanceKeys[] = { "FrameRateLimit", "EffectResolution", "HdrOutput", "UiMask" };
+constexpr const char* kPerformanceKeys[] = { "FrameRateLimit", "EffectResolution", "HdrOutput", "UiMask", "DetectUi" };
 } // namespace
 
 int FrameRateLimit(const std::string& game)
@@ -531,37 +531,56 @@ void SetHdrOutput(const std::string& game, bool on)
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
 }
 
-std::vector<std::array<float, 4>> UiMask(const std::string& game)
+std::vector<std::array<float, 5>> UiMask(const std::string& game)
 {
     const IniText ini(ReadFile(DataDirectory() / "Unishade.ini"));
-    std::vector<std::array<float, 4>> areas;
+    std::vector<std::array<float, 5>> areas;
     std::string value;
     if (!ini.Get(PerformanceSection(game), "UiMask", value))
         return areas;
-    // "left,top,width,height" for each, with semicolons between.
+    // "left,top,width,height" for each, with ",scene" after the scene ones, and semicolons between.
     for (size_t at = 0; at < value.size();)
     {
         const size_t end = std::min(value.find(';', at), value.size());
-        std::array<float, 4> area{};
-        if (sscanf(value.substr(at, end - at).c_str(), "%f,%f,%f,%f", &area[0], &area[1], &area[2], &area[3]) == 4 && area[2] > 0 && area[3] > 0)
+        const std::string text = value.substr(at, end - at);
+        std::array<float, 5> area{};
+        if (sscanf(text.c_str(), "%f,%f,%f,%f", &area[0], &area[1], &area[2], &area[3]) == 4 && area[2] > 0 && area[3] > 0)
+        {
+            area[4] = text.size() > 6 && text.compare(text.size() - 6, 6, ",scene") == 0 ? 1.0f : 0.0f;
             areas.push_back(area);
+        }
         at = end + 1;
     }
     return areas;
 }
 
-void SetUiMask(const std::string& game, const std::vector<std::array<float, 4>>& areas)
+void SetUiMask(const std::string& game, const std::vector<std::array<float, 5>>& areas)
 {
     std::string value;
-    for (const std::array<float, 4>& area : areas)
+    for (const std::array<float, 5>& area : areas)
     {
-        char text[64];
-        snprintf(text, sizeof(text), "%s%.4f,%.4f,%.4f,%.4f", value.empty() ? "" : ";", area[0], area[1], area[2], area[3]);
+        char text[80];
+        snprintf(text, sizeof(text), "%s%.4f,%.4f,%.4f,%.4f%s", value.empty() ? "" : ";", area[0], area[1], area[2], area[3], area[4] != 0 ? ",scene" : "");
         value += text;
     }
     const fs::path path = DataDirectory() / "Unishade.ini";
     IniText ini(ReadFile(path));
     ini.Set(PerformanceSection(game), "UiMask", value);
+    if (!WriteFile(path, ini.Text()))
+        Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
+}
+
+bool DetectUi(const std::string& game)
+{
+    std::string value;
+    return IniText(ReadFile(DataDirectory() / "Unishade.ini")).Get(PerformanceSection(game), "DetectUi", value) && value == "1";
+}
+
+void SetDetectUi(const std::string& game, bool on)
+{
+    const fs::path path = DataDirectory() / "Unishade.ini";
+    IniText ini(ReadFile(path));
+    ini.Set(PerformanceSection(game), "DetectUi", on ? "1" : "0");
     if (!WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
 }

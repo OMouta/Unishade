@@ -708,6 +708,7 @@ void App::RenderOverlay()
     // Add-ons work on the picture before and after effects, and not while effects are off, so comparing shows the
     // game's own.
     const bool effects = effectsEnabled && !comparing && !compareButton;
+    uimask::SetPicture(frame.serial);
     if (!effects || !addons.Frame(surface, Source(), frame.serial))
         runtime.Render(surface.commands, Source(), effects);
     FullBarrier(surface.commands);
@@ -1095,6 +1096,8 @@ bool App::MovePreset(const fs::path& preset, const fs::path& folder, std::string
 void App::UpdateUiMask()
 {
     uimask::Set(UiMask(game));
+    // Kept with the game's presets and logo. A window picked for now has no folder to keep it in.
+    uimask::Detect(DetectUi(game), game.empty() ? fs::path() : NewPresetFolder() / "interface.png");
 }
 
 void App::UpdateFrameRateLimit()
@@ -1406,15 +1409,15 @@ void App::UpdateEffectResolution()
     if (percent != effectResolution)
         Log(LogLevel::Info, "Effect resolution: %d%% for %s.", percent, game.empty() ? "every game" : game.c_str());
     effectResolution = percent;
+#ifdef _WIN32
     platform::SetFrameScale(effectResolution);
+#endif
 }
 
 #ifdef _WIN32
 void App::UpdateHdrOutput()
-#endif
 {
     const bool on = HdrOutput(game);
-#ifdef _WIN32
     if (on != hdrOutput)
         Log(LogLevel::Info, "HDR output: %s for %s.", on ? "on" : "off", game.empty() ? "every game" : game.c_str());
     hdrOutput = on;

@@ -152,6 +152,7 @@ public:
     bool comparing = false;     // effects off while the compare shortcut is held
     bool compareButton = false; // or the menu's compare button
     bool overlayVisible = false;
+    bool showUiMask = false; // the interface mask tinted over the game, for this session
     // The effect variables whose controls the menu's last frame used and had under the cursor, for effects.
     const fx::Uniform* menuActiveUniform = nullptr;
     const fx::Uniform* menuHoveredUniform = nullptr;

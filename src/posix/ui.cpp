@@ -15,6 +15,7 @@
 #include "image.h"
 #include "menu_layout.h"
 #include "theme.h"
+#include "uimask.h"
 #include "ui/kit.h"
 #include "ui/launcher_ui.h"
 
@@ -421,6 +422,30 @@ void DrawToast(App& app)
     Transform(draw, start, min + size * 0.5f, 0.8f + 0.2f * in, 0, ImVec2(0, top ? -away : away), std::min(in, 1.0f) * (1 - out));
 }
 
+// The interface mask tinted over the game, under the menu, while the setting beside the debug card asks for it.
+VkDescriptorSet maskSet = VK_NULL_HANDLE;
+uint32_t maskSetMade = 0;
+
+void DrawUiMask(App& app)
+{
+    uint32_t made = 0;
+    const GpuImage* view = app.showUiMask && app.active ? uimask::View(made) : nullptr;
+    // The old set was last drawn by the overlay's previous frame, which is done.
+    if (maskSet && (!view || made != maskSetMade))
+    {
+        ImGui_ImplVulkan_RemoveTexture(maskSet);
+        maskSet = VK_NULL_HANDLE;
+    }
+    if (!view)
+        return;
+    if (!maskSet)
+    {
+        maskSet = ImGui_ImplVulkan_AddTexture(view->view, VK_IMAGE_LAYOUT_GENERAL);
+        maskSetMade = made;
+    }
+    ImGui::GetBackgroundDrawList()->AddImage((ImTextureID)maskSet, ImVec2(0, 0), ImGui::GetIO().DisplaySize);
+}
+
 // Frame rates and frame times in a card at the top right of the game, while the setting asks for them.
 void DrawDebugInfo(App& app)
 {
@@ -764,7 +789,11 @@ std::string RenameGame(App& app, size_t index, std::string name)
     }
     RenamePerformance(key, FolderName(name));
     if (playing)
+    {
         app.game = FolderName(name);
+        // The remembered interface moved with the folder.
+        app.UpdateUiMask();
+    }
     // The preset still loaded after the game closed moves too, or a save would make the old folder again.
     if (moveFolder && currentMoves)
     {
@@ -1080,6 +1109,11 @@ public:
         {
             app.settings.debugInfo = on;
             SaveSettings(app.settings);
+        }
+        else if (which == launcher::Switch::UiMaskShown)
+        {
+            app.showUiMask = on;
+            uimask::Show(on);
         }
         else if (which == launcher::Switch::SmallTiles)
         {
@@ -1497,12 +1531,17 @@ public:
             SetFrameRateLimit(folder, value);
             app.UpdateFrameRateLimit();
         }
-#ifdef _WIN32
+        else if (setting == launcher::PerformanceSetting::DetectUi)
+        {
+            SetDetectUi(folder, value != 0);
+            app.UpdateUiMask();
+        }
         else if (setting == launcher::PerformanceSetting::EffectResolution)
         {
             SetEffectResolution(folder, value);
             app.UpdateEffectResolution();
         }
+#ifdef _WIN32
         else if (setting == launcher::PerformanceSetting::HdrOutput)
         {
             SetHdrOutput(folder, value != 0);
@@ -1513,7 +1552,7 @@ public:
             return;
         RefreshLauncher();
     }
-    void SetUiMask(size_t game, const std::vector<std::array<float, 4>>& areas) override
+    void SetUiMask(size_t game, const std::vector<std::array<float, 5>>& areas) override
     {
         if (!Listed(app, game))
             return;
@@ -1541,7 +1580,6 @@ public:
         SaveSettings(app.settings);
     }
 
-#ifdef _WIN32
     void SetMenuOpacity(float opacity) override
     {
         app.settings.menuOpacity = std::clamp(opacity, 0.2f, 1.0f);
@@ -2097,7 +2135,8 @@ launcher::Model DescribeLauncher(App& app)
                                  .enabled = saved.enabled,
                                  .running = running(saved),
                                  .performance = PerformanceOf(folder),
-                                 .uiMask = UiMask(folder) };
+                                 .uiMask = UiMask(folder),
+                                 .detectUi = DetectUi(folder) };
             const bool playing = !folder.empty() && !strcasecmp(app.game.c_str(), folder.c_str());
             const fs::path inUse = playing ? app.runtime.PresetPath() : folder.empty() ? fs::path() : GamePreset(folder);
             const auto add = [&](const fs::path& preset, const std::string& from) {
@@ -2126,7 +2165,8 @@ launcher::Model DescribeLauncher(App& app)
                                .running = true,
                                .picked = true,
                                .performance = launcherState.defaults,
-                               .uiMask = UiMask({}) };
+                               .uiMask = UiMask({}),
+                               .detectUi = DetectUi({}) };
         const fs::path& inUse = app.runtime.PresetPath();
         for (const fs::path& preset : PresetsOf(PresetsDirectory()))
             picked.presets.push_back({ preset.string(), preset.stem().string(), "All games", preset == inUse });
@@ -2202,6 +2242,7 @@ launcher::Model DescribeLauncher(App& app)
 #endif
     model.settings.autoSavePresets = app.settings.autoSavePresets;
     model.settings.debugInfo = app.settings.debugInfo;
+    model.settings.uiMaskShown = app.showUiMask;
     if (platform::OverlayCanStayBehind())
         model.settings.keepEffectsVisible = app.settings.keepEffectsVisible;
     model.settings.menuSize = static_cast<int>(std::lround(app.settings.menuScale * 100));
@@ -2589,6 +2630,7 @@ void DrawOverlay(App& app)
     scale = menuScale;
     ApplyStyle(ImGui::GetStyle());
     PushSize(14.5f);
+    DrawUiMask(app);
     DrawToast(app);
     DrawDebugInfo(app);
     ImGui::PopFont();

@@ -3511,8 +3511,8 @@ void Runtime::CopyIn(VkCommandBuffer commands, const Source& source, bool effect
         vkCmdBlitImage(commands, scaled.image, VK_IMAGE_LAYOUT_GENERAL, backbuffer.image, VK_IMAGE_LAYOUT_GENERAL, 1, &blit, VK_FILTER_LINEAR);
     }
     FullBarrier(commands);
-    if (effects)
-        uimask::Fill(commands, backbuffer);
+    // Detection learns from the picture while effects are off too, and only the fill waits for them.
+    uimask::Fill(commands, backbuffer, effects, hdr ? sdrWhite : 0);
 }
 
 void Runtime::RenderEffects(VkCommandBuffer commands, bool enabled)

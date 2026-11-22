@@ -177,6 +177,7 @@ enum class PerformanceSetting
     FrameRate,
     EffectResolution,
     HdrOutput, // 1 for on
+    DetectUi,  // 1 for on
 };
 
 // The choices Performance offers, besides a custom frame rate between the slowest and fastest.
@@ -201,9 +202,10 @@ struct Game
     bool changed = false;
     std::vector<std::string> missing;
     std::optional<Performance> performance;
-    // The parts of its picture marked as its own interface, which effects leave as the game drew them: the left, top,
-    // width and height of each, in fractions of the picture's.
-    std::vector<std::array<float, 4>> uiMask;
+    // The parts of its picture marked as its own interface, which effects leave as the game drew them, or as scene that
+    // detection must leave out: the left, top, width and height of each, in fractions of the picture's, then 1 for scene.
+    std::vector<std::array<float, 5>> uiMask;
+    bool detectUi = false; // its interface is also found by itself
 };
 
 // A game removed a moment ago, which can be put back.
@@ -251,6 +253,7 @@ struct Settings
     std::optional<bool> updateChecks;
     std::optional<Performance> performance; // for every game without its own
     std::optional<bool> debugInfo;
+    std::optional<bool> uiMaskShown; // the interface mask tinted over the game
     // Offers to download effects and presets again, where the launcher installs them. False while they download.
     std::optional<bool> downloadEffects;
     // Offers to compile the effects again, such as after one was changed.
@@ -380,6 +383,7 @@ enum class Switch
     MenuHints,
     DarkMenu,
     Effects, // the effects of the game being played, without stopping the overlay
+    UiMaskShown,
 };
 
 class Host
@@ -446,7 +450,7 @@ public:
     virtual void SetPerformance(std::optional<size_t> game, PerformanceSetting setting, int value) = 0;
 
     // As Game::uiMask.
-    virtual void SetUiMask(size_t game, const std::vector<std::array<float, 4>>& areas) = 0;
+    virtual void SetUiMask(size_t game, const std::vector<std::array<float, 5>>& areas) = 0;
 
     virtual void StepMenuSize(int step) = 0;
     // Over the game: the menu size in percent that dragging the menu's corner left, and where the menu was moved to,
