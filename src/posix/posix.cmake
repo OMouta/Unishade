@@ -262,30 +262,28 @@ foreach(face Regular SemiBold ExtraBold)
 endforeach()
 file(CONFIGURE OUTPUT "${FONTS_SOURCE}" CONTENT "${fonts_code}" @ONLY)
 
-# AMD's FSR 1 upscales effects that run below the game's resolution on Windows. Its headers go into the program the same
-# way, and ReShade's effect compiler builds them the first time it upscales. That compiler takes no prototypes, which
-# ffx_fsr1.h declares its callbacks with, and two blocks of ffx_a.h that FSR does not use call min on unsigned integers,
-# which it has no overload for, so those lines go.
-if(WIN32)
-    set(FSR_DIR "${CMAKE_BINARY_DIR}/fsr")
-    set(FSR_URL "https://raw.githubusercontent.com/GPUOpen-Effects/FidelityFX-FSR/v1.0.2/ffx-fsr")
-    fetch_file("${FSR_URL}/ffx_a.h" f60e2722fcd13989523b9164d776ab382b3692791767f3bf8bb19967f763f3fb "${FSR_DIR}/ffx_a.h")
-    fetch_file("${FSR_URL}/ffx_fsr1.h" 93c3922362ea7fc99cbcc698ca30c98de4f8c246d1fbb0b09e015ddef38ce3a5 "${FSR_DIR}/ffx_fsr1.h")
-    patch_source("${FSR_DIR}" ffx_a.h
-        " #if 1\n  // Designed to be one V_CVT_PKACCUM_U8_F32." " #if 0\n  // Designed to be one V_CVT_PKACCUM_U8_F32."
-        " #if 1\n  AU1 ABsc0ToU1" " #if 0\n  AU1 ABsc0ToU1")
-    patch_source("${FSR_DIR}" ffx_fsr1.h
-        " AF4 FsrEasuRF(AF2 p);\n AF4 FsrEasuGF(AF2 p);\n AF4 FsrEasuBF(AF2 p);\n" ""
-        " AF4 FsrRcasLoadF(ASU2 p);\n void FsrRcasInputF(inout AF1 r,inout AF1 g,inout AF1 b);\n" "")
-    set(FSR_SOURCE "${CMAKE_BINARY_DIR}/fsr.cpp")
-    file(READ "${FSR_DIR}/patched/ffx_a.h" ffx_a_bytes HEX)
-    string(REGEX REPLACE "(..)" "0x\\1," ffx_a_bytes "${ffx_a_bytes}")
-    file(READ "${FSR_DIR}/patched/ffx_fsr1.h" ffx_fsr1_bytes HEX)
-    string(REGEX REPLACE "(..)" "0x\\1," ffx_fsr1_bytes "${ffx_fsr1_bytes}")
-    file(CONFIGURE OUTPUT "${FSR_SOURCE}" CONTENT
-        "extern const unsigned char kFfxA[];\nextern const unsigned kFfxASize;\nconst unsigned char kFfxA[] = {${ffx_a_bytes}};\nconst unsigned kFfxASize = sizeof(kFfxA);\nextern const unsigned char kFfxFsr1[];\nextern const unsigned kFfxFsr1Size;\nconst unsigned char kFfxFsr1[] = {${ffx_fsr1_bytes}};\nconst unsigned kFfxFsr1Size = sizeof(kFfxFsr1);\n"
-        @ONLY)
-endif()
+# AMD's FSR 1 upscales effects that run below the game's resolution. Its headers go into the program the same way, and
+# ReShade's effect compiler builds them the first time it upscales. That compiler takes no prototypes, which ffx_fsr1.h
+# declares its callbacks with, and two blocks of ffx_a.h that FSR does not use call min on unsigned integers, which it
+# has no overload for, so those lines go.
+set(FSR_DIR "${CMAKE_BINARY_DIR}/fsr")
+set(FSR_URL "https://raw.githubusercontent.com/GPUOpen-Effects/FidelityFX-FSR/v1.0.2/ffx-fsr")
+fetch_file("${FSR_URL}/ffx_a.h" f60e2722fcd13989523b9164d776ab382b3692791767f3bf8bb19967f763f3fb "${FSR_DIR}/ffx_a.h")
+fetch_file("${FSR_URL}/ffx_fsr1.h" 93c3922362ea7fc99cbcc698ca30c98de4f8c246d1fbb0b09e015ddef38ce3a5 "${FSR_DIR}/ffx_fsr1.h")
+patch_source("${FSR_DIR}" ffx_a.h
+    " #if 1\n  // Designed to be one V_CVT_PKACCUM_U8_F32." " #if 0\n  // Designed to be one V_CVT_PKACCUM_U8_F32."
+    " #if 1\n  AU1 ABsc0ToU1" " #if 0\n  AU1 ABsc0ToU1")
+patch_source("${FSR_DIR}" ffx_fsr1.h
+    " AF4 FsrEasuRF(AF2 p);\n AF4 FsrEasuGF(AF2 p);\n AF4 FsrEasuBF(AF2 p);\n" ""
+    " AF4 FsrRcasLoadF(ASU2 p);\n void FsrRcasInputF(inout AF1 r,inout AF1 g,inout AF1 b);\n" "")
+set(FSR_SOURCE "${CMAKE_BINARY_DIR}/fsr.cpp")
+file(READ "${FSR_DIR}/patched/ffx_a.h" ffx_a_bytes HEX)
+string(REGEX REPLACE "(..)" "0x\\1," ffx_a_bytes "${ffx_a_bytes}")
+file(READ "${FSR_DIR}/patched/ffx_fsr1.h" ffx_fsr1_bytes HEX)
+string(REGEX REPLACE "(..)" "0x\\1," ffx_fsr1_bytes "${ffx_fsr1_bytes}")
+file(CONFIGURE OUTPUT "${FSR_SOURCE}" CONTENT
+    "extern const unsigned char kFfxA[];\nextern const unsigned kFfxASize;\nconst unsigned char kFfxA[] = {${ffx_a_bytes}};\nconst unsigned kFfxASize = sizeof(kFfxA);\nextern const unsigned char kFfxFsr1[];\nextern const unsigned kFfxFsr1Size;\nconst unsigned char kFfxFsr1[] = {${ffx_fsr1_bytes}};\nconst unsigned kFfxFsr1Size = sizeof(kFfxFsr1);\n"
+    @ONLY)
 
 # The official add-on list goes into the program too, with the SHA-256 of the add-ons this build makes, so they are
 # official to the Unishade built with them. Each one goes in OFFICIAL_ADDONS_BINARIES as its file name, =, and the
@@ -310,6 +308,7 @@ set(POSIX_SOURCES
     "${OFFICIAL_ADDONS_SOURCE}"
     "${POSIX_DIR}/addons.cpp"
     "${POSIX_DIR}/app.cpp"
+    "${FSR_SOURCE}"
     "${POSIX_DIR}/backdrop.cpp"
     "${POSIX_DIR}/config.cpp"
     "${POSIX_DIR}/effects.cpp"
@@ -324,12 +323,13 @@ set(POSIX_SOURCES
     # The launcher every platform shares.
     "${POSIX_DIR}/../ui/kit.cpp"
     "${POSIX_DIR}/../ui/launcher_ui.cpp"
+    "${POSIX_DIR}/upscale.cpp"
     "${POSIX_DIR}/../ui/tray.cpp")
 if(APPLE)
     list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_macos.mm" "${POSIX_DIR}/emoji_macos.cpp")
 elseif(WIN32)
     # Effects download through WinHTTP, with the same code as Setup.
-    list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_win32.cpp" "${POSIX_DIR}/../net.cpp" "${POSIX_DIR}/upscale.cpp" "${FSR_SOURCE}"
+    list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_win32.cpp" "${POSIX_DIR}/../net.cpp"
         "${POSIX_DIR}/discord_win32.cpp" "${POSIX_DIR}/../update.cpp")
 else()
     list(APPEND POSIX_SOURCES "${POSIX_DIR}/platform_x11.cpp")

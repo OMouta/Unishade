@@ -458,11 +458,9 @@ void DrawDebugInfo(App& app)
     else
         rows.push_back({ "Frame time", "Measuring", kMist });
     snprintf(text, sizeof(text), "%u x %u", app.runtime.Width(), app.runtime.Height());
-#ifdef _WIN32
-    // The picture is already the smaller one where effects run below the game's size.
+    // The effects' size is already the smaller one where effects run below the game's size.
     if (app.effectResolution != 100)
         snprintf(text, sizeof(text), "%u x %u at %d%%", app.runtime.Width(), app.runtime.Height(), app.effectResolution);
-#endif
     rows.push_back({ "Picture", text, kInk });
     const auto& techniques = app.runtime.Techniques();
     snprintf(text, sizeof(text), "%d on", static_cast<int>(std::count_if(techniques.begin(), techniques.end(), [](const auto& technique) { return technique.enabled; })));
@@ -1543,6 +1541,7 @@ public:
         SaveSettings(app.settings);
     }
 
+#ifdef _WIN32
     void SetMenuOpacity(float opacity) override
     {
         app.settings.menuOpacity = std::clamp(opacity, 0.2f, 1.0f);
@@ -1813,9 +1812,8 @@ void DescribeCards(App& app, launcher::Model& model)
 // A saved game's performance settings by its folder's name, or the defaults for every game with an empty one.
 launcher::Performance PerformanceOf(const std::string& folder)
 {
-    launcher::Performance performance{ .frameRate = FrameRateLimit(folder) };
+    launcher::Performance performance{ .frameRate = FrameRateLimit(folder), .effectResolution = EffectResolution(folder) };
 #ifdef _WIN32
-    performance.effectResolution = EffectResolution(folder);
     performance.hdrOutput = HdrOutput(folder);
 #endif
     return performance;

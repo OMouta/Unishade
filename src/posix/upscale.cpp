@@ -5,7 +5,6 @@
 #include <effect_parser.hpp>
 #include <effect_preprocessor.hpp>
 
-#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -139,12 +138,18 @@ void Check(VkResult result, const char* what)
 
 uint32_t Bits(float value)
 {
-    return std::bit_cast<uint32_t>(value);
+    uint32_t bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return bits;
 }
 
 VkFormat UpscaledFormat(bool hdr)
 {
-    return hdr ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+    // MoltenVK need not support every format Vulkan requires, so 10 bits are checked, with half floats where they are
+    // missing.
+    constexpr VkFormatFeatureFlags kNeeded =
+        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+    return hdr || !gpu.Supports(VK_FORMAT_A2B10G10R10_UNORM_PACK32, kNeeded) ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_A2B10G10R10_UNORM_PACK32;
 }
 
 VkFormat SharpenedFormat(bool hdr)

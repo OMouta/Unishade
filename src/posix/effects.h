@@ -237,10 +237,12 @@ public:
     bool Init(const Settings& settings);
     void Shutdown();
 
-    // The size of the game's picture. Effects are compiled for it, so a new size compiles them again once it
-    // has stayed the same for a moment. Until the effects the preset uses have compiled for it, the ones for the
-    // size before run on the picture scaled to that size.
-    void SetSize(uint32_t width, uint32_t height);
+    // The size of the game's picture, and the size effects run at, smaller where they run below the game's resolution:
+    // the picture is then scaled down to it as it comes in. Effects are compiled for their size, so a new one compiles
+    // them again once it has stayed the same for a moment. Until the effects the preset uses have compiled for it, the
+    // ones for the size before run on the picture scaled to that size.
+    void SetSize(uint32_t pictureWidth, uint32_t pictureHeight, uint32_t effectsWidth, uint32_t effectsHeight);
+    void SetSize(uint32_t width, uint32_t height) { SetSize(width, height, width, height); }
     // The size effects run at and Output has, which stays behind SetSize while a new size waits for its effects.
     uint32_t Width() const { return width; }
     uint32_t Height() const { return height; }
@@ -308,8 +310,9 @@ public:
     const GpuImage& Output() const { return backbuffer; }
     // Reads the output back, as RGBA pixels, an HDR picture turned into SDR as capture does. Waits for the graphics card.
     std::vector<uint8_t> ReadOutput();
-    // Reads the game's own picture from an image source, as RGBA pixels, for before and after screenshots. An image source
-    // has the output's format.
+    // Reads the game's own picture at the output's size, as RGBA pixels, for before and after screenshots: from an image
+    // source, or for a picture of another size, as CopyIn scaled it last. Empty for a source in memory at the output's
+    // size, which the caller reads itself. An image source has the output's format.
     std::vector<uint8_t> ReadSource(const Source& source);
 
     // Presets. Switching compiles effects again when the preset has other preprocessor definitions.
@@ -462,10 +465,14 @@ private:
     Settings settings;
     uint32_t width = 0;
     uint32_t height = 0;
-    // Effects are compiled for one size, width by height. When the picture changes size they wait until it has
-    // settled, and the picture is scaled to theirs meanwhile.
+    // Effects are compiled for one size, width by height. When the size they should have, pictureWidth by
+    // pictureHeight, changes they wait until it has settled, and the picture is scaled to theirs meanwhile.
     uint32_t pictureWidth = 0;
     uint32_t pictureHeight = 0;
+    // The size the picture comes in at, smaller or larger than the effects' while they run below the game's
+    // resolution or wait for a new size.
+    uint32_t sourceWidth = 0;
+    uint32_t sourceHeight = 0;
     bool resizePending = false;
     std::chrono::steady_clock::time_point resizeTime;
     // The picture at its own size while that differs from the effects', which CopyIn scales from.

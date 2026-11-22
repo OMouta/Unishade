@@ -193,7 +193,8 @@ void SetCaptureIdle(bool idle);
 bool TakeFrame(Frame& frame);
 #ifdef _WIN32
 // Frames come at this percentage of the window's size from the next one on, for effects that run on a smaller
-// picture. 100 until set. Windows only, as the effect resolution is for now.
+// picture. 100 until set. Windows only: elsewhere frames stay the window's size and effects.cpp scales them down as it
+// copies them in.
 void SetFrameScale(int percent);
 // Whether an HDR game's frames stay HDR from the next one on, rather than turned into SDR, for an overlay that can show
 // them. Only frames on the graphics card do. Off until set. Windows only, the one system whose capture sees HDR.

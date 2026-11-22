@@ -1472,10 +1472,23 @@ bool Runtime::CreateTargets()
     return gpu.SubmitAndWait(commands);
 }
 
-void Runtime::SetSize(uint32_t newWidth, uint32_t newHeight)
+void Runtime::SetSize(uint32_t newSourceWidth, uint32_t newSourceHeight, uint32_t newWidth, uint32_t newHeight)
 {
+    const bool sourceChanged = newSourceWidth != sourceWidth || newSourceHeight != sourceHeight;
+    sourceWidth = newSourceWidth;
+    sourceHeight = newSourceHeight;
     if (newWidth == pictureWidth && newHeight == pictureHeight)
+    {
+        // Only the picture's own size changed, so the effects stay and it is scaled to them from its new size.
+        if (sourceChanged && width && height && !CreateScaled())
+        {
+            // Sizes are tried again from the start, by the next SetSize.
+            StopLoader();
+            width = height = pictureWidth = pictureHeight = 0;
+            resizePending = replacing = false;
+        }
         return;
+    }
     pictureWidth = newWidth;
     pictureHeight = newHeight;
     // A load for another size is no use anymore, and the one it stopped has to run again.
@@ -1505,13 +1518,12 @@ bool Runtime::CreateScaled()
     vkDeviceWaitIdle(gpu.device);
     gpu.DestroyImage(scaled);
     gpu.DestroyBuffer(scaledStaging);
-    if (pictureWidth == width && pictureHeight == height)
+    if (sourceWidth == width && sourceHeight == height)
         return true;
-    if (!gpu.CreateImage(scaled, pictureWidth, pictureHeight, 1, backbuffer.format, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) ||
-        !gpu.CreateBuffer(scaledStaging, VkDeviceSize(pictureWidth) * pictureHeight * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true))
+    if (!gpu.CreateImage(scaled, sourceWidth, sourceHeight, 1, backbuffer.format, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) ||
+        !gpu.CreateBuffer(scaledStaging, VkDeviceSize(sourceWidth) * sourceHeight * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true))
     {
-        Log(LogLevel::Warning, "Could not create a %ux%u image to scale the picture from, so effects compile for it right away.", pictureWidth,
-            pictureHeight);
+        Log(LogLevel::Warning, "Could not create a %ux%u image to scale the picture from.", sourceWidth, sourceHeight);
         return false;
     }
     VkCommandBuffer commands = gpu.BeginCommands();
@@ -1541,7 +1553,7 @@ void Runtime::SetHdr(bool on, float white)
     gpu.DestroyBuffer(scaledStaging);
     width = pictureWidth;
     height = pictureHeight;
-    if (!CreateTargets())
+    if (!CreateTargets() || !CreateScaled())
     {
         width = height = pictureWidth = pictureHeight = 0;
         resizePending = false;
@@ -1553,14 +1565,15 @@ void Runtime::SetHdr(bool on, float white)
 // Gives the images effects work on the picture's size, once no effect uses the ones for the size before.
 bool Runtime::FitPicture()
 {
-    if (pictureWidth == width && pictureHeight == height)
+    // A picture of another size needs scaled, which SetSize may have failed to make.
+    if (pictureWidth == width && pictureHeight == height && (scaled.image || (sourceWidth == width && sourceHeight == height)))
         return true;
     vkDeviceWaitIdle(gpu.device);
     gpu.DestroyImage(scaled);
     gpu.DestroyBuffer(scaledStaging);
     width = pictureWidth;
     height = pictureHeight;
-    if (CreateTargets())
+    if (CreateTargets() && CreateScaled())
         return true;
     // Sizes are tried again from the start, by the next SetSize.
     StopLoader();
@@ -3459,7 +3472,8 @@ void Runtime::CopyIn(VkCommandBuffer commands, const Source& source, bool effect
         return;
     ReleaseSetups(false);
     FullBarrier(commands);
-    // While the picture's size waits for effects of its own, it comes in at that size and is scaled to theirs.
+    // A picture of another size than the effects', below the game's resolution or waiting for effects of its own size,
+    // comes in at its size and is scaled to theirs. Halving is a linear blit's 2x2 average, a box filter.
     const bool scaling = scaled.image != VK_NULL_HANDLE;
     const GpuImage& target = scaling ? scaled : backbuffer;
     const GpuBuffer& upload = scaling ? scaledStaging : staging;
@@ -3646,7 +3660,23 @@ std::vector<uint8_t> Runtime::ReadOutput()
 
 std::vector<uint8_t> Runtime::ReadSource(const Source& source)
 {
-    return source.image ? ReadImage(source.image, source.x, source.y, source.foreign) : std::vector<uint8_t>();
+    if (!scaled.image)
+        return source.image ? ReadImage(source.image, source.x, source.y, source.foreign) : std::vector<uint8_t>();
+    // The picture CopyIn took is still in scaled, so it is scaled again into COLOR, which every frame's first pass
+    // copies the output into anyway, and read from there.
+    VkCommandBuffer commands = gpu.BeginCommands();
+    if (!commands)
+        return {};
+    FullBarrier(commands);
+    VkImageBlit blit{};
+    blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    blit.srcOffsets[1] = { int32_t(scaled.width), int32_t(scaled.height), 1 };
+    blit.dstSubresource = blit.srcSubresource;
+    blit.dstOffsets[1] = { int32_t(color.width), int32_t(color.height), 1 };
+    vkCmdBlitImage(commands, scaled.image, VK_IMAGE_LAYOUT_GENERAL, color.image, VK_IMAGE_LAYOUT_GENERAL, 1, &blit, VK_FILTER_LINEAR);
+    if (!gpu.SubmitAndWait(commands))
+        return {};
+    return ReadImage(color.image, 0, 0, false);
 }
 
 // Copies width by height pixels at (x, y) of a BGRA image, or an scRGB one while Hdr, into memory, as RGBA. Waits for

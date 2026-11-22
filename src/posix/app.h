@@ -106,11 +106,11 @@ public:
     // While the menu records a shortcut, every shortcut is let go so its keys reach the menu.
     void SuspendHotkeys(bool suspended);
     bool EffectsInstalled();
-#ifdef _WIN32
     // Reads the effect resolution of the game being played again, such as after Performance changed it. Effects run on
     // a picture this much of the game's size, upscaled to it.
     void UpdateEffectResolution();
     int effectResolution = 100;
+#ifdef _WIN32
     // Reads HDR output of the game being played again, such as after Performance changed it.
     void UpdateHdrOutput();
     bool hdrOutput = false;

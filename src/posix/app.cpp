@@ -3,9 +3,9 @@
 #include "theme.h"
 #include "ui.h"
 #include "uimask.h"
+#include "upscale.h"
 #ifdef _WIN32
 #include "discord.h"
-#include "upscale.h"
 #include "update.h"
 #endif
 
@@ -344,9 +344,7 @@ void App::Shutdown()
     }
     ReleaseGamePictures();
     runtime.Shutdown();
-#ifdef _WIN32
     ReleaseUpscaler();
-#endif
     platform::Shutdown();
     gpu.Shutdown();
 }
@@ -385,10 +383,12 @@ void App::StartCapture(const platform::Window& window)
     if (!retrying)
         Log(LogLevel::Info, "Capturing %s", window.title.c_str());
     FollowGame();
-#ifdef _WIN32
     effectResolution = EffectResolution(game);
+#ifdef _WIN32
     platform::SetFrameScale(effectResolution);
+#endif
     Log(LogLevel::Info, "Effect resolution: %d%%.", effectResolution);
+#ifdef _WIN32
     hdrOutput = HdrOutput(game);
     Log(LogLevel::Info, "HDR output: %s.", hdrOutput ? "on" : "off");
     // Now rather than at the first render, so effects do not compile for SDR first.
@@ -651,8 +651,14 @@ void App::RenderOverlay()
     runtime.SetHdr(frame.hdr, frame.sdrWhite);
 #endif
     // Effects work at the size of the game's picture. Where the graphics card cannot make room for that, the overlay
-    // hides rather than cover the game with nothing.
+    // hides rather than cover the game with nothing. Windows captures frames at the effect resolution already, and
+    // elsewhere the runtime scales them down to it as it copies them in.
+#ifdef _WIN32
     runtime.SetSize(frame.width, frame.height);
+#else
+    const uint32_t percent = static_cast<uint32_t>(effectResolution);
+    runtime.SetSize(frame.width, frame.height, std::max(frame.width * percent / 100, 1u), std::max(frame.height * percent / 100, 1u));
+#endif
     // The effects' size stays behind the picture's while a new one waits for its effects, so only none is a failure.
     if (!runtime.Width() || !runtime.Height())
     {
@@ -706,12 +712,7 @@ void App::RenderOverlay()
         runtime.Render(surface.commands, Source(), effects);
     FullBarrier(surface.commands);
     const GpuImage& output = runtime.Output();
-#ifdef _WIN32
-    const bool upscaled = Upscale(surface.commands, effectResolution, output, surface.image, surface.extent);
-#else
-    const bool upscaled = false;
-#endif
-    if (!upscaled)
+    if (!Upscale(surface.commands, effectResolution, output, surface.image, surface.extent))
     {
         VkImageBlit blit{};
         blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
@@ -1272,21 +1273,26 @@ void App::SaveScreenshot()
     const uint32_t width = runtime.Width(), height = runtime.Height();
     std::vector<uint8_t> before;
     std::vector<uint32_t> beforePixels;
-    // The game's own picture is only read at the size of the one with effects. At another size, which a lower effect
-    // resolution gives, every kind saves the picture with effects.
-    const ScreenshotKind kind = frame.width == width && frame.height == height ? screenshotKind : ScreenshotKind::Effects;
-    const bool beforeAfter = kind != ScreenshotKind::Effects;
-    if (beforeAfter && frame.image)
-        before = runtime.ReadSource(Source());
-    else if (beforeAfter && frame.memory)
+    // The game's own picture is saved at the size of the one with effects. At another size, which a lower effect
+    // resolution outside Windows or a new size waiting for its effects gives, the runtime reads it as it scaled it.
+    const bool sameSize = frame.width == width && frame.height == height;
+    if (screenshotKind != ScreenshotKind::Effects)
     {
-        // The platform's buffer goes back to it while the screenshot is written, so its rows are copied now.
-        beforePixels.resize(size_t(width) * height);
-        for (uint32_t y = 0; y < height; ++y)
-            std::memcpy(&beforePixels[size_t(y) * width], frame.memory + y * frame.stride, size_t(width) * 4);
+        if (frame.image || !sameSize)
+            before = runtime.ReadSource(Source());
+        else if (frame.memory)
+        {
+            // The platform's buffer goes back to it while the screenshot is written, so its rows are copied now.
+            beforePixels.resize(size_t(width) * height);
+            for (uint32_t y = 0; y < height; ++y)
+                std::memcpy(&beforePixels[size_t(y) * width], frame.memory + y * frame.stride, size_t(width) * 4);
+        }
+        else
+            beforePixels = frame.pixels;
     }
-    else if (beforeAfter)
-        beforePixels = frame.pixels;
+    // Without the game's own picture, every kind saves the picture with effects.
+    const ScreenshotKind kind = before.empty() && beforePixels.empty() ? ScreenshotKind::Effects : screenshotKind;
+    const bool beforeAfter = kind != ScreenshotKind::Effects;
 
     char stamp[64];
     const time_t now = time(nullptr);
@@ -1394,7 +1400,6 @@ void App::TakeScreenshots()
     }
 }
 
-#ifdef _WIN32
 void App::UpdateEffectResolution()
 {
     const int percent = EffectResolution(game);
@@ -1404,9 +1409,12 @@ void App::UpdateEffectResolution()
     platform::SetFrameScale(effectResolution);
 }
 
+#ifdef _WIN32
 void App::UpdateHdrOutput()
+#endif
 {
     const bool on = HdrOutput(game);
+#ifdef _WIN32
     if (on != hdrOutput)
         Log(LogLevel::Info, "HDR output: %s for %s.", on ? "on" : "off", game.empty() ? "every game" : game.c_str());
     hdrOutput = on;

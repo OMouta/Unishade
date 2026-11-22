@@ -35,7 +35,7 @@ The sliders button next to the power button opens the menu's **Game** tab.
 ![Frame rate and effect resolution](./images/performance.png)
 
 - **Frame rate** limits how many frames Unishade shows. A lower limit leaves more of the GPU to the game.
-- **Effect resolution**, on Windows, runs effects on a smaller picture and upscales it. Lower is faster and softer.
+- **Effect resolution** runs effects on a smaller picture and upscales it. Lower is faster and softer.
 
 These are for the game whose page is open. **Settings > Performance** sets them for every game without its own.
 
