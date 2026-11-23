@@ -666,15 +666,15 @@ void Destroy(void* addon)
 }
 
 const UnishadeAddon kAddon = {
-    UNISHADE_ADDON_VERSION,
-    kName,
-    kDescription,
-    UNISHADE_ADDON_WRITES_DEPTH,
-    kSettings,
+    sizeof(UnishadeAddon),
+    UNISHADE_API_VERSION,
+    UNISHADE_WRITES_DEPTH,
     static_cast<uint32_t>(std::size(kSettings)),
+    kSettings,
+    sizeof(UnishadeSetting),
     Create,
-    RunFrame,
     Destroy,
+    RunFrame,
 };
 } // namespace
 

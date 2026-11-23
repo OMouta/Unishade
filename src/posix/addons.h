@@ -17,6 +17,33 @@
 
 class Surface;
 
+// What add-ons ask of Unishade besides its effects, which the app answers.
+class AddonHost
+{
+public:
+    struct State
+    {
+        bool playing = false; // Unishade draws over a game
+        bool effectsOn = true;
+        bool menuOpen = false;
+        float frameRate = 0;
+        double time = 0; // seconds since Unishade started
+        std::string gameName;
+        std::string executable;
+    };
+    virtual State DescribeForAddons() = 0;
+    virtual void ShowMessage(const std::string& text) = 0;
+    virtual void SetEffectsOn(bool on) = 0;
+    virtual void TakeScreenshot() = 0;
+    // The presets the menu lists, the game's own first.
+    virtual std::vector<fs::path> ListPresets() = 0;
+    // False when the preset in use has changes to save or discard first.
+    virtual bool UsePreset(const fs::path& preset) = 0;
+
+protected:
+    ~AddonHost() = default;
+};
+
 // Add-ons, built against src/addons/unishade_addon.h. Each is a folder in the Addons folder of the data folder, with an
 // addon.ini that says what it is, as src/addon_manifest.h describes, so nothing of an add-on runs before it is wanted.
 // One whose library has the SHA-256 the official list has for its Id, src/addons/official.ini, loads without asking.
@@ -24,10 +51,10 @@ class Surface;
 // library loads without asking again.
 class Addons
 {
+public:
     struct Library;
     struct Exchange;
 
-public:
     enum class State
     {
         Pending, // not official, and the user has not said whether to load it
@@ -41,6 +68,8 @@ public:
         std::string key;
         std::string label;
         std::string tooltip;
+        std::string group; // the heading it goes under, or empty
+        std::string units;
         UnishadeSettingType type = UNISHADE_SETTING_TOGGLE;
         float min = 0;
         float max = 1;
@@ -86,9 +115,35 @@ public:
         std::string sha256; // of its library
     };
 
+    // A control an add-on draws under its settings, as UnishadeUi describes them.
+    struct Control
+    {
+        enum class Kind
+        {
+            Heading,
+            Text,
+            Progress,
+            Button,
+            Toggle,
+            Slider,
+            Integer,
+            Choice,
+            Color,
+        };
+        Kind kind = Kind::Text;
+        std::string label; // without what follows ##
+        std::string id;    // with it, which tells the add-on's controls apart
+        std::string tooltip;
+        float min = 0;
+        float max = 1;
+        size_t count = 1;
+        float value[4] = {};
+        std::vector<std::string> choices;
+    };
+
     Addons();
     ~Addons();
-    void Init(fx::Runtime& runtime);
+    void Init(fx::Runtime& runtime, AddonHost& host);
     // Stops every add-on. The graphics card must be idle.
     void Shutdown();
 
@@ -97,6 +152,18 @@ public:
     const std::vector<Addon>& List() const { return addons; }
     // Whether a loaded add-on changes the game's picture, rather than only reading it or writing depth.
     bool ChangesPicture(const Addon& addon) const;
+    // Whether a loaded add-on draws controls of its own.
+    bool HasControls(const Addon& addon) const;
+    // Has an add-on that is on draw its controls, and returns them, which stay until the next call for it. Call it
+    // for every frame they show.
+    const std::vector<Control>& Controls(const std::string& folder);
+    // What the user did with one of them, by its place among them: its new values, or a press. The add-on's next
+    // drawing tells it.
+    void UseControl(const std::string& folder, size_t control, const float* values);
+    // Whether an add-on that is on wants the keys read, for UnishadeHost.keyDown.
+    bool ReadsKeys() const;
+    // Tells every add-on that is on of something that happened.
+    void Tell(UnishadeEventType type, uint32_t value = 0, const std::string& text = {});
     void SetBypassed(const std::string& folder, bool bypassed);
     // The answer for a Pending add-on: load it or not. Either way it is kept.
     void Approve(const std::string& folder, bool load);
@@ -110,14 +177,14 @@ public:
     bool Loaded(const std::string& folder) const;
     // Kept in the current preset for an add-on that changes the picture, since it is part of the look, and in
     // Unishade.ini for any other, whose settings are about this computer. Takes as many values as the setting has. A
-    // button is pressed by setting it, whatever the value.
-    void SetSetting(const std::string& folder, size_t setting, const float* values);
+    // button is pressed by setting it, whatever the value. The add-on is told of the change unless it made it itself.
+    void SetSetting(const std::string& folder, size_t setting, const float* values, bool tell = true);
     // The add-ons the preset says are on in it that are not running here: by name where an official add-on or one in
     // the Addons folder has the Id, otherwise by Id.
     std::vector<std::string> Missing() const;
-    // Starts and stops add-ons as the calls above asked, takes settings from a preset that loaded, and calls the update
-    // of every add-on that has one. Call once per pass of the main loop, outside drawing, since stopping one prepares the
-    // effects again.
+    // Starts and stops add-ons as the calls above asked, takes settings from a preset that loaded, tells add-ons what
+    // happened since the last call, and calls the update of every add-on that has one. Call once per pass of the main
+    // loop, outside drawing, since stopping one prepares the effects again.
     void Update();
 
     // The official add-ons for this system.
@@ -139,6 +206,7 @@ public:
 
 private:
     void Load(Addon& addon);
+    void Tell(Addon& addon, UnishadeEventType type, uint32_t value, const std::string& text);
     void Start(Addon& addon);
     void Stop(Addon& addon, bool unload);
     void Fail(Addon& addon, const std::string& error);
@@ -153,6 +221,10 @@ private:
     const Official* OfficialFor(const std::string& id) const;
 
     fx::Runtime* runtime = nullptr;
+    AddonHost* host = nullptr;
+    // What add-ons were last told of.
+    AddonHost::State told;
+    uint64_t effectsGeneration = 0;
     std::vector<Addon> addons;
     std::vector<Official> official;
     std::set<std::string> paused;

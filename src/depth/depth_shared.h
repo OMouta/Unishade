@@ -16,9 +16,6 @@
 
 namespace depth
 {
-constexpr char kName[] = "Depth";
-constexpr char kDescription[] = "Estimates how far everything in the game's picture is, for effects that use depth.";
-
 // The longest side of the picture depth is estimated from, for each choice of Detail, in the multiples of 14 Depth
 // Anything V2 expects.
 constexpr int kSizes[] = { 924, 518, 392, 266 };
@@ -29,14 +26,14 @@ constexpr int kShortestSide = 224;
 constexpr auto kStatisticsInterval = std::chrono::seconds(30);
 
 inline const UnishadeSetting kSettings[] = {
-    { "Detail", "Detail", "Depth is estimated from a smaller picture. Lower is faster, and effects that use depth lose fine detail.",
-      UNISHADE_SETTING_CHOICE, 1, 0, 3, "Ultra\0High\0Medium\0Low\0" },
+    { "Detail", "Detail", UNISHADE_SETTING_CHOICE, { 1 }, 0, 3, "Ultra\0High\0Medium\0Low\0",
+      "Depth is estimated from a smaller picture. Lower is faster, and effects that use depth lose fine detail." },
 };
 
 // The longest side of the model's input for the frame's Detail setting.
 inline int LongestSide(const UnishadeFrame& frame)
 {
-    return kSizes[std::clamp(static_cast<int>(frame.settings[0]), 0, static_cast<int>(std::size(kSizes)) - 1)];
+    return kSizes[std::clamp(static_cast<int>(frame.settings[0][0]), 0, static_cast<int>(std::size(kSizes)) - 1)];
 }
 
 // The model's input size for a frame, which follows the frame's aspect ratio.

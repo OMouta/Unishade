@@ -26,17 +26,29 @@ namespace
 // Every pass keeps its own copy of the network, about 290 MB at 1582x863.
 constexpr int kMostPasses = 4;
 
+// In the order Addon::Frame reads their values.
+enum
+{
+    kStyle,
+    kIntensity,
+    kLocalTone,
+    kLocalStructure,
+    kSkinStructure,
+    kAutoMask,
+    kPassCount,
+};
+
 const UnishadeSetting kSettings[] = {
     // nvngx_dlssnr.dll 310.8.0.0 has one more look, for every style but 0 and 1. The name is Unishade's.
-    { "Style", "Style", nullptr, UNISHADE_SETTING_CHOICE, 0, 0, 2, "Natural\0Cinematic\0Soft\0" },
-    { "Intensity", "Intensity", "From the game's picture as it is to the full effect.", UNISHADE_SETTING_SLIDER, 1, 0, 1, nullptr },
+    { "Style", "Style", UNISHADE_SETTING_CHOICE, { 0 }, 0, 2, "Natural\0Cinematic\0Soft\0" },
+    { "Intensity", "Intensity", UNISHADE_SETTING_SLIDER, { 1 }, 0, 1, nullptr, "From the game's picture as it is to the full effect." },
     // The DLL does not clamp the strengths. 1 is its own default.
-    { "LocalToneStrength", "Local tone", nullptr, UNISHADE_SETTING_SLIDER, 1, 0, 2, nullptr },
-    { "LocalStructureStrength", "Structure", nullptr, UNISHADE_SETTING_SLIDER, 1, 0, 2, nullptr },
-    { "SkinStructureStrength", "Skin structure", "Structure on characters, when Auto mask is on.", UNISHADE_SETTING_SLIDER, 1, 0, 2, nullptr },
-    { "AutoMask", "Auto mask", "Finds characters, so Skin structure applies to them.", UNISHADE_SETTING_TOGGLE, 1, 0, 1, nullptr },
-    { "PassCount", "Passes", "Runs DLSS5 again on its own result. Each pass takes more of the graphics card's memory.",
-      UNISHADE_SETTING_INTEGER, 1, 1, kMostPasses, nullptr },
+    { "LocalToneStrength", "Local tone", UNISHADE_SETTING_SLIDER, { 1 }, 0, 2 },
+    { "LocalStructureStrength", "Structure", UNISHADE_SETTING_SLIDER, { 1 }, 0, 2 },
+    { "SkinStructureStrength", "Skin structure", UNISHADE_SETTING_SLIDER, { 1 }, 0, 2, nullptr, "Structure on characters, when Auto mask is on." },
+    { "AutoMask", "Auto mask", UNISHADE_SETTING_TOGGLE, { 1 }, 0, 1, nullptr, "Finds characters, so Skin structure applies to them." },
+    { "PassCount", "Passes", UNISHADE_SETTING_INTEGER, { 1 }, 1, kMostPasses, nullptr,
+      "Runs DLSS5 again on its own result. Each pass takes more of the graphics card's memory." },
 };
 
 // An HDR picture to the SDR one DLSS5 gets and back, as compute shaders. The picture is divided by SDR white, and
@@ -205,9 +217,10 @@ void Addon::Frame(const UnishadeFrame& frame)
         winrt::check_hresult(device->OpenSharedHandle(frame.color.handle, IID_PPV_ARGS(color.put())));
         winrt::check_hresult(device->OpenSharedHandle(frame.output.handle, IID_PPV_ARGS(output.put())));
     }
-    const float* values = frame.settings;
-    const Dlss5Look wanted{ static_cast<int>(values[0]), values[1], values[2], values[3], values[4], values[5] != 0,
-                            std::clamp(static_cast<int>(values[6]), 1, kMostPasses) };
+    const auto value = [&](int setting) { return frame.settings[setting][0]; };
+    const Dlss5Look wanted{ static_cast<int>(value(kStyle)), value(kIntensity),       value(kLocalTone),
+                            value(kLocalStructure),          value(kSkinStructure),   value(kAutoMask) != 0,
+                            std::clamp(static_cast<int>(value(kPassCount)), 1, kMostPasses) };
     const bool same = frame.generation == generation && frame.picture == picture && wanted.style == look.style &&
                       wanted.intensity == look.intensity && wanted.localTone == look.localTone && wanted.localStructure == look.localStructure &&
                       wanted.skinStructure == look.skinStructure && wanted.autoMask == look.autoMask && wanted.passCount == look.passCount;
@@ -410,15 +423,15 @@ void Destroy(void* addon)
 }
 
 const UnishadeAddon kAddon = {
-    UNISHADE_ADDON_VERSION,
-    "DLSS5",
-    "NVIDIA's DLSS neural rendering on the game's picture. Needs an NVIDIA RTX graphics card.",
-    UNISHADE_ADDON_CHANGES_PICTURE | UNISHADE_ADDON_TAKES_HDR,
-    kSettings,
+    sizeof(UnishadeAddon),
+    UNISHADE_API_VERSION,
+    UNISHADE_WRITES_PICTURE | UNISHADE_TAKES_HDR,
     static_cast<uint32_t>(std::size(kSettings)),
+    kSettings,
+    sizeof(UnishadeSetting),
     Create,
-    RunFrame,
     Destroy,
+    RunFrame,
 };
 } // namespace
 

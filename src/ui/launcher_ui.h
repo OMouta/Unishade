@@ -106,6 +106,11 @@ struct EffectSetting
         Drag,
         Input,
         Button, // the label on a button, which sets the setting when pressed
+        // For an add-on's own controls, which show something and take nothing: a heading over the ones that follow,
+        // the label as a paragraph, and a bar filled to floats[0] of 1.
+        Heading,
+        Text,
+        Progress,
     };
     Control control = Control::Drag;
     bool floating = true;
@@ -306,6 +311,8 @@ struct Addon
     bool bypassed = false;
     // While it is on: its settings. Each preset keeps them for one that changes the picture.
     std::vector<EffectSetting> settings;
+    // While it is on: it draws controls of its own under them, which DescribeAddonControls gives.
+    bool controls = false;
 };
 
 // An open window, in the picker.
@@ -481,6 +488,10 @@ public:
     // Has an add-on that is on leave the picture alone, or work on it again.
     virtual void BypassAddon(size_t addon, bool bypassed) = 0;
     virtual void SetAddonSetting(size_t addon, size_t setting, const EffectSetting& value) = 0;
+    // An add-on's own controls while they show. Draw is done with them before it returns, and asks again in the next
+    // frame. UseAddonControl takes what the user did with one, by its place among them.
+    virtual const std::vector<EffectSetting>* DescribeAddonControls(size_t addon) = 0;
+    virtual void UseAddonControl(size_t addon, size_t control, const EffectSetting& value) = 0;
     virtual void OpenAddonsFolder() = 0;
 
 protected:

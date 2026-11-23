@@ -203,7 +203,13 @@ private:
     bool screenshotRequested = false;
     ScreenshotKind screenshotKind = ScreenshotKind::Effects;
     bool screenshotCopy = false;
-    std::vector<std::future<std::string>> screenshots; // being written, each to the message it shows
+    // A screenshot being written: the message it shows once it is, and its file, or nothing for one that is copied.
+    struct PendingScreenshot
+    {
+        std::future<std::string> message;
+        std::string file;
+    };
+    std::vector<PendingScreenshot> screenshots;
     std::string screenshotStamp;                        // the second of the last screenshot
     int screenshotsInStamp = 0;
     // A picture size the effects could not make room for. The overlay stays hidden until the size changes.

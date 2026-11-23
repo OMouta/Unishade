@@ -543,6 +543,23 @@ Field Space(float height)
     return { height, 0, [](ImVec2, ImVec2) {} };
 }
 
+// A bar filled to fraction, after its label.
+Field Progress(const std::string& label, float fraction)
+{
+    return { S(34), 0, [=](ImVec2 min, ImVec2 size) {
+                ImDrawList* draw = ImGui::GetWindowDrawList();
+                const float middle = min.y + size.y / 2, inset = S(4.8f), half = S(4);
+                const float named = label.empty() ? 0 : std::min(Measure(label, kTextBody, true).x + S(12), size.x / 2);
+                if (!label.empty())
+                    Line(draw, min.x + inset, min.x + inset + named - S(12), middle, label, kInk, kTextBody, true);
+                const float left = min.x + inset + named, right = min.x + size.x - inset;
+                draw->AddRectFilled(ImVec2(left, middle - half), ImVec2(right, middle + half), kWell, half);
+                if (fraction > 0)
+                    draw->AddRectFilled(ImVec2(left, middle - half), ImVec2(left + std::max((right - left) * std::min(fraction, 1.0f), half * 2), middle + half),
+                                        kInk, half);
+            } };
+}
+
 // A row of choices, wide enough for its label and the choices, as one column or two.
 Field Choices(const std::string& id, const std::string& label, std::vector<const char*> choices, int selected, std::function<void(int)> pick,
               const std::string& tip, const Grid& grid)
@@ -630,6 +647,15 @@ Field SettingField(const std::string& scope, const EffectSetting& setting, size_
         if (over && resettable && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
             reset();
     };
+
+    // What an add-on shows without taking anything.
+    const float whole = grid.column * static_cast<float>(grid.columns) + S(kFieldGap) * static_cast<float>(grid.columns - 1);
+    if (setting.control == EffectSetting::Control::Heading)
+        return Heading(setting.label);
+    if (setting.control == EffectSetting::Control::Text)
+        return Note(setting.label, kMist, whole);
+    if (setting.control == EffectSetting::Control::Progress)
+        return Progress(setting.label, setting.floats[0]);
 
     if (setting.control == EffectSetting::Control::Check)
     {
@@ -1562,7 +1588,7 @@ void RainbowBox(ImDrawList* draw, ImVec2 min, ImVec2 max, float rounding)
 float MoreSheet(Frame& f, ImVec2 min, float width, float space)
 {
     const Settings& settings = f.model.settings;
-    const auto addonShown = [](const Addon& addon) { return addon.state == AddonState::On && !addon.settings.empty(); };
+    const auto addonShown = [](const Addon& addon) { return addon.state == AddonState::On && (!addon.settings.empty() || addon.controls); };
     std::vector<Tab> tabs;
     std::vector<const char*> labels;
     if (f.game && f.game->performance)
@@ -1855,10 +1881,24 @@ float MoreSheet(Frame& f, ImVec2 min, float width, float space)
             if (!addonShown(addon))
                 continue;
             fields.push_back(Heading(addon.name));
+            const std::string* group = nullptr;
             for (size_t setting = 0; setting < addon.settings.size(); ++setting)
+            {
+                // A heading over the settings that name the same group, where the group changes.
+                const std::string& named = addon.settings[setting].category;
+                if (!named.empty() && (!group || *group != named))
+                    fields.push_back(Heading(named));
+                group = &named;
                 fields.push_back(SettingField(
                     addon.id, addon.settings[setting], setting, kQuiet, grid,
                     [&f, i, setting](const EffectSetting& value) { f.host.SetAddonSetting(i, setting, value); }, {}, nullptr, nullptr));
+            }
+            // Its own controls, which it draws again for every frame they show.
+            const std::vector<EffectSetting>* controls = addon.controls ? f.host.DescribeAddonControls(i) : nullptr;
+            for (size_t control = 0; controls && control < controls->size(); ++control)
+                fields.push_back(SettingField(
+                    addon.id + "/controls", (*controls)[control], control, kQuiet, grid,
+                    [&f, i, control](const EffectSetting& value) { f.host.UseAddonControl(i, control, value); }, {}, nullptr, nullptr));
         }
         break;
     }

@@ -29,6 +29,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -48,9 +49,14 @@ namespace
 #ifndef _WIN32
 constexpr uintmax_t kAddonLimit = 1ull << 30; // as net.h has it for Windows
 #endif
-constexpr uint32_t kBeforeEffects = UNISHADE_ADDON_WRITES_DEPTH | UNISHADE_ADDON_CHANGES_PICTURE;
-constexpr uint32_t kAfterEffects = UNISHADE_ADDON_READS_RESULT | UNISHADE_ADDON_CHANGES_RESULT;
+constexpr uint32_t kBeforeEffects = UNISHADE_READS_PICTURE | UNISHADE_WRITES_PICTURE | UNISHADE_WRITES_DEPTH;
+constexpr uint32_t kAfterEffects = UNISHADE_READS_RESULT | UNISHADE_WRITES_RESULT;
 constexpr uint32_t kFrameFlags = kBeforeEffects | kAfterEffects;
+// What makes an add-on part of a preset's look.
+constexpr uint32_t kWrites = UNISHADE_WRITES_PICTURE | UNISHADE_WRITES_RESULT;
+// What an add-on and each of its settings have to say: what version 1 of the interface has. Later members are optional.
+constexpr size_t kSmallestAddon = offsetof(UnishadeAddon, ui) + sizeof(void*);
+constexpr size_t kSmallestSetting = offsetof(UnishadeSetting, units) + sizeof(char*);
 // Where Unishade.ini keeps the settings of an add-on that leaves the picture alone: this, then the add-on's Id.
 const std::string kSettingsSection = "ADDON:";
 // On the tile of an add-on that sits out an HDR picture.
@@ -58,7 +64,7 @@ constexpr char kSitsOutHdr[] = "It doesn't take HDR pictures, so it's off while 
 
 bool TakesHdr(const UnishadeAddon& addon)
 {
-    return addon.version >= 2 && (addon.flags & UNISHADE_ADDON_TAKES_HDR);
+    return (addon.flags & UNISHADE_TAKES_HDR) != 0;
 }
 
 fs::path AddonsDirectory()
@@ -140,13 +146,11 @@ void ParseValue(Addons::Setting& setting, const std::string& text)
     }
 }
 
-// Where a setting's values start in the ones frames hand the add-on.
-size_t ValueOffset(const Addons::Addon& addon, size_t setting)
+// A label as it shows: without what follows ##, which only tells controls apart.
+std::string Shown(const char* label)
 {
-    size_t offset = 0;
-    for (size_t i = 0; i < setting; ++i)
-        offset += addon.settings[i].count;
-    return offset;
+    const std::string text = label ? label : "";
+    return text.substr(0, text.find("##"));
 }
 
 #ifdef _WIN32
@@ -193,19 +197,119 @@ void CloseLibrary(void* module)
 }
 #endif
 
-// UnishadeHost first, so the host an add-on passes back to log leads to its name.
+// UnishadeHost first, so the host an add-on passes back leads to everything else. What the functions that describe
+// something hand out is kept here until the add-on asks again.
 struct HostContext
 {
     UnishadeHost host;
     char name[128];
     fx::Runtime* runtime;
+    AddonHost* app;
+    Addons* addons;
+    std::string folder; // the add-on's, in the Addons folder
+    std::string unishade;
+    UnishadeState state;
+    std::string gameName, executable, presetName, presetPath;
+    std::vector<fs::path> presets;
+    UnishadePreset preset;
+    std::string listedName, listedPath;
+    UnishadeTechnique technique;
+    UnishadeUniform uniform;
 };
+
+HostContext& ContextOf(const UnishadeHost* host)
+{
+    return *const_cast<HostContext*>(reinterpret_cast<const HostContext*>(host));
+}
 
 void HostLog(const UnishadeHost* host, UnishadeLogLevel level, const char* text)
 {
     const char* name = host ? reinterpret_cast<const HostContext*>(host)->name : "An add-on";
     const LogLevel kind = level == UNISHADE_LOG_ERROR ? LogLevel::Error : level == UNISHADE_LOG_WARNING ? LogLevel::Warning : LogLevel::Info;
     Log(kind, "%s: %s", name, text ? text : "");
+}
+
+// Unishade itself.
+
+const UnishadeState* HostGetState(const UnishadeHost* host)
+{
+    HostContext& context = ContextOf(host);
+    const AddonHost::State now = context.app->DescribeForAddons();
+    const fx::Runtime& runtime = *context.runtime;
+    context.gameName = now.gameName;
+    context.executable = now.executable;
+    context.presetName = runtime.PresetPath().stem().string();
+    context.presetPath = runtime.PresetPath().string();
+    UnishadeState& state = context.state;
+    state = {};
+    state.size = sizeof(state);
+    state.playing = now.playing;
+    state.effectsOn = now.effectsOn;
+    state.menuOpen = now.menuOpen;
+    state.hdr = now.playing && runtime.Hdr();
+    state.width = now.playing ? runtime.Width() : 0;
+    state.height = now.playing ? runtime.Height() : 0;
+    state.frameRate = now.frameRate;
+    state.gameName = context.gameName.c_str();
+    state.executable = context.executable.c_str();
+    state.presetName = context.presetName.c_str();
+    state.presetPath = context.presetPath.c_str();
+    state.time = now.time;
+    return &state;
+}
+
+void HostShowMessage(const UnishadeHost* host, const char* text)
+{
+    if (text && *text)
+        ContextOf(host).app->ShowMessage(text);
+}
+
+void HostSetEffectsOn(const UnishadeHost* host, bool on)
+{
+    ContextOf(host).app->SetEffectsOn(on);
+}
+
+void HostTakeScreenshot(const UnishadeHost* host)
+{
+    ContextOf(host).app->TakeScreenshot();
+}
+
+bool HostKeyDown(const UnishadeHost* host, uint32_t key)
+{
+    const fx::EffectInput& input = ContextOf(host).runtime->input;
+    return key < input.keysDown.size() && input.keysDown[key];
+}
+
+void HostSetSetting(const UnishadeHost* host, uint32_t setting, const float* values)
+{
+    HostContext& context = ContextOf(host);
+    if (values)
+        context.addons->SetSetting(context.folder, setting, values, false);
+}
+
+uint32_t HostPresetCount(const UnishadeHost* host)
+{
+    HostContext& context = ContextOf(host);
+    context.presets = context.app->ListPresets();
+    return static_cast<uint32_t>(context.presets.size());
+}
+
+const UnishadePreset* HostGetPreset(const UnishadeHost* host, uint32_t index)
+{
+    HostContext& context = ContextOf(host);
+    if (index >= context.presets.size())
+        return nullptr;
+    context.listedName = context.presets[index].stem().string();
+    context.listedPath = context.presets[index].string();
+    context.preset = { sizeof(UnishadePreset), context.presets[index] == context.runtime->PresetPath(), context.listedName.c_str(),
+                       context.listedPath.c_str() };
+    return &context.preset;
+}
+
+bool HostUsePreset(const UnishadeHost* host, uint32_t index)
+{
+    HostContext& context = ContextOf(host);
+    return index < context.presets.size() && context.app->UsePreset(context.presets[index]);
 }
 
 // The host's effect functions, on fx::Runtime.
@@ -247,22 +351,41 @@ uint32_t HostTechniqueCount(const UnishadeHost* host)
     return static_cast<uint32_t>(RuntimeOf(host).Techniques().size());
 }
 
-bool HostGetTechnique(const UnishadeHost* host, uint32_t index, UnishadeTechnique* description)
+const UnishadeTechnique* HostGetTechnique(const UnishadeHost* host, uint32_t index)
 {
     fx::Runtime& runtime = RuntimeOf(host);
-    if (!description || index >= runtime.Techniques().size())
-        return false;
+    if (index >= runtime.Techniques().size())
+        return nullptr;
     const fx::Technique& technique = runtime.Techniques()[index];
-    description->name = technique.name.c_str();
-    description->file = runtime.Effects()[technique.effect].file.c_str();
-    description->effect = static_cast<uint32_t>(technique.effect);
-    description->enabled = technique.enabled;
-    return true;
+    UnishadeTechnique& description = ContextOf(host).technique;
+    description = { sizeof(UnishadeTechnique), static_cast<uint32_t>(technique.effect), technique.name.c_str(),
+                    runtime.Effects()[technique.effect].file.c_str(), technique.enabled };
+    return &description;
+}
+
+uint32_t HostFindTechnique(const UnishadeHost* host, const char* name, const char* file)
+{
+    fx::Runtime& runtime = RuntimeOf(host);
+    const std::vector<fx::Technique>& techniques = runtime.Techniques();
+    for (size_t i = 0; name && i < techniques.size(); ++i)
+        if (techniques[i].name == name && (!file || runtime.Effects()[techniques[i].effect].file == file))
+            return static_cast<uint32_t>(i);
+    return UNISHADE_NONE;
 }
 
 void HostSetTechnique(const UnishadeHost* host, uint32_t index, bool enabled)
 {
-    RuntimeOf(host).SetEnabled(index, enabled);
+    if (index < RuntimeOf(host).Techniques().size())
+        RuntimeOf(host).SetEnabled(index, enabled);
+}
+
+uint32_t HostFindEffect(const UnishadeHost* host, const char* file)
+{
+    const std::vector<fx::Effect>& effects = RuntimeOf(host).Effects();
+    for (size_t i = 0; file && i < effects.size(); ++i)
+        if (effects[i].file == file)
+            return static_cast<uint32_t>(i);
+    return UNISHADE_NONE;
 }
 
 uint32_t HostUniformCount(const UnishadeHost* host, uint32_t effect)
@@ -271,21 +394,39 @@ uint32_t HostUniformCount(const UnishadeHost* host, uint32_t effect)
     return owner ? static_cast<uint32_t>(std::count_if(owner->uniforms.begin(), owner->uniforms.end(), Kept)) : 0;
 }
 
-bool HostGetUniform(const UnishadeHost* host, uint32_t effect, uint32_t index, UnishadeUniform* description)
+const UnishadeUniform* HostGetUniform(const UnishadeHost* host, uint32_t effect, uint32_t index)
 {
     fx::Effect* owner = nullptr;
     const fx::Uniform* uniform = UniformAt(host, effect, index, owner);
-    if (!uniform || !description)
-        return false;
-    description->name = uniform->name.c_str();
-    description->type = uniform->type.is_boolean()        ? UNISHADE_VALUE_BOOL
-                        : uniform->type.is_floating_point() ? UNISHADE_VALUE_FLOAT
-                        : uniform->type.is_signed()         ? UNISHADE_VALUE_INT
-                                                            : UNISHADE_VALUE_UINT;
-    description->count = static_cast<uint32_t>(fx::ComponentCount(*uniform));
-    description->min = uniform->min;
-    description->max = uniform->max;
-    return true;
+    if (!uniform)
+        return nullptr;
+    UnishadeUniform& description = ContextOf(host).uniform;
+    description = {};
+    description.size = sizeof(UnishadeUniform);
+    description.name = uniform->name.c_str();
+    description.type = uniform->type.is_boolean()        ? UNISHADE_VALUE_BOOL
+                       : uniform->type.is_floating_point() ? UNISHADE_VALUE_FLOAT
+                       : uniform->type.is_signed()         ? UNISHADE_VALUE_INT
+                                                           : UNISHADE_VALUE_UINT;
+    description.count = static_cast<uint32_t>(fx::ComponentCount(*uniform));
+    description.min = uniform->min;
+    description.max = uniform->max;
+    return &description;
+}
+
+uint32_t HostFindUniform(const UnishadeHost* host, uint32_t effect, const char* name)
+{
+    const fx::Effect* owner = EffectAt(host, effect);
+    uint32_t index = 0;
+    if (owner && name)
+        for (const fx::Uniform& uniform : owner->uniforms)
+            if (Kept(uniform))
+            {
+                if (uniform.name == name)
+                    return index;
+                ++index;
+            }
+    return UNISHADE_NONE;
 }
 
 uint32_t HostGetValue(const UnishadeHost* host, uint32_t effect, uint32_t index, float* values, uint32_t count)
@@ -296,6 +437,21 @@ uint32_t HostGetValue(const UnishadeHost* host, uint32_t effect, uint32_t index,
         return 0;
     if (values)
         RuntimeOf(host).GetValue(*owner, *uniform, values, count);
+    return static_cast<uint32_t>(fx::ComponentCount(*uniform));
+}
+
+uint32_t HostGetIntValue(const UnishadeHost* host, uint32_t effect, uint32_t index, int32_t* values, uint32_t count)
+{
+    fx::Effect* owner = nullptr;
+    const fx::Uniform* uniform = UniformAt(host, effect, index, owner);
+    if (!uniform)
+        return 0;
+    if (values)
+    {
+        std::vector<int> read(count);
+        RuntimeOf(host).GetValue(*owner, *uniform, read.data(), count);
+        std::copy(read.begin(), read.end(), values);
+    }
     return static_cast<uint32_t>(fx::ComponentCount(*uniform));
 }
 
@@ -312,19 +468,42 @@ bool HostSetValue(const UnishadeHost* host, uint32_t effect, uint32_t index, con
     }
     return true;
 }
+
+bool HostSetIntValue(const UnishadeHost* host, uint32_t effect, uint32_t index, const int32_t* values, uint32_t count)
+{
+    fx::Effect* owner = nullptr;
+    const fx::Uniform* uniform = UniformAt(host, effect, index, owner);
+    if (!uniform)
+        return false;
+    if (values && count)
+    {
+        const std::vector<int> given(values, values + count);
+        RuntimeOf(host).SetValue(*owner, *uniform, given.data(), count);
+        RuntimeOf(host).SetDirty();
+    }
+    return true;
+}
 } // namespace
 
 struct Addons::Library
 {
     void* module = nullptr;
+    // What the library says it is, once it loaded: a copy, in which whatever an older add-on does not have is empty.
     const UnishadeAddon* addon = nullptr;
+    UnishadeAddon described{};
     void* instance = nullptr;
     HostContext context{};
     std::string folder;
     std::string dataFolder;
+    // Four values for each setting, as frames and updates hand them over.
     std::vector<float> values;
+    // The controls the add-on drew last, and what the user did with them since, by label, for its next drawing.
+    std::vector<Control> controls;
+    std::map<std::string, std::array<float, 4>> used;
     // frame failed, so Update stops it
     bool stopping = false;
+
+    const float (*Values() const)[4] { return reinterpret_cast<const float (*)[4]>(values.data()); }
 
     ~Library()
     {
@@ -335,20 +514,20 @@ struct Addons::Library
 
 namespace
 {
-// One that changes the picture and takes SDR pictures only, so it sits out an HDR one.
+// One that writes the picture or the result and takes SDR pictures only, so it sits out an HDR one.
 bool SitsOutHdr(const Addons::Addon& addon)
 {
     const UnishadeAddon* described = addon.library->addon;
-    return described && (described->flags & (UNISHADE_ADDON_CHANGES_PICTURE | UNISHADE_ADDON_CHANGES_RESULT)) && !TakesHdr(*described);
+    return described && (described->flags & kWrites) && !TakesHdr(*described);
 }
 
 // A button press is for one call, of frame or update.
 void ClearPresses(Addons::Addon& addon)
 {
     std::vector<float>& values = addon.library->values;
-    for (size_t i = 0, offset = 0; i < addon.settings.size(); offset += addon.settings[i++].count)
-        if (addon.settings[i].type == UNISHADE_SETTING_BUTTON && offset < values.size())
-            values[offset] = 0;
+    for (size_t i = 0; i < addon.settings.size() && i * 4 < values.size(); ++i)
+        if (addon.settings[i].type == UNISHADE_SETTING_BUTTON)
+            values[i * 4] = 0;
 }
 
 // Makes the image an HDR picture is drawn into as SDR, before it is copied to add-ons.
@@ -360,6 +539,128 @@ void MakeConvert(backdrop::Target& target, uint32_t width, uint32_t height)
     const bool made = backdrop::Make(setup, target, width, height);
     if (!gpu.SubmitAndWait(setup) || !made)
         throw std::runtime_error("The graphics card could not prepare an SDR picture for add-ons.");
+}
+
+// The controls an add-on draws, which UnishadeUi's functions add to its library's. UnishadeUi first, so the ui an
+// add-on passes back leads to it.
+struct UiContext
+{
+    UnishadeUi ui;
+    Addons::Library* library;
+};
+
+Addons::Control& Add(const UnishadeUi* ui, Addons::Control::Kind kind, const char* label)
+{
+    std::vector<Addons::Control>& controls = reinterpret_cast<const UiContext*>(ui)->library->controls;
+    controls.push_back({ kind, Shown(label), label ? label : "" });
+    return controls.back();
+}
+
+// What the user did with the control with a label since the add-on last drew it, if anything.
+bool Used(const UnishadeUi* ui, const char* label, float* values)
+{
+    auto& used = reinterpret_cast<const UiContext*>(ui)->library->used;
+    const auto entry = used.find(label ? label : "");
+    if (entry == used.end())
+        return false;
+    std::copy(entry->second.begin(), entry->second.end(), values);
+    used.erase(entry);
+    return true;
+}
+
+void UiHeading(const UnishadeUi* ui, const char* text)
+{
+    Add(ui, Addons::Control::Kind::Heading, text);
+}
+
+void UiText(const UnishadeUi* ui, const char* text)
+{
+    // Text is not a label: all of it shows.
+    Add(ui, Addons::Control::Kind::Text, nullptr).label = text ? text : "";
+}
+
+void UiProgress(const UnishadeUi* ui, const char* label, float fraction)
+{
+    Add(ui, Addons::Control::Kind::Progress, label).value[0] = std::isfinite(fraction) ? std::clamp(fraction, 0.0f, 1.0f) : 0;
+}
+
+bool UiButton(const UnishadeUi* ui, const char* label)
+{
+    float values[4];
+    Add(ui, Addons::Control::Kind::Button, label);
+    return Used(ui, label, values);
+}
+
+bool UiToggle(const UnishadeUi* ui, const char* label, bool* value)
+{
+    float values[4];
+    const bool changed = value && Used(ui, label, values);
+    if (changed)
+        *value = values[0] != 0;
+    Add(ui, Addons::Control::Kind::Toggle, label).value[0] = value && *value ? 1.0f : 0.0f;
+    return changed;
+}
+
+bool UiSlider(const UnishadeUi* ui, const char* label, float* value, float min, float max)
+{
+    float values[4];
+    const bool changed = value && Used(ui, label, values) && std::isfinite(values[0]);
+    if (changed)
+        *value = std::clamp(values[0], std::min(min, max), std::max(min, max));
+    Addons::Control& control = Add(ui, Addons::Control::Kind::Slider, label);
+    control.min = std::min(min, max);
+    control.max = std::max(min, max);
+    control.value[0] = value ? *value : 0;
+    return changed;
+}
+
+bool UiInteger(const UnishadeUi* ui, const char* label, int32_t* value, int32_t min, int32_t max)
+{
+    float values[4];
+    const bool changed = value && Used(ui, label, values) && std::isfinite(values[0]);
+    if (changed)
+        *value = std::clamp(static_cast<int32_t>(std::lround(values[0])), std::min(min, max), std::max(min, max));
+    Addons::Control& control = Add(ui, Addons::Control::Kind::Integer, label);
+    control.min = static_cast<float>(std::min(min, max));
+    control.max = static_cast<float>(std::max(min, max));
+    control.value[0] = value ? static_cast<float>(*value) : 0;
+    return changed;
+}
+
+bool UiChoice(const UnishadeUi* ui, const char* label, int32_t* value, const char* choices)
+{
+    std::vector<std::string> list;
+    for (const char* choice = choices; choice && *choice; choice += std::strlen(choice) + 1)
+        list.emplace_back(choice);
+    float values[4];
+    const bool changed = value && Used(ui, label, values) && std::isfinite(values[0]) && !list.empty();
+    if (changed)
+        *value = std::clamp(static_cast<int32_t>(std::lround(values[0])), 0, static_cast<int32_t>(list.size()) - 1);
+    Addons::Control& control = Add(ui, Addons::Control::Kind::Choice, label);
+    control.choices = std::move(list);
+    control.value[0] = value ? static_cast<float>(*value) : 0;
+    return changed;
+}
+
+bool UiColor(const UnishadeUi* ui, const char* label, float* value, bool alpha)
+{
+    const size_t count = alpha ? 4 : 3;
+    float values[4];
+    const bool changed = value && Used(ui, label, values);
+    for (size_t i = 0; changed && i < count; ++i)
+        value[i] = std::isfinite(values[i]) ? std::clamp(values[i], 0.0f, 1.0f) : value[i];
+    Addons::Control& control = Add(ui, Addons::Control::Kind::Color, label);
+    control.count = count;
+    for (size_t i = 0; value && i < count; ++i)
+        control.value[i] = value[i];
+    return changed;
+}
+
+void UiTooltip(const UnishadeUi* ui, const char* text)
+{
+    std::vector<Addons::Control>& controls = reinterpret_cast<const UiContext*>(ui)->library->controls;
+    if (!controls.empty() && text)
+        controls.back().tooltip = text;
 }
 } // namespace
 
@@ -1208,9 +1509,12 @@ Addons::Addons() = default;
 
 Addons::~Addons() = default;
 
-void Addons::Init(fx::Runtime& effects)
+void Addons::Init(fx::Runtime& effects, AddonHost& app)
 {
     runtime = &effects;
+    host = &app;
+    told = app.DescribeForAddons();
+    effectsGeneration = effects.EffectsGeneration();
     official = ReadOfficialList();
     for (const Official& addon : official)
         Log(LogLevel::Info, "Official add-on: %s %s, %s.", addon.manifest.id.c_str(), addon.manifest.version.c_str(), addon.manifest.library.c_str());
@@ -1296,9 +1600,9 @@ void Addons::Scan()
         }
         else if (known->manifest.library.empty())
             known->problem = "It isn't made for this system.";
-        else if (known->manifest.api > UNISHADE_ADDON_VERSION)
+        else if (known->manifest.api > UNISHADE_API_VERSION)
             known->problem = "It was built for version " + std::to_string(known->manifest.api) + " of Unishade's add-ons, and this Unishade has versions 1 to " +
-                             std::to_string(UNISHADE_ADDON_VERSION) + ". Update Unishade to use it.";
+                             std::to_string(UNISHADE_API_VERSION) + ". Update Unishade to use it.";
         else if (!fs::is_regular_file(folder / fs::path(known->manifest.library), error))
             known->problem = "Its library, " + known->manifest.library + ", is missing.";
         else if (const Official* listed = OfficialFor(known->manifest.id))
@@ -1306,9 +1610,11 @@ void Addons::Scan()
             known->official = Sha256(ReadFile(folder / fs::path(known->manifest.library))) == listed->sha256;
             known->replaceable = !known->official;
         }
-        if (added)
-            Log(LogLevel::Info, "Add-on found: %s %s in %s, official=%d%s%s.", known->manifest.id.c_str(), known->manifest.version.c_str(),
-                entry.folder.c_str(), known->official, known->problem.empty() ? "" : ", ", known->problem.c_str());
+        if (added && known->problem.empty())
+            Log(LogLevel::Info, "Add-on found: %s %s in %s, official=%d.", known->manifest.id.c_str(), known->manifest.version.c_str(),
+                entry.folder.c_str(), known->official);
+        else if (added)
+            Log(LogLevel::Info, "The add-on in %s cannot be used: %s", entry.folder.c_str(), known->problem.c_str());
         // Update starts the ones that are wanted, and fails the ones that cannot be used.
         if (known->state == State::Pending || known->state == State::Disabled || (unusable && known->problem.empty()))
             known->state = !known->official && Answer(*known) < 0 ? State::Pending : State::Disabled;
@@ -1413,34 +1719,38 @@ bool Addons::Loaded(const std::string& folder) const
     return std::any_of(addons.begin(), addons.end(), [&](const Addon& addon) { return addon.folder == folder && addon.library->module; });
 }
 
-void Addons::SetSetting(const std::string& folder, size_t index, const float* values)
+void Addons::SetSetting(const std::string& folder, size_t index, const float* values, bool tell)
 {
     Addon* addon = Find(folder);
     if (!addon || index >= addon->settings.size())
         return;
     Setting& setting = addon->settings[index];
     std::vector<float>& handed = addon->library->values;
-    const size_t offset = ValueOffset(*addon, index);
     // A press is only for the add-on's next frame or update call, which clears it.
     if (setting.type == UNISHADE_SETTING_BUTTON)
     {
-        if (offset < handed.size())
-            handed[offset] = 1;
+        if (index * 4 < handed.size())
+            handed[index * 4] = 1;
         return;
     }
     for (size_t i = 0; i < setting.count; ++i)
     {
         setting.value[i] = ValidValue(setting, values[i], i);
-        if (offset + i < handed.size())
-            handed[offset + i] = setting.value[i];
+        if (index * 4 + i < handed.size())
+            handed[index * 4 + i] = setting.value[i];
     }
     if (ChangesPicture(*addon))
-        return WritePreset(*addon);
-    const fs::path path = DataDirectory() / "Unishade.ini";
-    IniText ini(ReadFile(path));
-    ini.Set(kSettingsSection + addon->manifest.id, setting.key, FormatValue(setting));
-    if (!WriteFile(path, ini.Text()))
-        Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
+        WritePreset(*addon);
+    else
+    {
+        const fs::path path = DataDirectory() / "Unishade.ini";
+        IniText ini(ReadFile(path));
+        ini.Set(kSettingsSection + addon->manifest.id, setting.key, FormatValue(setting));
+        if (!WriteFile(path, ini.Text()))
+            Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
+    }
+    if (tell)
+        Tell(*addon, UNISHADE_EVENT_SETTING_CHANGED, static_cast<uint32_t>(index), setting.key);
 }
 
 void Addons::WritePreset(const Addon& addon)
@@ -1472,13 +1782,14 @@ std::vector<std::string> Addons::Missing() const
 void Addons::ReadSettings(Addon& addon)
 {
     Library& library = *addon.library;
-    library.values.clear();
+    library.values.assign(addon.settings.size() * 4, 0.0f);
     const bool look = ChangesPicture(addon);
     if (look)
         addon.bypassed = !PresetIni::Listed(runtime->PresetValue("", "Addons"), addon.manifest.id);
     const IniText ini(look ? std::string() : ReadFile(DataDirectory() / "Unishade.ini"));
-    for (Setting& setting : addon.settings)
+    for (size_t i = 0; i < addon.settings.size(); ++i)
     {
+        Setting& setting = addon.settings[i];
         // Nothing keeps a button, which takes its default, 0.
         std::string text;
         if (setting.type != UNISHADE_SETTING_BUTTON && look)
@@ -1486,7 +1797,7 @@ void Addons::ReadSettings(Addon& addon)
         else if (setting.type != UNISHADE_SETTING_BUTTON)
             ini.Get(kSettingsSection + addon.manifest.id, setting.key, text);
         ParseValue(setting, text);
-        library.values.insert(library.values.end(), setting.value, setting.value + setting.count);
+        std::copy(setting.value, setting.value + setting.count, library.values.begin() + i * 4);
     }
 }
 
@@ -1503,45 +1814,48 @@ void Addons::Load(Addon& addon)
         Fail(addon, reason);
     };
     const auto get = reinterpret_cast<UnishadeGetAddonFunction>(LibrarySymbol(library.module, "UnishadeGetAddon"));
-    const UnishadeAddon* described = get ? get() : nullptr;
-    if (!described)
+    const UnishadeAddon* given = get ? get() : nullptr;
+    if (!given)
         return refuse("It is not a Unishade add-on: it has no UnishadeGetAddon.");
-    if (described->version < 1 || described->version > UNISHADE_ADDON_VERSION)
-        return refuse("It was built for version " + std::to_string(described->version) + " of Unishade's add-ons, and this Unishade has versions 1 to " +
-                      std::to_string(UNISHADE_ADDON_VERSION) + ".");
-    if (!described->create || !described->destroy || ((described->flags & kFrameFlags) && !described->frame) ||
-        (described->settingCount && !described->settings))
+    if (given->size < kSmallestAddon)
+        return refuse("It is not an add-on this Unishade can use: what it says of itself is too short.");
+    // A newer add-on's later members are left out, and an older one's are empty.
+    UnishadeAddon& described = library.described;
+    described = {};
+    std::memcpy(&described, given, std::min<size_t>(given->size, sizeof(described)));
+    if (described.api < 1 || described.api > UNISHADE_API_VERSION)
+        return refuse("It was built for version " + std::to_string(described.api) + " of Unishade's add-ons, and this Unishade has versions 1 to " +
+                      std::to_string(UNISHADE_API_VERSION) + ".");
+    if (!described.create || !described.destroy || ((described.flags & kFrameFlags) && !described.frame) ||
+        (described.settingCount && (!described.settings || described.settingSize < kSmallestSetting)))
         return refuse("It does not say what to call.");
-    library.addon = described;
+    library.addon = &described;
     addon.settings.clear();
-    // Version 1's settings end where defaultColor starts, so its array is read with that size.
-    const bool colors = described->version >= 2;
-    const size_t size = colors ? sizeof(UnishadeSetting) : offsetof(UnishadeSetting, defaultColor);
-    for (uint32_t i = 0; i < described->settingCount; ++i)
+    for (uint32_t i = 0; i < described.settingCount; ++i)
     {
-        const UnishadeSetting& declared = *reinterpret_cast<const UnishadeSetting*>(reinterpret_cast<const char*>(described->settings) + i * size);
+        // Each is as long as the add-on's header had it.
+        UnishadeSetting declared{};
+        std::memcpy(&declared, reinterpret_cast<const char*>(described.settings) + size_t(i) * described.settingSize,
+                    std::min<size_t>(described.settingSize, sizeof(declared)));
         Setting setting;
         setting.key = declared.key ? declared.key : "";
         setting.label = declared.label ? declared.label : setting.key;
         setting.tooltip = declared.tooltip ? declared.tooltip : "";
+        setting.group = declared.group ? declared.group : "";
+        setting.units = declared.units ? declared.units : "";
         setting.type = declared.type;
         setting.min = declared.min;
         setting.max = declared.max;
         for (const char* choice = declared.choices; choice && *choice; choice += std::strlen(choice) + 1)
             setting.choices.emplace_back(choice);
-        if (IsColor(setting.type) && colors)
-        {
-            setting.count = setting.type == UNISHADE_SETTING_COLOR_RGBA ? 4 : 3;
-            for (size_t c = 0; c < setting.count; ++c)
-                setting.defaultValue[c] = ValidValue(setting, declared.defaultColor[c], c);
-        }
-        else
-            setting.defaultValue[0] = ValidValue(setting, declared.defaultValue);
+        setting.count = setting.type == UNISHADE_SETTING_COLOR_RGBA ? 4 : setting.type == UNISHADE_SETTING_COLOR_RGB ? 3 : 1;
+        for (size_t c = 0; c < setting.count; ++c)
+            setting.defaultValue[c] = ValidValue(setting, declared.defaultValue[c], c);
         addon.settings.push_back(std::move(setting));
     }
     ReadSettings(addon);
-    Log(LogLevel::Info, "Add-on loaded: %s from %s, flags=%u, settings=%u.", addon.manifest.id.c_str(), path.string().c_str(), described->flags,
-        described->settingCount);
+    Log(LogLevel::Info, "Add-on loaded: %s from %s, api=%u, flags=%u, settings=%u.", addon.manifest.id.c_str(), path.string().c_str(), described.api,
+        described.flags, described.settingCount);
 }
 
 void Addons::Start(Addon& addon)
@@ -1561,31 +1875,55 @@ void Addons::Start(Addon& addon)
 #endif
     library.folder = (AddonsDirectory() / fs::path(addon.folder)).string() + static_cast<char>(fs::path::preferred_separator);
     library.dataFolder = DataDirectory().string() + static_cast<char>(fs::path::preferred_separator);
-    std::snprintf(library.context.name, sizeof(library.context.name), "%s", addon.manifest.name.c_str());
-    UnishadeHost& host = library.context.host;
-    host.version = UNISHADE_ADDON_VERSION;
+    HostContext& context = library.context;
+    std::snprintf(context.name, sizeof(context.name), "%s", addon.manifest.name.c_str());
+    context.runtime = runtime;
+    context.app = this->host;
+    context.addons = this;
+    context.folder = addon.folder;
+    context.unishade = UNISHADE_VERSION;
+    UnishadeHost& host = context.host;
+    host = {};
+    host.size = sizeof(host);
+    host.version = UNISHADE_API_VERSION;
+    host.unishade = context.unishade.c_str();
     host.folder = library.folder.c_str();
     host.dataFolder = library.dataFolder.c_str();
     host.log = HostLog;
+    host.getState = HostGetState;
+    host.showMessage = HostShowMessage;
+    host.setEffectsOn = HostSetEffectsOn;
+    host.takeScreenshot = HostTakeScreenshot;
+    host.keyDown = HostKeyDown;
+    host.setSetting = HostSetSetting;
+    host.presetCount = HostPresetCount;
+    host.getPreset = HostGetPreset;
+    host.usePreset = HostUsePreset;
     host.effectsGeneration = HostEffectsGeneration;
     host.techniqueCount = HostTechniqueCount;
     host.getTechnique = HostGetTechnique;
+    host.findTechnique = HostFindTechnique;
     host.setTechnique = HostSetTechnique;
+    host.findEffect = HostFindEffect;
     host.uniformCount = HostUniformCount;
     host.getUniform = HostGetUniform;
+    host.findUniform = HostFindUniform;
     host.getValue = HostGetValue;
+    host.getIntValue = HostGetIntValue;
     host.setValue = HostSetValue;
-    library.context.runtime = runtime;
+    host.setIntValue = HostSetIntValue;
 #ifdef _WIN32
     VkPhysicalDeviceIDProperties id{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES };
     VkPhysicalDeviceProperties2 properties{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
     properties.pNext = &id;
-    vkGetPhysicalDeviceProperties2(gpu.physicalDevice, &properties);
+    if (gpu.physicalDevice)
+        vkGetPhysicalDeviceProperties2(gpu.physicalDevice, &properties);
     if (id.deviceLUIDValid)
         std::memcpy(host.adapter, id.deviceLUID, sizeof(host.adapter));
 #elif defined(__APPLE__)
     // The registryID of the MTLDevice MoltenVK runs on, asked through the Objective-C runtime.
-    const auto exportObjects = reinterpret_cast<PFN_vkExportMetalObjectsEXT>(vkGetDeviceProcAddr(gpu.device, "vkExportMetalObjectsEXT"));
+    const auto exportObjects =
+        gpu.device ? reinterpret_cast<PFN_vkExportMetalObjectsEXT>(vkGetDeviceProcAddr(gpu.device, "vkExportMetalObjectsEXT")) : nullptr;
     VkExportMetalDeviceInfoEXT metalDevice{ VK_STRUCTURE_TYPE_EXPORT_METAL_DEVICE_INFO_EXT };
     VkExportMetalObjectsInfoEXT objects{ VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECTS_INFO_EXT };
     objects.pNext = &metalDevice;
@@ -1600,9 +1938,11 @@ void Addons::Start(Addon& addon)
 #elif defined(VK_EXT_physical_device_drm)
     // The device number of the render node, where Vulkan says which it is.
     uint32_t count = 0;
-    vkEnumerateDeviceExtensionProperties(gpu.physicalDevice, nullptr, &count, nullptr);
+    if (gpu.physicalDevice)
+        vkEnumerateDeviceExtensionProperties(gpu.physicalDevice, nullptr, &count, nullptr);
     std::vector<VkExtensionProperties> extensions(count);
-    vkEnumerateDeviceExtensionProperties(gpu.physicalDevice, nullptr, &count, extensions.data());
+    if (gpu.physicalDevice)
+        vkEnumerateDeviceExtensionProperties(gpu.physicalDevice, nullptr, &count, extensions.data());
     extensions.resize(count);
     if (std::any_of(extensions.begin(), extensions.end(),
                     [](const VkExtensionProperties& e) { return !std::strcmp(e.extensionName, VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME); }))
@@ -1626,6 +1966,76 @@ void Addons::Start(Addon& addon)
     addon.state = State::Enabled;
     addon.error.clear();
     Log(LogLevel::Info, "Add-on started: %s.", addon.manifest.id.c_str());
+    // What there already is, which the others were told of as it came.
+    if (told.playing)
+        Tell(addon, UNISHADE_EVENT_GAME_STARTED, 0, told.gameName);
+    if (!runtime->PresetPath().empty())
+        Tell(addon, UNISHADE_EVENT_PRESET_LOADED, 0, runtime->PresetPath().string());
+}
+
+void Addons::Tell(Addon& addon, UnishadeEventType type, uint32_t value, const std::string& text)
+{
+    const Library& library = *addon.library;
+    if (addon.state != State::Enabled || !library.instance || library.stopping || !library.addon->event)
+        return;
+    const UnishadeEvent event{ sizeof(UnishadeEvent), type, value, text.c_str() };
+    library.addon->event(library.instance, &event);
+}
+
+void Addons::Tell(UnishadeEventType type, uint32_t value, const std::string& text)
+{
+    for (Addon& addon : addons)
+        Tell(addon, type, value, text);
+}
+
+bool Addons::HasControls(const Addon& addon) const
+{
+    return addon.library && addon.library->addon && addon.library->addon->ui;
+}
+
+const std::vector<Addons::Control>& Addons::Controls(const std::string& folder)
+{
+    static const std::vector<Control> none;
+    Addon* addon = Find(folder);
+    if (!addon || addon->state != State::Enabled || !addon->library->instance || addon->library->stopping || !HasControls(*addon))
+        return none;
+    Library& library = *addon->library;
+    library.controls.clear();
+    UiContext context{};
+    context.library = &library;
+    UnishadeUi& ui = context.ui;
+    ui.size = sizeof(ui);
+    ui.heading = UiHeading;
+    ui.text = UiText;
+    ui.progress = UiProgress;
+    ui.button = UiButton;
+    ui.toggle = UiToggle;
+    ui.slider = UiSlider;
+    ui.integer = UiInteger;
+    ui.choice = UiChoice;
+    ui.color = UiColor;
+    ui.tooltip = UiTooltip;
+    library.addon->ui(library.instance, &ui);
+    // What was done with a control the add-on no longer draws is done with nothing.
+    library.used.clear();
+    return library.controls;
+}
+
+void Addons::UseControl(const std::string& folder, size_t control, const float* values)
+{
+    Addon* addon = Find(folder);
+    if (!addon || control >= addon->library->controls.size())
+        return;
+    std::array<float, 4> used{};
+    std::copy(values, values + 4, used.begin());
+    addon->library->used[addon->library->controls[control].id] = used;
+}
+
+bool Addons::ReadsKeys() const
+{
+    return std::any_of(addons.begin(), addons.end(), [](const Addon& addon) {
+        return addon.state == State::Enabled && addon.library->addon && (addon.library->addon->flags & UNISHADE_READS_KEYS);
+    });
 }
 
 void Addons::Stop(Addon& addon, bool unload)
@@ -1663,16 +2073,33 @@ void Addons::Update()
     work |= runtime->Hdr() != hdr;
     hdr = runtime->Hdr();
     for (Addon& addon : addons)
+        if (presetChanged && addon.library->addon)
+            ReadSettings(addon);
+
+    // What happened since the last pass.
+    const AddonHost::State now = host->DescribeForAddons();
+    if (now.playing != told.playing)
+        Tell(now.playing ? UNISHADE_EVENT_GAME_STARTED : UNISHADE_EVENT_GAME_STOPPED, 0, now.playing ? now.gameName : told.gameName);
+    if (presetChanged)
+        Tell(UNISHADE_EVENT_PRESET_LOADED, 0, runtime->PresetPath().string());
+    if (runtime->EffectsGeneration() != effectsGeneration)
+        Tell(UNISHADE_EVENT_EFFECTS_CHANGED);
+    effectsGeneration = runtime->EffectsGeneration();
+    if (now.effectsOn != told.effectsOn)
+        Tell(UNISHADE_EVENT_EFFECTS_TOGGLED, now.effectsOn);
+    if (now.menuOpen != told.menuOpen)
+        Tell(UNISHADE_EVENT_MENU_TOGGLED, now.menuOpen);
+    told = now;
+
+    for (Addon& addon : addons)
     {
         Library& library = *addon.library;
-        if (presetChanged && library.addon)
-            ReadSettings(addon);
-        // Version 1 add-ons end before update.
-        const auto update = library.addon && library.addon->version >= 2 ? library.addon->update : nullptr;
+        const auto update = library.addon ? library.addon->update : nullptr;
         if (update && addon.state == State::Enabled && !addon.bypassed && library.instance && !library.stopping)
         {
+            const UnishadeUpdate given{ sizeof(UnishadeUpdate), library.Values(), now.time };
             char error[512] = "";
-            if (!update(library.instance, library.values.data(), error, sizeof(error)))
+            if (!update(library.instance, &given, error, sizeof(error)))
                 Fail(addon, error[0] ? error : "Its update failed, and it did not say why.");
             ClearPresses(addon);
         }
@@ -1719,7 +2146,7 @@ void Addons::Update()
             else if (addon.state != State::Failed)
                 addon.error.clear();
         }
-        depth |= addon.state == State::Enabled && !skipped && (addon.library->addon->flags & UNISHADE_ADDON_WRITES_DEPTH);
+        depth |= addon.state == State::Enabled && !skipped && (addon.library->addon->flags & UNISHADE_WRITES_DEPTH);
     }
     runtime->ProvideDepth(depth);
 }
@@ -1791,7 +2218,7 @@ void Addons::SetBypassed(const std::string& folder, bool bypassed)
 
 bool Addons::ChangesPicture(const Addon& addon) const
 {
-    return addon.library && addon.library->addon && (addon.library->addon->flags & (UNISHADE_ADDON_CHANGES_PICTURE | UNISHADE_ADDON_CHANGES_RESULT)) != 0;
+    return addon.library && addon.library->addon && (addon.library->addon->flags & kWrites) != 0;
 }
 
 bool Addons::Frame(Surface& surface, const fx::Runtime::Source& source, uint64_t picture)
@@ -1814,11 +2241,17 @@ bool Addons::Frame(Surface& surface, const fx::Runtime::Source& source, uint64_t
     // Add-ons that do not take HDR get the picture as SDR while it is HDR.
     const auto getsSdr = [hdrPicture](const Addon* addon) { return hdrPicture && !TakesHdr(*addon->library->addon); };
     const auto anySdr = [&](const std::vector<Addon*>& list) { return std::any_of(list.begin(), list.end(), getsSdr); };
-    // In each stage, add-ons that only read the picture or write depth see it before add-ons change it.
-    std::stable_partition(before.begin(), before.end(),
-                          [](const Addon* addon) { return !(addon->library->addon->flags & UNISHADE_ADDON_CHANGES_PICTURE); });
-    std::stable_partition(after.begin(), after.end(),
-                          [](const Addon* addon) { return !(addon->library->addon->flags & UNISHADE_ADDON_CHANGES_RESULT); });
+    // In each stage, add-ons that write depth go first, so the ones that read it have it, then those that only read,
+    // then those that write the picture or the result.
+    const auto order = [](std::vector<Addon*>& stage, uint32_t writes) {
+        const auto rank = [writes](const Addon* addon) {
+            const uint32_t flags = addon->library->addon->flags;
+            return flags & writes ? 2 : flags & UNISHADE_WRITES_DEPTH ? 0 : 1;
+        };
+        std::stable_sort(stage.begin(), stage.end(), [&](const Addon* a, const Addon* b) { return rank(a) < rank(b); });
+    };
+    order(before, UNISHADE_WRITES_PICTURE);
+    order(after, UNISHADE_WRITES_RESULT);
     if (running.empty())
     {
         if (exchange)
@@ -1829,8 +2262,8 @@ bool Addons::Frame(Surface& surface, const fx::Runtime::Source& source, uint64_t
         exchange = std::make_unique<Exchange>();
     try
     {
-        exchange->Prepare(runtime->Width(), runtime->Height(), hdrPicture, flagged(before, UNISHADE_ADDON_CHANGES_PICTURE),
-                          flagged(before, UNISHADE_ADDON_WRITES_DEPTH), flagged(after, UNISHADE_ADDON_CHANGES_RESULT), anySdr(running));
+        exchange->Prepare(runtime->Width(), runtime->Height(), hdrPicture, flagged(before, UNISHADE_WRITES_PICTURE),
+                          flagged(before, UNISHADE_WRITES_DEPTH), flagged(after, UNISHADE_WRITES_RESULT), anySdr(running));
     }
     catch (const std::exception& e)
     {
@@ -1848,6 +2281,8 @@ bool Addons::Frame(Surface& surface, const fx::Runtime::Source& source, uint64_t
 #endif
 
     UnishadeFrame frame{};
+    frame.size = sizeof(frame);
+    frame.time = told.time;
     frame.width = exchange->width;
     frame.height = exchange->height;
     frame.generation = exchange->generation;
@@ -1868,18 +2303,20 @@ bool Addons::Frame(Surface& surface, const fx::Runtime::Source& source, uint64_t
                 continue;
             Library& library = *addon->library;
             const uint32_t flags = library.addon->flags;
-            const bool changes = (flags & (which == UNISHADE_STAGE_BEFORE_EFFECTS ? UNISHADE_ADDON_CHANGES_PICTURE : UNISHADE_ADDON_CHANGES_RESULT)) != 0;
-            const bool writesDepth = which == UNISHADE_STAGE_BEFORE_EFFECTS && (flags & UNISHADE_ADDON_WRITES_DEPTH);
+            const bool changes = (flags & (which == UNISHADE_STAGE_BEFORE_EFFECTS ? UNISHADE_WRITES_PICTURE : UNISHADE_WRITES_RESULT)) != 0;
+            const bool writesDepth = which == UNISHADE_STAGE_BEFORE_EFFECTS && (flags & UNISHADE_WRITES_DEPTH);
+            // Depth an add-on wrote for this picture, for one that reads it.
+            const bool readsDepth = !writesDepth && depthWritten && (flags & UNISHADE_READS_DEPTH);
             const bool sdr = getsSdr(addon);
             const UnishadeFormat format = exchange->hdr && !sdr ? UNISHADE_FORMAT_RGBA16_FLOAT : UNISHADE_FORMAT_BGRA8;
             Exchange::Image& in = result ? *result : exchange->color;
             Exchange::Image& out = &in == &exchange->color ? spare : exchange->color;
             frame.color = { sdr ? exchange->sdr.handle : in.handle, format };
             frame.output = changes ? UnishadeImage{ out.handle, format } : UnishadeImage{};
-            frame.depth = writesDepth ? UnishadeImage{ exchange->depth.handle, UNISHADE_FORMAT_R32_FLOAT } : UnishadeImage{};
+            frame.depth = writesDepth || readsDepth ? UnishadeImage{ exchange->depth.handle, UNISHADE_FORMAT_R32_FLOAT } : UnishadeImage{};
             frame.wait = exchange->value;
             frame.signal = exchange->value + 1;
-            frame.settings = library.values.data();
+            frame.settings = library.Values();
             frame.stage = which;
             frame.sdrWhite = format == UNISHADE_FORMAT_RGBA16_FLOAT ? white : 1;
             char error[512] = "";

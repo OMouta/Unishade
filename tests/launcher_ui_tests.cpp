@@ -133,6 +133,17 @@ public:
     void LoadAddon(size_t addon, bool load) override { calls.push_back((load ? "load " : "leave ") + std::to_string(addon)); }
     void SetAddon(size_t addon, bool on) override { calls.push_back("addon " + std::to_string(addon) + (on ? " on" : " off")); }
     void BypassAddon(size_t addon, bool bypassed) override { calls.push_back("addon " + std::to_string(addon) + (bypassed ? " bypassed" : " shown")); }
+    const std::vector<launcher::EffectSetting>* DescribeAddonControls(size_t addon) override
+    {
+        calls.push_back("controls " + std::to_string(addon));
+        return &controls;
+    }
+    void UseAddonControl(size_t addon, size_t control, const launcher::EffectSetting& value) override
+    {
+        calls.push_back("addon " + std::to_string(addon) + " control " + std::to_string(control) + " " + std::to_string(value.ints[0]));
+    }
+    // What DescribeAddonControls gives.
+    std::vector<launcher::EffectSetting> controls;
     void SetAddonSetting(size_t addon, size_t setting, const launcher::EffectSetting& value) override
     {
         calls.push_back("addon " + std::to_string(addon) + " setting " + std::to_string(setting) + " " + std::to_string(value.ints[0]));
@@ -603,6 +614,21 @@ bool AddonSettingsTests(Host& host)
     // Above the page's own choices, which follow the tray.
     ok &= Check(Click(host, model, "switch"), "the setting can be changed");
     ok &= Check(host.calls == std::vector<std::string>{ "addon 0 setting 0 1" }, "the change goes to the add-on");
+    // Controls the add-on draws itself come under its settings, asked for while they show.
+    using Control = launcher::EffectSetting::Control;
+    (*model.addons)[0].controls = true;
+    host.controls = { { .control = Control::Heading, .label = "Status" },
+                      { .control = Control::Text, .label = "The model is loading." },
+                      { .control = Control::Progress, .label = "Loading", .floats = { 0.5f } },
+                      { .control = Control::Button, .label = "Start again" } };
+    host.calls.clear();
+    Settle(host, model);
+    ok &= Check(std::find(host.calls.begin(), host.calls.end(), "controls 0") != host.calls.end(), "the add-on's own controls are asked for while they show");
+    host.calls.clear();
+    ok &= Check(Click(host, model, "Start again"), "they show under its settings");
+    ok &= Check(std::find(host.calls.begin(), host.calls.end(), "addon 0 control 3 0") != host.calls.end(), "using one goes to the add-on by its place");
+    (*model.addons)[0].controls = false;
+    host.controls.clear();
     (*model.addons)[0].state = launcher::AddonState::Off;
     Settle(host, model);
     ok &= Check(!Find("Add-ons"), "an add-on that is off shows no settings");

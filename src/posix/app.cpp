@@ -30,6 +30,58 @@ App app;
 
 namespace
 {
+// What add-ons ask of Unishade, answered by the app.
+class AddonServices final : public AddonHost
+{
+public:
+    State DescribeForAddons() override
+    {
+        State state;
+        state.playing = app.active.has_value();
+        state.effectsOn = app.effectsEnabled;
+        state.menuOpen = app.menuOpen;
+        state.frameRate = static_cast<float>(app.frameStats.shownFps);
+        state.time = glfwGetTime();
+        if (app.active)
+        {
+            state.gameName = app.game.empty() ? app.active->title : app.game;
+            state.executable = app.activeExecutable;
+        }
+        return state;
+    }
+
+    void ShowMessage(const std::string& text) override { app.ShowToast(text); }
+
+    void SetEffectsOn(bool on) override { app.effectsEnabled = on; }
+
+    void TakeScreenshot() override
+    {
+        // As the menu's button, which saves what the screenshot settings say.
+        const Settings& settings = app.settings;
+        const ScreenshotKind both = settings.shotTwoFiles ? ScreenshotKind::TwoFiles : ScreenshotKind::SideBySide;
+        app.RequestScreenshot(!settings.shotOriginal ? ScreenshotKind::Effects : settings.shotEffects ? both : ScreenshotKind::Original);
+    }
+
+    std::vector<fs::path> ListPresets() override
+    {
+        std::vector<fs::path> presets;
+        for (const PresetFolder& folder : app.PresetFolders())
+            presets.insert(presets.end(), folder.presets.begin(), folder.presets.end());
+        return presets;
+    }
+
+    bool UsePreset(const fs::path& preset) override
+    {
+        if (app.runtime.Dirty() && !app.settings.autoSavePresets)
+            return false;
+        return app.SwitchPreset(preset, true, false);
+    }
+};
+AddonServices addonServices;
+} // namespace
+
+namespace
+{
 double Now()
 {
     return glfwGetTime();
@@ -87,7 +139,7 @@ bool App::Init(std::string& error)
         return false;
     }
     runtime.LoadPreset(settings.preset);
-    addons.Init(runtime);
+    addons.Init(runtime, addonServices);
 
     glfwDefaultWindowHints();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -312,8 +364,8 @@ void App::ShowLauncher()
 void App::EndSession()
 {
     Log(LogLevel::Info, "Windows is shutting down or signing out. Saving presets.");
-    for (std::future<std::string>& screenshot : screenshots)
-        screenshot.wait();
+    for (PendingScreenshot& screenshot : screenshots)
+        screenshot.message.wait();
     if (runtime.Dirty() && settings.autoSavePresets)
         runtime.SavePreset();
     else if (runtime.Dirty())
@@ -324,8 +376,8 @@ void App::EndSession()
 void App::Shutdown()
 {
     Log(LogLevel::Info, "Shutdown requested. Stopping capture, effects and graphics resources.");
-    for (std::future<std::string>& screenshot : screenshots)
-        screenshot.wait();
+    for (PendingScreenshot& screenshot : screenshots)
+        screenshot.message.wait();
     screenshots.clear();
     StopCapture();
     if (runtime.Dirty() && settings.autoSavePresets)
@@ -747,7 +799,7 @@ void App::UpdateInput()
     std::array<bool, 256> keys{};
     std::array<bool, 5> buttons{};
     const bool reachable = menuOpen || inFront;
-    const bool read = reachable && runtime.ReadsInput();
+    const bool read = reachable && (runtime.ReadsInput() || addons.ReadsKeys());
     if (read)
         platform::ReadInput(keys, buttons);
     // Keys count as let go while they are not read. When reading starts again because something now reads them, a
@@ -1379,7 +1431,8 @@ void App::SaveScreenshot()
     };
     try
     {
-        screenshots.push_back(std::async(std::launch::async, std::move(write)));
+        const std::string file = screenshotCopy ? std::string() : path.string();
+        screenshots.push_back({ std::async(std::launch::async, std::move(write)), file });
     }
     catch (const std::system_error&)
     {
@@ -1392,13 +1445,17 @@ void App::TakeScreenshots()
 {
     for (auto screenshot = screenshots.begin(); screenshot != screenshots.end();)
     {
-        if (screenshot->wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        if (screenshot->message.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
         {
             ++screenshot;
             continue;
         }
-        if (const std::string message = screenshot->get(); !message.empty())
+        if (const std::string message = screenshot->message.get(); !message.empty())
+        {
             ShowToast(message);
+            if (!screenshot->file.empty())
+                addons.Tell(UNISHADE_EVENT_SCREENSHOT_SAVED, 0, screenshot->file);
+        }
         screenshot = screenshots.erase(screenshot);
     }
 }

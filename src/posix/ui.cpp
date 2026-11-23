@@ -662,6 +662,8 @@ struct LauncherState
     std::map<std::string, std::string> installErrors;
     std::map<std::string, bool> addonsWhole;
     std::string addonsFolder; // its add-ons' files as last seen, with their sizes and times
+    // The controls each add-on the model lists drew last, which the tray shows until Draw returns.
+    std::vector<std::vector<launcher::EffectSetting>> addonControls;
 #ifdef _WIN32
     bool startsWithWindows = false; // read with the presets, since Task Manager can turn it off meanwhile
 #endif
@@ -1091,6 +1093,48 @@ const launcher::EffectSettings* SettingsOf(App& app, size_t index)
     for (const auto& [name, compiled] : effect.definitions)
         settings.definitions.push_back({ name, app.runtime.DefinitionValue(effect.file, name), compiled });
     return &settings;
+}
+
+// A control an add-on draws, as the launcher shows the settings of effects.
+launcher::EffectSetting ControlOf(const Addons::Control& control)
+{
+    using Kind = Addons::Control::Kind;
+    using Control = launcher::EffectSetting::Control;
+    launcher::EffectSetting shown;
+    shown.label = control.label;
+    shown.tooltip = control.tooltip;
+    shown.resettable = false;
+    shown.range = true;
+    shown.min = control.min;
+    shown.max = control.max;
+    shown.count = static_cast<int>(control.count);
+    shown.floating = control.kind == Kind::Slider || control.kind == Kind::Color || control.kind == Kind::Progress;
+    for (size_t i = 0; i < 4; ++i)
+    {
+        shown.floats[i] = control.value[i];
+        shown.ints[i] = static_cast<int>(std::lround(control.value[i]));
+    }
+    switch (control.kind)
+    {
+    case Kind::Heading: shown.control = Control::Heading; break;
+    case Kind::Text: shown.control = Control::Text; break;
+    case Kind::Progress: shown.control = Control::Progress; break;
+    case Kind::Button: shown.control = Control::Button; break;
+    case Kind::Toggle: shown.control = Control::Check; break;
+    case Kind::Slider:
+    case Kind::Integer: shown.control = Control::Slider; break;
+    case Kind::Choice:
+        shown.control = Control::List;
+        for (const std::string& choice : control.choices)
+            shown.items += choice + '\0';
+        break;
+    case Kind::Color:
+        shown.control = Control::Color;
+        shown.min = 0;
+        shown.max = 1;
+        break;
+    }
+    return shown;
 }
 
 class Host final : public launcher::Host
@@ -1690,6 +1734,27 @@ public:
             app.addons.SetSetting(launcherState.addonFolders[addon], setting, values);
     }
 
+    const std::vector<launcher::EffectSetting>* DescribeAddonControls(size_t addon) override
+    {
+        if (addon >= launcherState.addonFolders.size())
+            return nullptr;
+        launcherState.addonControls.resize(launcherState.addonFolders.size());
+        std::vector<launcher::EffectSetting>& shown = launcherState.addonControls[addon];
+        shown.clear();
+        for (const Addons::Control& control : app.addons.Controls(launcherState.addonFolders[addon]))
+            shown.push_back(ControlOf(control));
+        return &shown;
+    }
+
+    void UseAddonControl(size_t addon, size_t control, const launcher::EffectSetting& value) override
+    {
+        float values[4];
+        for (int i = 0; i < 4; ++i)
+            values[i] = value.floating ? value.floats[i] : static_cast<float>(value.ints[i]);
+        if (addon < launcherState.addonFolders.size())
+            app.addons.UseControl(launcherState.addonFolders[addon], control, values);
+    }
+
     void OpenAddonsFolder() override
     {
         const fs::path folder = DataDirectory() / "Addons";
@@ -1947,6 +2012,8 @@ launcher::EffectSetting SettingOf(const Addons::Setting& setting)
     launcher::EffectSetting shown;
     shown.label = setting.label;
     shown.tooltip = setting.tooltip;
+    shown.category = setting.group;
+    shown.units = setting.units;
     shown.resettable = false;
     shown.range = true;
     shown.min = setting.min;
@@ -2042,6 +2109,7 @@ void DescribeInstalled(App& app, const Addons::Addon& installed, launcher::Addon
     if (addon.state == launcher::AddonState::On)
         for (const Addons::Setting& setting : installed.settings)
             addon.settings.push_back(SettingOf(setting));
+    addon.controls = addon.state == launcher::AddonState::On && app.addons.HasControls(installed);
 }
 
 // The official add-ons, installed or not, then every other add-on in the Addons folder.
