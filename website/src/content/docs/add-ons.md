@@ -1,6 +1,6 @@
 ---
 title: Add-ons
-description: Depth estimation and DLSS5, and add-ons from other people.
+description: Unishade's add-ons, and add-ons from other people.
 order: 4
 ---
 
@@ -8,7 +8,7 @@ Add-ons change the game's picture before effects run. **Add-ons** at the top of 
 
 ![The Add-ons window](./images/add-ons.png)
 
-Unishade has two of its own:
+Unishade's own:
 
 - **Depth** estimates how far everything in the picture is. Ambient occlusion, depth of field, fog and other effects that use depth need it. It costs some frame rate. It runs on Windows and on Macs with Apple silicon and macOS 14 or newer.
 - **DLSS5** runs NVIDIA's DLSS neural rendering on the picture. It needs Windows and an NVIDIA RTX graphics card.
