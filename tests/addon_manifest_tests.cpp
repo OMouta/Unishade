@@ -63,7 +63,8 @@ int main()
     ok &= Check(ReadManifest("[Addon]\nId=mine\nApi=2\n[linux]\nLibrary=mine.so\n", "linux-x64", manifest).empty() && manifest.name == "mine" &&
                     manifest.api == 2 && manifest.library == "mine.so" && manifest.icon.empty(),
                 "only Id, Api and the library are needed, and the name is then the Id");
-    ok &= Check(!ReadManifest("[Addon]\nName=Mine\nApi=1\n", "linux-x64", manifest).empty(), "a manifest needs an Id");
+    ok &= Check(!ReadManifest("[Addon]\nName=Mine\nApi=1\n", "linux-x64", manifest).empty() && manifest.name == "Mine" && manifest.id.empty(),
+                "a manifest needs an Id, and still says its name without one");
     ok &= Check(!ReadManifest("[Addon]\nId=My Addon\nApi=1\n", "linux-x64", manifest).empty(), "and one that is valid");
     ok &= Check(!ReadManifest("[Addon]\nId=mine\n", "linux-x64", manifest).empty(), "and the version of the interface");
     ok &= Check(!ReadManifest("[Addon]\nId=mine\nApi=1\n[linux]\nLibrary=../../evil.so\n", "linux-x64", manifest).empty(),

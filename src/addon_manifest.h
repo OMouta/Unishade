@@ -125,14 +125,8 @@ inline std::string ReadManifest(const std::string& text, std::string_view platfo
         return value;
     };
     manifest = {};
-    manifest.id = get("Id", 200);
-    if (manifest.id.empty())
-        return "Its addon.ini has no Id.";
-    if (!ValidId(manifest.id))
-        return "Its Id, " + manifest.id + ", isn't one to 64 lowercase letters, digits, dots, hyphens and underscores.";
+    // What it calls itself first, so an add-on that cannot be used can still be named.
     manifest.name = get("Name", 64);
-    if (manifest.name.empty())
-        manifest.name = manifest.id;
     manifest.version = get("Version", 32);
     manifest.author = get("Author", 64);
     manifest.description = get("Description", 400);
@@ -144,6 +138,13 @@ inline std::string ReadManifest(const std::string& text, std::string_view platfo
     // A website opens in the browser, so it has to be an address for one.
     if (!manifest.website.starts_with("https://") && !manifest.website.starts_with("http://"))
         manifest.website.clear();
+    manifest.id = get("Id", 200);
+    if (manifest.id.empty())
+        return "Its addon.ini has no Id.";
+    if (!ValidId(manifest.id))
+        return "Its Id, " + manifest.id + ", isn't one to 64 lowercase letters, digits, dots, hyphens and underscores.";
+    if (manifest.name.empty())
+        manifest.name = manifest.id;
     manifest.api = std::atoi(get("Api", 16).c_str());
     if (manifest.api < 1)
         return "Its addon.ini doesn't say which version of Unishade's add-ons it was built for, as Api.";
