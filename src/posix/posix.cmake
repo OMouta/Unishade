@@ -466,6 +466,15 @@ if(BUILD_TESTING AND NOT WIN32)
     target_compile_options(preset_ini_tests PRIVATE -Wall -Wextra)
     add_test(NAME preset_ini_tests COMMAND preset_ini_tests)
 
+    # Loads the example add-on through the host, without a graphics card.
+    add_executable(addons_tests "${CMAKE_SOURCE_DIR}/tests/addons_tests.cpp")
+    target_link_libraries(addons_tests PRIVATE unishade_core)
+    target_compile_options(addons_tests PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+    target_compile_definitions(addons_tests PRIVATE EXAMPLE_ADDON="$<TARGET_FILE:example_addon>"
+        EXAMPLE_MANIFEST="${CMAKE_SOURCE_DIR}/src/addons/example/addon.ini")
+    add_dependencies(addons_tests example_addon)
+    add_test(NAME addons_tests COMMAND addons_tests)
+
     add_executable(posix_tests "${CMAKE_SOURCE_DIR}/tests/posix_tests.cpp")
     target_link_libraries(posix_tests PRIVATE unishade_core)
     add_test(NAME posix_tests COMMAND posix_tests)

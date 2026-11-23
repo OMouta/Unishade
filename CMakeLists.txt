@@ -83,6 +83,17 @@ endif()
 # The host, in src/posix for every system. It compiles effects with ReShade's effect compiler and runs them on Vulkan.
 include(src/posix/posix.cmake)
 
+# The example add-on, src/addons/example, in C, so every build checks that unishade_addon.h is the C it says it is. The
+# host's tests load it.
+add_library(example_addon SHARED src/addons/example/example.c)
+set_target_properties(example_addon PROPERTIES OUTPUT_NAME Example PREFIX "" C_STANDARD 11 C_VISIBILITY_PRESET hidden)
+target_include_directories(example_addon PRIVATE src/addons)
+if(MSVC)
+    target_compile_options(example_addon PRIVATE /W4)
+else()
+    target_compile_options(example_addon PRIVATE -Wall -Wextra -pedantic)
+endif()
+
 # ONNX Runtime's headers come from its NuGet package for DirectML, whose three files are the ones of ONNX Runtime 1.24.4
 # with Windows line endings. The package is the one download whose hash is checked, and only the headers leave it. The
 # Mac takes the same C API header, since the Core ML provider needs no header of its own.
