@@ -56,6 +56,11 @@
 // assets/Unishade.png, which the build puts into the program.
 extern const unsigned char kLogoPng[];
 extern const unsigned kLogoPngSize;
+#ifndef __APPLE__
+// The icon of the program's windows: the logo, or a beta's own icon.
+extern const unsigned char* const kIconPng;
+extern const unsigned kIconPngSize;
+#endif
 // assets/fonts, which the build puts into the program too.
 extern const unsigned char kBricolageRegular[];
 extern const unsigned kBricolageRegularSize;
@@ -2657,7 +2662,7 @@ void SetWindowIcon([[maybe_unused]] GLFWwindow* window)
 {
 #ifndef __APPLE__
     int width = 0, height = 0, channels = 0;
-    stbi_uc* pixels = stbi_load_from_memory(kLogoPng, static_cast<int>(kLogoPngSize), &width, &height, &channels, 4);
+    stbi_uc* pixels = stbi_load_from_memory(kIconPng, static_cast<int>(kIconPngSize), &width, &height, &channels, 4);
     if (!pixels)
         return;
     // A few sizes, for the title bar, the taskbar and the window switcher.

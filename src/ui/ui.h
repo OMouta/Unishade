@@ -5,7 +5,7 @@
 // Dear ImGui for the launcher, in its window and over the game.
 bool InitUi(UiWindow& ui, std::string& error);
 void ShutdownUi(UiWindow& ui);
-// Gives the window the logo as its icon. macOS shows the app's icon instead.
+// Gives the window the logo as its icon, or in a beta the beta's icon. macOS shows the app's icon instead.
 void SetWindowIcon(GLFWwindow* window);
 
 // Starts a Dear ImGui frame in the window's context.

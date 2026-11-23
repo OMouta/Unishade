@@ -5,9 +5,28 @@ set(LOGO_SOURCE "${CMAKE_BINARY_DIR}/logo.cpp")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${LOGO_PNG}")
 file(READ "${LOGO_PNG}" logo_bytes HEX)
 string(REGEX REPLACE "(..)" "0x\\1," logo_bytes "${logo_bytes}")
-file(CONFIGURE OUTPUT "${LOGO_SOURCE}" CONTENT
-    "extern const unsigned char kLogoPng[];\nextern const unsigned kLogoPngSize;\nconst unsigned char kLogoPng[] = {${logo_bytes}};\nconst unsigned kLogoPngSize = sizeof(kLogoPng);\n"
-    @ONLY)
+set(logo_code
+    "extern const unsigned char kLogoPng[];\nextern const unsigned kLogoPngSize;\nconst unsigned char kLogoPng[] = {${logo_bytes}};\nconst unsigned kLogoPngSize = sizeof(kLogoPng);\n")
+# The icon of the program and its windows is the logo too, or in a beta the logo with a BETA label, so a beta is told
+# apart in the taskbar and the Dock. The launcher draws the plain logo either way, with a badge of its own beside it.
+# The icon goes into the program for its windows, which macOS has no icons for.
+set(ICON_PNG "${LOGO_PNG}")
+if(UNISHADE_BETA GREATER 0)
+    set(ICON_PNG "${CMAKE_SOURCE_DIR}/assets/UnishadeBeta.png")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${ICON_PNG}")
+endif()
+if(NOT APPLE)
+    string(APPEND logo_code "extern const unsigned char* const kIconPng;\nextern const unsigned kIconPngSize;\n")
+    if(UNISHADE_BETA GREATER 0)
+        file(READ "${ICON_PNG}" icon_bytes HEX)
+        string(REGEX REPLACE "(..)" "0x\\1," icon_bytes "${icon_bytes}")
+        string(APPEND logo_code
+            "static const unsigned char kBetaIconPng[] = {${icon_bytes}};\nconst unsigned char* const kIconPng = kBetaIconPng;\nconst unsigned kIconPngSize = sizeof(kBetaIconPng);\n")
+    else()
+        string(APPEND logo_code "const unsigned char* const kIconPng = kLogoPng;\nconst unsigned kIconPngSize = sizeof(kLogoPng);\n")
+    endif()
+endif()
+file(CONFIGURE OUTPUT "${LOGO_SOURCE}" CONTENT "${logo_code}" @ONLY)
 
 # The launcher's and the menu's font, Bricolage Grotesque, goes in the same way, so the menu over a game finds it too.
 # Dear ImGui draws only the default instance of a variable font, so assets/fonts holds static instances of it.
@@ -127,22 +146,23 @@ else()
 endif()
 
 if(APPLE)
-    # Finder and the Dock show the logo from an icon file made of it, which Info.plist names. It holds every size
-    # Finder draws, each scaled down from the 512-pixel logo, so small icons are not shrunk from the largest on the fly.
+    # Finder and the Dock show the icon from an icon file made of it, which Info.plist names. It holds every size
+    # Finder draws, each scaled down from the 512-pixel picture, so small icons are not shrunk from the largest on the
+    # fly.
     set(APP_ICON "${CMAKE_BINARY_DIR}/Unishade.icns")
     set(APP_ICONSET "${CMAKE_BINARY_DIR}/Unishade.iconset")
     set(ICON_COMMANDS COMMAND "${CMAKE_COMMAND}" -E rm -rf "${APP_ICONSET}" COMMAND "${CMAKE_COMMAND}" -E make_directory "${APP_ICONSET}")
     foreach(size 16 32 128 256 512)
-        list(APPEND ICON_COMMANDS COMMAND sips -z ${size} ${size} "${LOGO_PNG}" --out "${APP_ICONSET}/icon_${size}x${size}.png")
+        list(APPEND ICON_COMMANDS COMMAND sips -z ${size} ${size} "${ICON_PNG}" --out "${APP_ICONSET}/icon_${size}x${size}.png")
         math(EXPR double "${size} * 2")
         if(double LESS_EQUAL 512)
-            list(APPEND ICON_COMMANDS COMMAND sips -z ${double} ${double} "${LOGO_PNG}" --out "${APP_ICONSET}/icon_${size}x${size}@2x.png")
+            list(APPEND ICON_COMMANDS COMMAND sips -z ${double} ${double} "${ICON_PNG}" --out "${APP_ICONSET}/icon_${size}x${size}@2x.png")
         endif()
     endforeach()
     add_custom_command(OUTPUT "${APP_ICON}"
         ${ICON_COMMANDS}
         COMMAND iconutil -c icns "${APP_ICONSET}" -o "${APP_ICON}"
-        DEPENDS "${LOGO_PNG}"
+        DEPENDS "${ICON_PNG}"
         VERBATIM)
     add_executable(Unishade MACOSX_BUNDLE "${SRC_DIR}/main.cpp" "${APP_ICON}")
     set_source_files_properties("${APP_ICON}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)

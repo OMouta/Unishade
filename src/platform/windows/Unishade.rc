@@ -1,5 +1,9 @@
-// Unishade.exe's icon, which the notification area shows too.
+// Unishade.exe's icon, which the notification area shows too. A beta has its own.
+#ifdef UNISHADE_BETA
+1 ICON "../../../assets/UnishadeBeta.ico"
+#else
 1 ICON "../../../assets/Unishade.ico"
+#endif
 
 #include <winver.h>
 

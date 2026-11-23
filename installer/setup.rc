@@ -1,6 +1,10 @@
 #include "resource.h"
 
+#ifdef UNISHADE_BETA
+1 ICON "../assets/UnishadeBeta.ico"
+#else
 1 ICON "../assets/Unishade.ico"
+#endif
 // Found through the include path, which CMake points at the host's build folder.
 IDR_HOST RCDATA "Unishade.exe"
 IDR_LICENSE RCDATA "../LICENSE"
