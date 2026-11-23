@@ -1,36 +1,68 @@
 #!/bin/sh
-# Builds a local beta on a Mac: Unishade from this checkout, packed for testers into build/local-beta. The zip has
-# Unishade.app and the official add-ons for the Mac as this build made them. It is for handing out a commit that is
-# not a release. A beta everyone can download is a release the Build and release workflow publishes.
-# scripts/local-beta.ps1 does this on Windows.
+# Builds a local beta on a Mac or on Linux: Unishade from this checkout, packed for testers into build/local-beta. On
+# a Mac the zip has Unishade.app and the official add-ons for the Mac as this build made them. Linux has no official
+# add-ons, so its archive has what a release's has. It is for handing out a commit that is not a release. A beta
+# everyone can download is a release the Build and release workflow publishes. scripts/local-beta.ps1 does this on
+# Windows.
 #
-# Effects and presets are not in the zip: Unishade downloads them, as after any install.
+# Effects and presets are not in the zip or the archive: Unishade downloads them, as after any install.
 #
 #   ./scripts/local-beta.sh
 set -eu
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
 out="$repo/build/local-beta"
-# A build folder of its own. Building into build would replace the Unishade.app there, and macOS can take the screen
-# recording permission from an app that another build replaced.
-build="$out/build"
 commit=$(git -C "$repo" rev-parse --short HEAD)
 
+# The system as src/addons/addon_manifest.h names it, such as macos-arm64 or linux-x64.
+machine=$(uname -m | sed -e 's/x86_64/x64/' -e 's/aarch64/arm64/')
+case $(uname -s) in
+Darwin)
+    system="macos-$machine"
+    program=Unishade.app/Contents/MacOS/Unishade
+    ;;
+Linux)
+    system="linux-$machine"
+    program=unishade
+    ;;
+*)
+    echo "This packs a local beta on a Mac or on Linux. On Windows, run scripts/local-beta.ps1." >&2
+    exit 1
+    ;;
+esac
+
+# A build folder of its own for each system, so a Mac and a Linux container can share the checkout. Building into
+# build would also replace the Unishade.app there, and macOS can take the screen recording permission from an app that
+# another build replaced.
+build="$out/build-$system"
 cmake -S "$repo" -B "$build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 cmake --build "$build" --parallel
 # The version as the build names it: 0.7.0, or 0.7.0-beta.2 with set(UNISHADE_BETA 2).
-version=$("$build/Unishade.app/Contents/MacOS/Unishade" --version)
+version=$("$build/$program" --version)
 
 folder="$out/Unishade"
 rm -rf "$folder"
 mkdir -p "$folder"
-ditto "$build/Unishade.app" "$folder/Unishade.app"
 cp "$repo/LICENSE" "$repo/CREDITS.txt" "$folder/"
+printf '%s\n' "Unishade $version, built from commit $commit for testing. It is not a release." > "$folder/README.txt"
+
+case $system in
+linux-*)
+    # What a release's archive for Linux has, and the note.
+    cp "$build/$program" "$folder/"
+    printf '\n%s\n' 'Run ./unishade in this folder.' >> "$folder/README.txt"
+    archive="$out/Unishade-$version-local-$commit-$system.tar.gz"
+    tar -czf "$archive" -C "$out" Unishade
+    echo "Packed $archive"
+    exit 0
+    ;;
+esac
+
+ditto "$build/Unishade.app" "$folder/Unishade.app"
 
 # The Add-ons page installs the official add-ons from this version's release, whose files are not this build's, if
 # the release exists at all. They go in the zip from this build instead: each one's files for this Mac, from the
 # addresses in official.ini, in a folder named after its Id, with the addon.ini and icon Unishade would write there.
-system="macos-$(uname -m | sed 's/x86_64/x64/')"
 awk -v wanted="$system]" '
     /^\[/ { id = ($2 == wanted) ? substr($1, 2) : ""; next }
     id != "" && /^[^;=]+=/ { at = index($0, "="); print id, substr($0, 1, at - 1), substr($0, at + 1) }
@@ -67,8 +99,7 @@ for manifest in "$repo"/addons/*/addon.ini; do
     cp "$(dirname "$manifest")/icon.png" "$folder/Addons/$id/"
 done
 
-cat > "$folder/README.txt" <<README
-Unishade $version, built from commit $commit for testing. It is not a release.
+cat >> "$folder/README.txt" <<'README'
 
 Move Unishade to Applications and open it. macOS stops it the first time:
 - On macOS 15 or newer, click Done, then open System Settings > Privacy & Security and click Open Anyway.
@@ -100,7 +131,7 @@ type "sh " with the space after it, drag install-addons.sh into the Terminal win
 README
 fi
 
-zip="$out/Unishade-$version-local-$commit-macOS.zip"
+zip="$out/Unishade-$version-local-$commit-$system.zip"
 rm -f "$zip"
 ditto -c -k --keepParent "$folder" "$zip"
 echo "Packed $zip"

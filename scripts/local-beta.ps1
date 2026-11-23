@@ -1,7 +1,7 @@
 # Builds a local beta: Unishade from this checkout, packed as a portable copy for testers into build/local-beta. The
 # zip has every official effect, the presets and the official add-ons as this build made them. Testers unzip it and
 # run Unishade.exe. It is for handing out a commit that is not a release. A beta everyone can download is a release
-# the Build and release workflow publishes. scripts/local-beta.sh does this on a Mac.
+# the Build and release workflow publishes. scripts/local-beta.sh does this on a Mac and on Linux.
 #
 #   ./scripts/local-beta.ps1
 
