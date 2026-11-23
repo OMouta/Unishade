@@ -360,8 +360,6 @@ jobs:
           git log --format='- %s (%h)' "$range" >> release-notes.md
           cat >> release-notes.md <<'NOTES'
 
-          The macOS and Linux builds are experimental.
-
           SHA256SUMS.txt lists the SHA-256 of each file. To check a download, run `sha256sum -c SHA256SUMS.txt --ignore-missing` in the folder you downloaded to, or compare the output of `Get-FileHash <file>` in PowerShell, or `shasum -a 256 <file>` on a Mac.
           NOTES
           if [ ${#prerelease[@]} -eq 0 ]; then
