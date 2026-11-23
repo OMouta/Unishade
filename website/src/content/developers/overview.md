@@ -31,7 +31,7 @@ The whole interface is one C header, [unishade_addon.h](links:addonHeader). Any 
 
 ## For agents
 
-Every page here is also Markdown. **Copy as Markdown** at the top of a page copies it. The file's address is the page's with `.md` in place of the last slash, such as `/developers/settings.md`, and this page is `/developers/overview.md`. [llms.txt](/llms.txt) lists the pages, and [llms-full.txt](/llms-full.txt) is all of them in one file with the header and the example add-on.
+Every page here is also Markdown. **Copy as Markdown** at the top of a page copies it, and the arrow beside it opens the page in ChatGPT or Claude. The file's address is the page's with `.md` in place of the last slash, such as `/developers/settings.md`, and this page is `/developers/overview.md`. [llms.txt](/llms.txt) lists the pages, and [llms-full.txt](/llms-full.txt) is all of them in one file with the header and the example add-on.
 
 ## Trust
 

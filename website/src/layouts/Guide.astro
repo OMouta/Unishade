@@ -22,6 +22,12 @@ interface Props {
 }
 
 const { entry, pages, root, home, label, kicker, code, markdown } = Astro.props;
+// A chat with an assistant that starts by reading the page's Markdown.
+const ask = `Read ${new URL(markdown ?? '/', Astro.site)} so I can ask questions about making a Unishade add-on.`;
+const chats = [
+  { name: 'ChatGPT', url: `https://chatgpt.com/?hints=search&q=${encodeURIComponent(ask)}` },
+  { name: 'Claude', url: `https://claude.ai/new?q=${encodeURIComponent(ask)}` },
+];
 const { Content, headings } = await render(entry);
 const sections = headings.filter((heading) => heading.depth === 2);
 const href = (id: string) => (id === home ? root : `${root}${id}/`);
@@ -41,6 +47,35 @@ const tone = (page: Entry) => tones[pages.indexOf(page) % tones.length];
         <h1>{entry.data.title}</h1>
       </div>
       <p>{entry.data.description}</p>
+      {
+        markdown && (
+          <div class="markdown">
+            <button type="button" class="copy" data-markdown={markdown}>
+              Copy as Markdown
+            </button>
+            <button type="button" class="more" aria-label="More ways to read this page" aria-expanded="false" aria-controls="markdown-menu">
+              <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+                <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <ul id="markdown-menu" hidden>
+              <li>
+                <a href={markdown}>View as Markdown</a>
+              </li>
+              {chats.map((chat) => (
+                <li>
+                  <a href={chat.url} target="_blank" rel="noopener">
+                    Open in {chat.name}
+                  </a>
+                </li>
+              ))}
+              <li>
+                <a href="/llms.txt">llms.txt</a>
+              </li>
+            </ul>
+          </div>
+        )
+      }
     </header>
 
     <nav class="sidebar" aria-label={label}>
@@ -67,17 +102,6 @@ const tone = (page: Entry) => tones[pages.indexOf(page) % tones.length];
     </nav>
 
     <main class="guide">
-      {
-        markdown && (
-          <div class="markdown">
-            <button type="button" data-markdown={markdown}>
-              Copy as Markdown
-            </button>
-            <a href={markdown}>View as Markdown</a>
-            <a href="/llms.txt">llms.txt</a>
-          </div>
-        )
-      }
       <div class:list={['prose', { reference: code }]}>
         <Content />
       </div>
@@ -125,6 +149,27 @@ const tone = (page: Entry) => tones[pages.indexOf(page) % tones.length];
         copy.textContent = "Couldn't copy";
       }
       setTimeout(() => (copy.textContent = label), 2000);
+    });
+  }
+
+  // The arrow beside it opens the other ways to read the page, until one is picked, Escape is pressed or something
+  // else is clicked.
+  const more = document.querySelector<HTMLButtonElement>('.markdown .more');
+  const menu = document.getElementById('markdown-menu');
+  if (more && menu) {
+    const open = (value: boolean) => {
+      menu.hidden = !value;
+      more.setAttribute('aria-expanded', String(value));
+    };
+    more.addEventListener('click', () => open(menu.hidden));
+    menu.addEventListener('click', () => open(false));
+    document.addEventListener('click', (event) => {
+      if (!more.parentElement!.contains(event.target as Node)) open(false);
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || menu.hidden) return;
+      open(false);
+      more.focus();
     });
   }
 </script>
@@ -196,6 +241,9 @@ const tone = (page: Entry) => tones[pages.indexOf(page) % tones.length];
     color: #000;
     background: var(--tone);
     view-transition-name: docs-cover;
+    /* For what is placed in its corner, whose menu opens over the page below. */
+    position: relative;
+    z-index: 1;
   }
 
   .cover ::selection {
@@ -312,32 +360,92 @@ const tone = (page: Entry) => tones[pages.indexOf(page) % tones.length];
     max-width: 760px;
   }
 
-  /* The page as Markdown, in small pills above it. */
+  /* The page as Markdown: a button that copies it, in the cover's top right corner, and an arrow beside it that opens
+     the other ways to read it. The two are one pill. */
   .markdown {
+    position: absolute;
+    top: clamp(16px, 2.4vw, 28px);
+    right: clamp(16px, 2.4vw, 28px);
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 28px;
+    gap: 1px;
   }
 
-  .markdown button,
-  .markdown a {
-    padding: 7px 14px;
+  .markdown button {
+    display: flex;
+    align-items: center;
+    min-height: 38px;
     border: 0;
-    border-radius: 999px;
-    color: var(--haze);
+    color: #fff;
     font: inherit;
     font-size: 0.9rem;
     font-weight: 600;
-    text-decoration: none;
-    background: var(--night-raised);
+    background: #000;
     cursor: pointer;
   }
 
   .markdown button:hover,
-  .markdown a:hover {
-    color: var(--ink);
-    background: var(--night-high);
+  .markdown .more[aria-expanded='true'] {
+    background: #26262d;
+  }
+
+  .markdown button:focus-visible {
+    outline-color: #000;
+  }
+
+  .markdown .copy {
+    /* As wide as its longest words, so it keeps its size when it says what happened. */
+    min-width: 11.2em;
+    justify-content: center;
+    padding: 0 12px 0 18px;
+    border-radius: 999px 0 0 999px;
+  }
+
+  .markdown .more {
+    padding: 0 14px 0 11px;
+    border-radius: 0 999px 999px 0;
+  }
+
+  .markdown .more svg {
+    transition: rotate 0.2s;
+  }
+
+  .markdown .more[aria-expanded='true'] svg {
+    rotate: 180deg;
+  }
+
+  .markdown ul {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 2;
+    display: grid;
+    min-width: 100%;
+    margin: 0;
+    padding: 6px;
+    border-radius: 18px;
+    list-style: none;
+    background: #000;
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
+  }
+
+  .markdown ul[hidden] {
+    display: none;
+  }
+
+  .markdown a {
+    display: block;
+    padding: 9px 14px;
+    border-radius: 12px;
+    color: #fff;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .markdown a:hover,
+  .markdown a:focus-visible {
+    background: #26262d;
   }
 
   .pager {
@@ -412,6 +520,11 @@ const tone = (page: Entry) => tones[pages.indexOf(page) % tones.length];
 
     .cover p {
       justify-self: start;
+    }
+
+    /* The button in the corner gets a row of its own, above the page's name. */
+    .cover:has(.markdown) {
+      padding-top: 76px;
     }
 
     .sidebar {
