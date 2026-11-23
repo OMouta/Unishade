@@ -289,8 +289,13 @@ struct Addon
     std::string id; // the host's own name for it, which stays the same while it installs
     std::string name;
     std::string description;
-    std::string file; // as it is named in the Addons folder
+    std::string version; // as the add-on writes it, or empty
+    std::string author;  // as the add-on says, or empty
+    std::string icon;    // its picture, or empty for the start of its name
+    std::string folder;  // as it is named in the Addons folder
     bool official = false;
+    // An official add-on's library that is not this version's, which InstallAddon replaces.
+    bool update = false;
     AddonState state = AddonState::Off;
     // Why it failed, or why the last install did.
     std::string error;
@@ -467,7 +472,7 @@ public:
     virtual void DownloadEffects() = 0;
     virtual void ReloadEffects() = 0;
 
-    // Add-ons, by their place in Model::addons.
+    // Add-ons, by their place in Model::addons. Installing one that is there replaces it, as Addon::update offers.
     virtual void InstallAddon(size_t addon) = 0;
     virtual void CancelInstall(size_t addon) = 0;
     // The answer for a Pending add-on.

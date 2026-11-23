@@ -35,25 +35,23 @@
 #include <cstring>
 #include <sstream>
 
-// src/addons/official.ini, with the SHA-256 of the add-ons this build made, which the build puts into the program.
+// What the build puts into the program of the official add-ons: src/addons/official.ini, with the SHA-256 of the
+// add-ons this build made, and each add-on's addon.ini and icon, in the same order, each ending with an entry that is
+// no add-on's.
 extern const char kOfficialAddons[];
+extern const char* const kOfficialManifests[];
+extern const unsigned char* const kOfficialIcons[];
+extern const unsigned kOfficialIconSizes[];
 
 namespace
 {
-#ifdef _WIN32
-constexpr char kExtension[] = ".dll";
-#elif defined(__APPLE__)
-constexpr char kExtension[] = ".dylib";
-#else
-constexpr char kExtension[] = ".so";
-#endif
 #ifndef _WIN32
 constexpr uintmax_t kAddonLimit = 1ull << 30; // as net.h has it for Windows
 #endif
 constexpr uint32_t kBeforeEffects = UNISHADE_ADDON_WRITES_DEPTH | UNISHADE_ADDON_CHANGES_PICTURE;
 constexpr uint32_t kAfterEffects = UNISHADE_ADDON_READS_RESULT | UNISHADE_ADDON_CHANGES_RESULT;
 constexpr uint32_t kFrameFlags = kBeforeEffects | kAfterEffects;
-// Where Unishade.ini keeps the settings of an add-on that leaves the picture alone: this, then the add-on's name.
+// Where Unishade.ini keeps the settings of an add-on that leaves the picture alone: this, then the add-on's Id.
 const std::string kSettingsSection = "ADDON:";
 // On the tile of an add-on that sits out an HDR picture.
 constexpr char kSitsOutHdr[] = "It doesn't take HDR pictures, so it's off while the game's picture is HDR.";
@@ -68,53 +66,27 @@ fs::path AddonsDirectory()
     return DataDirectory() / "Addons";
 }
 
-bool IsSha256(const std::string& text)
+// The official add-ons that have a library for this system, and a list of files with it.
+std::vector<Addons::Official> ReadOfficialList()
 {
-    return text.size() == 64 && text.find_first_not_of("0123456789abcdef") == std::string::npos;
-}
-
-std::string Trim(const std::string& text)
-{
-    const size_t start = text.find_first_not_of(" \t\r");
-    return start == std::string::npos ? std::string() : text.substr(start, text.find_last_not_of(" \t\r") - start + 1);
-}
-
-// The add-ons whose binary is for this system and whose files all have a SHA-256 and an address.
-std::vector<Addons::Official> ReadOfficialList(const std::string& text)
-{
+    const std::vector<addon::Files> lists = addon::ReadFiles(kOfficialAddons, addon::Platform());
     std::vector<Addons::Official> list;
-    std::istringstream stream(text);
-    for (std::string line; std::getline(stream, line);)
+    for (size_t i = 0; kOfficialManifests[i]; ++i)
     {
-        line = Trim(line);
-        if (line.empty() || line[0] == ';' || line[0] == '#')
+        Addons::Official official;
+        official.manifestText = kOfficialManifests[i];
+        if (!addon::ReadManifest(official.manifestText, addon::Platform(), official.manifest).empty() || official.manifest.library.empty())
             continue;
-        if (line.front() == '[' && line.back() == ']')
-        {
-            list.push_back({ line.substr(1, line.size() - 2), {}, {} });
-            continue;
-        }
-        const size_t equals = line.find('=');
-        if (list.empty() || equals == std::string::npos)
-            continue;
-        if (Trim(line.substr(0, equals)) == "Description")
-        {
-            list.back().description = Trim(line.substr(equals + 1));
-            continue;
-        }
-        std::istringstream value(line.substr(equals + 1));
-        Addons::Official::File file{ Trim(line.substr(0, equals)) };
-        value >> file.sha256 >> file.url;
-        file.sha256 = Lowercase(file.sha256);
-        // The add-on itself is the file directly in the Addons folder, which goes first.
-        std::vector<Addons::Official::File>& files = list.back().files;
-        files.insert(file.path.find('/') == std::string::npos ? files.begin() : files.end(), file);
+        official.icon = { kOfficialIcons[i], kOfficialIconSizes[i] };
+        for (const addon::Files& files : lists)
+            if (files.id == official.manifest.id)
+                official.files = files.files;
+        for (const addon::Download& file : official.files)
+            if (file.path == official.manifest.library)
+                official.sha256 = file.sha256;
+        if (!official.sha256.empty())
+            list.push_back(std::move(official));
     }
-    std::erase_if(list, [](const Addons::Official& addon) {
-        return addon.files.empty() || addon.files[0].path.find('/') != std::string::npos ||
-               Lowercase(fs::path(addon.files[0].path).extension().string()) != kExtension ||
-               std::any_of(addon.files.begin(), addon.files.end(), [](const auto& file) { return !IsSha256(file.sha256) || file.url.empty(); });
-    });
     return list;
 }
 
@@ -1239,9 +1211,9 @@ Addons::~Addons() = default;
 void Addons::Init(fx::Runtime& effects)
 {
     runtime = &effects;
-    official = ReadOfficialList(kOfficialAddons);
+    official = ReadOfficialList();
     for (const Official& addon : official)
-        Log(LogLevel::Info, "Official add-on: %s, %s.", addon.name.c_str(), addon.files[0].path.c_str());
+        Log(LogLevel::Info, "Official add-on: %s %s, %s.", addon.manifest.id.c_str(), addon.manifest.version.c_str(), addon.manifest.library.c_str());
     std::error_code error;
     fs::create_directories(AddonsDirectory(), error);
     Scan();
@@ -1258,118 +1230,192 @@ void Addons::Shutdown()
 
 void Addons::Scan()
 {
-    std::vector<std::string> found;
+    struct Found
+    {
+        std::string folder;
+        addon::Manifest manifest;
+        std::string problem;
+    };
+    std::vector<Found> found;
     std::error_code error;
     for (fs::directory_iterator it(AddonsDirectory(), error), end; !error && it != end; it.increment(error))
-        if (it->is_regular_file(error) && Lowercase(it->path().extension().string()) == kExtension)
-            found.push_back(it->path().filename().string());
-    std::sort(found.begin(), found.end());
+    {
+        const fs::path manifest = it->path() / addon::kManifestFile;
+        if (!it->is_directory(error) || !fs::is_regular_file(manifest, error))
+            continue;
+        Found entry{ it->path().filename().string(), {}, {} };
+        entry.problem = addon::ReadManifest(ReadFile(manifest), addon::Platform(), entry.manifest);
+        found.push_back(std::move(entry));
+    }
+    std::sort(found.begin(), found.end(), [](const Found& a, const Found& b) { return a.folder < b.folder; });
+    // Of two with the same Id, the first keeps it.
+    for (size_t i = 0; i < found.size(); ++i)
+        for (size_t other = 0; other < i && found[i].problem.empty(); ++other)
+            if (found[other].problem.empty() && found[other].manifest.id == found[i].manifest.id)
+                found[i].problem = "The add-on in the folder " + found[other].folder + " has the same Id, " + found[i].manifest.id + ".";
+    const auto has = [&](const std::string& folder) {
+        return std::any_of(found.begin(), found.end(), [&](const Found& entry) { return entry.folder == folder; });
+    };
 
     for (Addon& addon : addons)
-        if (std::find(found.begin(), found.end(), addon.file) == found.end())
+        if (!has(addon.folder))
         {
-            Log(LogLevel::Info, "Add-on removed: %s.", addon.file.c_str());
+            Log(LogLevel::Info, "Add-on removed: %s.", addon.folder.c_str());
             Stop(addon, true);
         }
-    std::erase_if(addons, [&](const Addon& addon) { return std::find(found.begin(), found.end(), addon.file) == found.end(); });
+    std::erase_if(addons, [&](const Addon& addon) { return !has(addon.folder); });
 
-    for (const std::string& file : found)
+    for (Found& entry : found)
     {
-        Addon* known = Find(file);
+        Addon* known = Find(entry.folder);
         // A loaded library stays as it was loaded.
         if (known && known->library->module)
             continue;
-        const std::string hash = Sha256(ReadFile(AddonsDirectory() / file));
-        const Official* listed = nullptr;
-        for (const Official& entry : official)
-            if (entry.files[0].sha256 == hash)
-                listed = &entry;
         const bool added = !known;
         if (added)
         {
-            addons.push_back({ file, fs::path(file).stem().string() });
+            addons.push_back({ entry.folder });
             addons.back().library = std::make_shared<Library>();
             known = &addons.back();
-            Log(LogLevel::Info, "Add-on found: %s, official=%d, sha256=%s.", file.c_str(), listed != nullptr, hash.c_str());
         }
-        known->official = listed != nullptr;
-        if (listed)
-            known->name = listed->name;
-        // Update starts the ones that are wanted.
-        if (known->state == State::Pending || known->state == State::Disabled)
-            known->state = !known->official && Answer(file) < 0 ? State::Pending : State::Disabled;
-        if (added && known->state == State::Pending)
-            Report(LogLevel::Info, "%s in the Addons folder isn't an official add-on. It loads once you allow it on the Add-ons page.", file.c_str());
+        const bool unusable = !known->problem.empty();
+        const fs::path folder = AddonsDirectory() / fs::path(entry.folder);
+        known->manifest = std::move(entry.manifest);
+        known->problem = std::move(entry.problem);
+        known->official = false;
+        known->replaceable = false;
+        known->icon.clear();
+        if (!known->manifest.icon.empty() && fs::is_regular_file(folder / fs::path(known->manifest.icon), error))
+            known->icon = (folder / fs::path(known->manifest.icon)).string();
+        if (!known->problem.empty())
+        {
+            // Nothing is kept for an add-on that does not say which it is.
+            known->manifest.id.clear();
+            if (known->manifest.name.empty())
+                known->manifest.name = entry.folder;
+        }
+        else if (known->manifest.library.empty())
+            known->problem = "It isn't made for this system.";
+        else if (known->manifest.api > UNISHADE_ADDON_VERSION)
+            known->problem = "It was built for version " + std::to_string(known->manifest.api) + " of Unishade's add-ons, and this Unishade has versions 1 to " +
+                             std::to_string(UNISHADE_ADDON_VERSION) + ". Update Unishade to use it.";
+        else if (!fs::is_regular_file(folder / fs::path(known->manifest.library), error))
+            known->problem = "Its library, " + known->manifest.library + ", is missing.";
+        else if (const Official* listed = OfficialFor(known->manifest.id))
+        {
+            known->official = Sha256(ReadFile(folder / fs::path(known->manifest.library))) == listed->sha256;
+            known->replaceable = !known->official;
+        }
+        if (added)
+            Log(LogLevel::Info, "Add-on found: %s %s in %s, official=%d%s%s.", known->manifest.id.c_str(), known->manifest.version.c_str(),
+                entry.folder.c_str(), known->official, known->problem.empty() ? "" : ", ", known->problem.c_str());
+        // Update starts the ones that are wanted, and fails the ones that cannot be used.
+        if (known->state == State::Pending || known->state == State::Disabled || (unusable && known->problem.empty()))
+            known->state = !known->official && Answer(*known) < 0 ? State::Pending : State::Disabled;
+        if (added && known->state == State::Pending && known->problem.empty())
+            Report(LogLevel::Info, "%s in the Addons folder isn't an official add-on. It loads once you allow it on the Add-ons page.",
+                   known->manifest.name.c_str());
     }
     changed = true;
 }
 
-int Addons::Answer(const std::string& file) const
+int Addons::Answer(const Addon& addon) const
 {
-    std::string value;
-    if (!IniText(ReadFile(DataDirectory() / "Unishade.ini")).Get("ADDONS", file, value))
+    if (!answersRead)
+    {
+        // Every key of [ADDONS] is an Id, which the add-ons found are looked up by.
+        answersRead = true;
+        answersText = ReadFile(DataDirectory() / "Unishade.ini");
+    }
+    if (addon.manifest.id.empty())
         return -1;
-    return value == "1" ? 1 : 0;
+    const auto known = answers.find(addon.manifest.id);
+    if (known != answers.end())
+        return known->second;
+    std::string value;
+    const int answer = !IniText(answersText).Get("ADDONS", addon.manifest.id, value) ? -1 : value == "1" ? 1 : 0;
+    answers[addon.manifest.id] = answer;
+    return answer;
 }
 
-void Addons::SetAnswer(const std::string& file, bool load)
+void Addons::SetAnswer(const Addon& addon, bool load)
 {
+    if (addon.manifest.id.empty())
+        return;
     const fs::path path = DataDirectory() / "Unishade.ini";
     IniText ini(ReadFile(path));
-    ini.Set("ADDONS", file, load ? "1" : "0");
+    ini.Set("ADDONS", addon.manifest.id, load ? "1" : "0");
     if (!WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
+    answers[addon.manifest.id] = load ? 1 : 0;
     changed = true;
 }
 
-Addons::Addon* Addons::Find(const std::string& file)
+Addons::Addon* Addons::Find(const std::string& folder)
 {
     for (Addon& addon : addons)
-        if (addon.file == file)
+        if (addon.folder == folder)
             return &addon;
     return nullptr;
 }
 
-void Addons::Approve(const std::string& file, bool load)
+const Addons::Official* Addons::OfficialFor(const std::string& id) const
 {
-    Addon* addon = Find(file);
-    if (!addon || addon->state != State::Pending)
-        return;
-    Log(LogLevel::Info, "Add-on %s: the user said to %s.", file.c_str(), load ? "load it" : "leave it");
-    addon->state = State::Disabled;
-    SetAnswer(file, load);
+    for (const Official& entry : official)
+        if (entry.manifest.id == id)
+            return &entry;
+    return nullptr;
 }
 
-void Addons::SetEnabled(const std::string& file, bool enabled)
+std::string Addons::FolderOf(const Official& addon) const
 {
-    Addon* addon = Find(file);
+    for (const Addon& installed : addons)
+        if (installed.manifest.id == addon.manifest.id)
+            return installed.folder;
+    return addon.manifest.id;
+}
+
+void Addons::Approve(const std::string& folder, bool load)
+{
+    Addon* addon = Find(folder);
+    if (!addon || addon->state != State::Pending)
+        return;
+    Log(LogLevel::Info, "Add-on %s: the user said to %s.", addon->manifest.id.c_str(), load ? "load it" : "leave it");
+    addon->state = State::Disabled;
+    SetAnswer(*addon, load);
+}
+
+void Addons::SetEnabled(const std::string& folder, bool enabled)
+{
+    Addon* addon = Find(folder);
     if (!addon)
         return;
     if (addon->state == State::Failed || addon->state == State::Pending)
         addon->state = State::Disabled;
-    SetAnswer(file, enabled);
-}
-
-void Addons::Pause(const std::string& file)
-{
-    paused.insert(file);
+    SetAnswer(*addon, enabled);
     changed = true;
 }
 
-void Addons::Resume(const std::string& file)
+void Addons::Pause(const std::string& folder)
 {
-    paused.erase(file);
+    paused.insert(folder);
+    changed = true;
+}
+
+void Addons::Resume(const std::string& folder)
+{
+    paused.erase(folder);
     Scan();
 }
 
-bool Addons::Loaded(const std::string& file) const
+bool Addons::Loaded(const std::string& folder) const
 {
-    return std::any_of(addons.begin(), addons.end(), [&](const Addon& addon) { return addon.file == file && addon.library->module; });
+    return std::any_of(addons.begin(), addons.end(), [&](const Addon& addon) { return addon.folder == folder && addon.library->module; });
 }
 
-void Addons::SetSetting(const std::string& file, size_t index, const float* values)
+void Addons::SetSetting(const std::string& folder, size_t index, const float* values)
 {
-    Addon* addon = Find(file);
+    Addon* addon = Find(folder);
     if (!addon || index >= addon->settings.size())
         return;
     Setting& setting = addon->settings[index];
@@ -1392,29 +1438,34 @@ void Addons::SetSetting(const std::string& file, size_t index, const float* valu
         return WritePreset(*addon);
     const fs::path path = DataDirectory() / "Unishade.ini";
     IniText ini(ReadFile(path));
-    ini.Set(kSettingsSection + addon->name, setting.key, FormatValue(setting));
+    ini.Set(kSettingsSection + addon->manifest.id, setting.key, FormatValue(setting));
     if (!WriteFile(path, ini.Text()))
         Log(LogLevel::Warning, "Could not write %s.", path.string().c_str());
 }
 
 void Addons::WritePreset(const Addon& addon)
 {
-    // Addons lists the ones on in the preset, as Techniques does for effects. One it does not name is off.
+    // Addons lists the ones on in the preset by Id, as Techniques does for effects. One it does not name is off.
     // A list the preset does not have is not started empty.
     const std::string was = runtime->PresetValue("", "Addons");
     if (!addon.bypassed || !was.empty())
-        runtime->SetPresetValue("", "Addons", addon.bypassed ? PresetIni::Without(was, addon.name) : PresetIni::With(was, addon.name));
+        runtime->SetPresetValue("", "Addons", addon.bypassed ? PresetIni::Without(was, addon.manifest.id) : PresetIni::With(was, addon.manifest.id));
     for (const Setting& setting : addon.settings)
         if (setting.type != UNISHADE_SETTING_BUTTON)
-            runtime->SetPresetValue(addon.name, setting.key, FormatValue(setting));
+            runtime->SetPresetValue(addon.manifest.id, setting.key, FormatValue(setting));
 }
 
 std::vector<std::string> Addons::Missing() const
 {
     std::vector<std::string> missing;
-    for (const std::string& name : PresetIni::Split(runtime->PresetValue("", "Addons")))
-        if (std::none_of(addons.begin(), addons.end(), [&](const Addon& addon) { return addon.state == State::Enabled && PresetIni::Same(addon.name, name); }))
-            missing.push_back(name);
+    for (const std::string& id : PresetIni::Split(runtime->PresetValue("", "Addons")))
+    {
+        const auto installed = std::find_if(addons.begin(), addons.end(), [&](const Addon& addon) { return PresetIni::Same(addon.manifest.id, id); });
+        if (installed != addons.end() && installed->state == State::Enabled)
+            continue;
+        const Official* listed = OfficialFor(Lowercase(id));
+        missing.push_back(installed != addons.end() ? installed->manifest.name : listed ? listed->manifest.name : id);
+    }
     return missing;
 }
 
@@ -1424,16 +1475,16 @@ void Addons::ReadSettings(Addon& addon)
     library.values.clear();
     const bool look = ChangesPicture(addon);
     if (look)
-        addon.bypassed = !PresetIni::Listed(runtime->PresetValue("", "Addons"), addon.name);
+        addon.bypassed = !PresetIni::Listed(runtime->PresetValue("", "Addons"), addon.manifest.id);
     const IniText ini(look ? std::string() : ReadFile(DataDirectory() / "Unishade.ini"));
     for (Setting& setting : addon.settings)
     {
         // Nothing keeps a button, which takes its default, 0.
         std::string text;
         if (setting.type != UNISHADE_SETTING_BUTTON && look)
-            text = runtime->PresetValue(addon.name, setting.key);
+            text = runtime->PresetValue(addon.manifest.id, setting.key);
         else if (setting.type != UNISHADE_SETTING_BUTTON)
-            ini.Get(kSettingsSection + addon.name, setting.key, text);
+            ini.Get(kSettingsSection + addon.manifest.id, setting.key, text);
         ParseValue(setting, text);
         library.values.insert(library.values.end(), setting.value, setting.value + setting.count);
     }
@@ -1442,7 +1493,7 @@ void Addons::ReadSettings(Addon& addon)
 void Addons::Load(Addon& addon)
 {
     Library& library = *addon.library;
-    const fs::path path = AddonsDirectory() / addon.file;
+    const fs::path path = AddonsDirectory() / fs::path(addon.folder) / fs::path(addon.manifest.library);
     std::string error;
     library.module = OpenLibrary(path, error);
     if (!library.module)
@@ -1458,12 +1509,10 @@ void Addons::Load(Addon& addon)
     if (described->version < 1 || described->version > UNISHADE_ADDON_VERSION)
         return refuse("It was built for version " + std::to_string(described->version) + " of Unishade's add-ons, and this Unishade has versions 1 to " +
                       std::to_string(UNISHADE_ADDON_VERSION) + ".");
-    if (!described->name || !*described->name || !described->create || !described->destroy || ((described->flags & kFrameFlags) && !described->frame) ||
+    if (!described->create || !described->destroy || ((described->flags & kFrameFlags) && !described->frame) ||
         (described->settingCount && !described->settings))
-        return refuse("It does not say its name or what to call.");
+        return refuse("It does not say what to call.");
     library.addon = described;
-    addon.name = described->name;
-    addon.description = described->description ? described->description : "";
     addon.settings.clear();
     // Version 1's settings end where defaultColor starts, so its array is read with that size.
     const bool colors = described->version >= 2;
@@ -1491,7 +1540,7 @@ void Addons::Load(Addon& addon)
         addon.settings.push_back(std::move(setting));
     }
     ReadSettings(addon);
-    Log(LogLevel::Info, "Add-on loaded: %s from %s, flags=%u, settings=%u.", addon.name.c_str(), addon.file.c_str(), described->flags,
+    Log(LogLevel::Info, "Add-on loaded: %s from %s, flags=%u, settings=%u.", addon.manifest.id.c_str(), path.string().c_str(), described->flags,
         described->settingCount);
 }
 
@@ -1510,9 +1559,9 @@ void Addons::Start(Addon& addon)
         return Fail(addon, "It works on the game's picture, which needs the graphics card to share images as dma-bufs, and its Vulkan driver cannot "
                            "(VK_EXT_external_memory_dma_buf and VK_EXT_image_drm_format_modifier).");
 #endif
-    library.folder = (AddonsDirectory() / fs::path(addon.file).stem()).string() + static_cast<char>(fs::path::preferred_separator);
+    library.folder = (AddonsDirectory() / fs::path(addon.folder)).string() + static_cast<char>(fs::path::preferred_separator);
     library.dataFolder = DataDirectory().string() + static_cast<char>(fs::path::preferred_separator);
-    std::snprintf(library.context.name, sizeof(library.context.name), "%s", addon.name.c_str());
+    std::snprintf(library.context.name, sizeof(library.context.name), "%s", addon.manifest.name.c_str());
     UnishadeHost& host = library.context.host;
     host.version = UNISHADE_ADDON_VERSION;
     host.folder = library.folder.c_str();
@@ -1576,7 +1625,7 @@ void Addons::Start(Addon& addon)
         return Fail(addon, error[0] ? error : "It did not start, and did not say why.");
     addon.state = State::Enabled;
     addon.error.clear();
-    Log(LogLevel::Info, "Add-on started: %s.", addon.name.c_str());
+    Log(LogLevel::Info, "Add-on started: %s.", addon.manifest.id.c_str());
 }
 
 void Addons::Stop(Addon& addon, bool unload)
@@ -1586,7 +1635,7 @@ void Addons::Stop(Addon& addon, bool unload)
     {
         library.addon->destroy(library.instance);
         library.instance = nullptr;
-        Log(LogLevel::Info, "Add-on stopped: %s.", addon.name.c_str());
+        Log(LogLevel::Info, "Add-on stopped: %s.", addon.manifest.id.c_str());
     }
     library.stopping = false;
     if (unload && library.module)
@@ -1602,7 +1651,7 @@ void Addons::Fail(Addon& addon, const std::string& error)
     addon.state = State::Failed;
     addon.error = error;
     addon.library->stopping = addon.library->instance != nullptr;
-    Report(LogLevel::Error, "%s stopped: %s", addon.name.c_str(), error.c_str());
+    Report(LogLevel::Error, "%s stopped: %s", addon.manifest.name.c_str(), error.c_str());
 }
 
 void Addons::Update()
@@ -1634,8 +1683,15 @@ void Addons::Update()
 
     for (Addon& addon : addons)
     {
-        const int answer = Answer(addon.file);
-        const bool wanted = !paused.count(addon.file) && (addon.official ? answer != 0 : answer == 1);
+        const int answer = Answer(addon);
+        // One that cannot be used says why, and is not asked about.
+        if (!addon.problem.empty())
+        {
+            addon.state = State::Failed;
+            addon.error = addon.problem;
+            continue;
+        }
+        const bool wanted = !paused.count(addon.folder) && (addon.official ? answer != 0 : answer == 1);
         if (addon.library->stopping || (!wanted && addon.library->module))
         {
             if (gpu.device)
@@ -1658,7 +1714,7 @@ void Addons::Update()
             if (skipped)
             {
                 addon.error = kSitsOutHdr;
-                Report(LogLevel::Info, "%s doesn't take HDR pictures, so it's off while the game's picture is HDR.", addon.name.c_str());
+                Report(LogLevel::Info, "%s doesn't take HDR pictures, so it's off while the game's picture is HDR.", addon.manifest.name.c_str());
             }
             else if (addon.state != State::Failed)
                 addon.error.clear();
@@ -1668,18 +1724,19 @@ void Addons::Update()
     runtime->ProvideDepth(depth);
 }
 
-void Addons::Install(const Official& addon, const std::atomic<bool>& cancel,
+void Addons::Install(const Official& addon, const std::string& folder, const std::atomic<bool>& cancel,
                      const std::function<void(size_t file, uint64_t received, uint64_t total)>& progress)
 {
     // Each file downloads under another name, and they take their places once all of them are whole and checked, so a
-    // failed install leaves what was there.
+    // failed install leaves what was there. The manifest is written last: a folder is an add-on once it has one.
+    const fs::path target = AddonsDirectory() / fs::path(folder);
     std::vector<fs::path> parts;
     try
     {
         for (size_t i = 0; i < addon.files.size(); ++i)
         {
-            const Official::File& file = addon.files[i];
-            const fs::path path = AddonsDirectory() / fs::path(file.path);
+            const addon::Download& file = addon.files[i];
+            const fs::path path = target / fs::path(file.path);
             fs::create_directories(path.parent_path());
             fs::path part = path;
             part += ".part";
@@ -1701,9 +1758,17 @@ void Addons::Install(const Official& addon, const std::atomic<bool>& cancel,
         }
         for (size_t i = 0; i < addon.files.size(); ++i)
         {
-            fs::rename(parts[i], AddonsDirectory() / fs::path(addon.files[i].path));
-            Log(LogLevel::Info, "Installed %s from %s.", addon.files[i].path.c_str(), addon.files[i].url.c_str());
+            fs::rename(parts[i], target / fs::path(addon.files[i].path));
+            Log(LogLevel::Info, "Installed %s from %s.", (fs::path(folder) / fs::path(addon.files[i].path)).string().c_str(), addon.files[i].url.c_str());
         }
+        if (!addon.manifest.icon.empty() && !addon.icon.empty())
+        {
+            const fs::path icon = target / fs::path(addon.manifest.icon);
+            fs::create_directories(icon.parent_path());
+            WriteFile(icon, std::string(reinterpret_cast<const char*>(addon.icon.data()), addon.icon.size()));
+        }
+        if (!WriteFile(target / addon::kManifestFile, addon.manifestText))
+            throw std::runtime_error("Could not write " + (target / addon::kManifestFile).string() + ".");
     }
     catch (...)
     {
@@ -1714,9 +1779,9 @@ void Addons::Install(const Official& addon, const std::atomic<bool>& cancel,
     }
 }
 
-void Addons::SetBypassed(const std::string& file, bool bypassed)
+void Addons::SetBypassed(const std::string& folder, bool bypassed)
 {
-    Addon* addon = Find(file);
+    Addon* addon = Find(folder);
     if (!addon)
         return;
     addon->bypassed = bypassed;

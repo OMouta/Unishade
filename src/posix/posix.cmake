@@ -290,10 +290,12 @@ file(CONFIGURE OUTPUT "${FSR_SOURCE}" CONTENT
     "extern const unsigned char kFfxA[];\nextern const unsigned kFfxASize;\nconst unsigned char kFfxA[] = {${ffx_a_bytes}};\nconst unsigned kFfxASize = sizeof(kFfxA);\nextern const unsigned char kFfxFsr1[];\nextern const unsigned kFfxFsr1Size;\nconst unsigned char kFfxFsr1[] = {${ffx_fsr1_bytes}};\nconst unsigned kFfxFsr1Size = sizeof(kFfxFsr1);\n"
     @ONLY)
 
-# The official add-on list goes into the program too, with the SHA-256 of the add-ons this build makes, so they are
-# official to the Unishade built with them. Each one goes in OFFICIAL_ADDONS_BINARIES as its file name, =, and the
-# file, separated by |, and its target in OFFICIAL_ADDONS_TARGETS.
+# The official add-ons go into the program too: the list of their files, with the SHA-256 of the add-ons this build
+# makes, so they are official to the Unishade built with them, and each one's manifest and icon, which Unishade writes
+# to the add-on's folder when it installs it. Each add-on this build makes goes in OFFICIAL_ADDONS_BINARIES as its file
+# name, =, and the file, separated by |, and its target in OFFICIAL_ADDONS_TARGETS.
 set(OFFICIAL_ADDONS_SOURCE "${CMAKE_BINARY_DIR}/official_addons.cpp")
+set(OFFICIAL_ADDONS_FOLDERS "${CMAKE_SOURCE_DIR}/src/addons/depth|${CMAKE_SOURCE_DIR}/src/addons/dlss5")
 set(OFFICIAL_ADDONS_BINARIES "")
 set(OFFICIAL_ADDONS_TARGETS "")
 if(WIN32)
@@ -305,8 +307,11 @@ elseif(DEPTH_MACOS)
 endif()
 add_custom_command(OUTPUT "${OFFICIAL_ADDONS_SOURCE}"
     COMMAND "${CMAKE_COMMAND}" "-DLIST=${CMAKE_SOURCE_DIR}/src/addons/official.ini" "-DOUTPUT=${OFFICIAL_ADDONS_SOURCE}"
-            "-DVERSION=${PROJECT_VERSION}" "-DBINARIES=${OFFICIAL_ADDONS_BINARIES}" -P "${CMAKE_SOURCE_DIR}/src/addons/official.cmake"
-    DEPENDS "${CMAKE_SOURCE_DIR}/src/addons/official.ini" "${CMAKE_SOURCE_DIR}/src/addons/official.cmake" ${OFFICIAL_ADDONS_TARGETS}
+            "-DVERSION=${PROJECT_VERSION}" "-DBINARIES=${OFFICIAL_ADDONS_BINARIES}" "-DFOLDERS=${OFFICIAL_ADDONS_FOLDERS}"
+            -P "${CMAKE_SOURCE_DIR}/src/addons/official.cmake"
+    DEPENDS "${CMAKE_SOURCE_DIR}/src/addons/official.ini" "${CMAKE_SOURCE_DIR}/src/addons/official.cmake"
+            "${CMAKE_SOURCE_DIR}/src/addons/depth/addon.ini" "${CMAKE_SOURCE_DIR}/src/addons/depth/icon.png"
+            "${CMAKE_SOURCE_DIR}/src/addons/dlss5/addon.ini" "${CMAKE_SOURCE_DIR}/src/addons/dlss5/icon.png" ${OFFICIAL_ADDONS_TARGETS}
     VERBATIM)
 
 # Everything but main, so tests can link it.

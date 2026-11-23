@@ -5,8 +5,8 @@
 // needs the add-on's own work on the graphics card done when frame returns, so each frame waits for it. That is the
 // box filter and the upsample, never the model.
 //
-// The files it needs are in Addons/Depth: depth-anything-v2-small.onnx and libonnxruntime.dylib. The models Core ML
-// compiles from it go in Addons/Depth/CoreML.
+// The files it needs are in its folder with it: depth-anything-v2-small.onnx and libonnxruntime.dylib. The models Core
+// ML compiles from it go in CoreML there.
 
 #include "depth_model.h"
 #include "depth_shared.h"

@@ -1732,75 +1732,72 @@ float SettingsBody(const Model& model, Host& host, ImVec2 min, float width)
     return flow.Height();
 }
 
-// An add-on: what it is, and its switch or what it waits for.
+// An add-on: its icon, what it is and who made it, and its switch or what it waits for.
 void AddonRow(Flow& flow, Host& host, const Addon& addon, size_t index)
 {
-    std::string title = addon.name;
     std::string description = addon.description;
     std::vector<Action> actions;
+    const bool switched = addon.state == AddonState::On || addon.state == AddonState::Off || addon.state == AddonState::Failed;
     switch (addon.state)
     {
     case AddonState::Available: actions = { { addon.error.empty() ? "Install" : "Try again", PillStyle::Black } }; break;
     case AddonState::Installing: actions = { { "Cancel", PillStyle::Text } }; break;
     case AddonState::Pending:
-        title = addon.file;
         description = "This isn't an official Unishade add-on. Add-ons run with the same access as Unishade.";
         actions = { { "Don't load", PillStyle::Text }, { "Load", PillStyle::Black } };
         break;
     case AddonState::On:
     case AddonState::Off:
-    case AddonState::Failed: break;
+    case AddonState::Failed:
+        if (addon.update)
+            actions = { { "Update", PillStyle::Well } };
+        break;
     }
+    // Its version and who made it, as it says itself, and its folder unless it is one of Unishade's.
+    std::string byline = addon.version;
+    for (const std::string& part : { addon.author, addon.official ? std::string() : addon.folder })
+        if (!part.empty())
+            byline += (byline.empty() ? "" : " \xC2\xB7 ") + part;
     const bool installing = addon.state == AddonState::Installing;
-    const bool switched = actions.empty();
     const float gap = S(6.4f), progressWidth = S(96);
-    float controls = switched ? S(kSwitchWidth) : installing ? progressWidth + gap : 0;
+    float controls = installing ? progressWidth + gap : 0;
     for (const Action& action : actions)
         controls += PillWidth(action.label, action.style) + gap;
-    if (!switched)
-        controls -= gap;
-    const float pad = S(17.6f), vertical = S(14.4f);
-    const bool beside = flow.width - controls - pad * 2 - S(12.8f) >= S(200);
-    const float textWidth = beside ? flow.width - controls - pad * 2 - S(12.8f) : flow.width - pad * 2;
-    // Its file under its name, as ReShade lists add-ons, unless it is one of Unishade's or waits to be loaded.
-    const std::string file = addon.official || addon.state == AddonState::Pending ? std::string() : addon.file;
+    controls += switched ? S(kSwitchWidth) : -gap;
+    const float pad = S(17.6f), vertical = S(14.4f), icon = S(44), iconGap = S(12.8f);
+    const float room = flow.width - pad * 2 - icon - iconGap;
+    const bool beside = room - controls - S(12.8f) >= S(200);
+    const float textWidth = beside ? room - controls - S(12.8f) : room;
     const std::string error = installing ? std::string() : addon.error;
-    const float titleHeight = Measure(title, kTextBody, true, textWidth).y;
+    const float titleHeight = Measure(addon.name, kTextBody, true, textWidth).y;
+    const float bylineHeight = byline.empty() ? 0 : S(2) + Measure(byline, kTextSmall, false, textWidth).y;
     const float descriptionHeight = description.empty() ? 0 : S(2) + Measure(description, kTextSmall, false, textWidth).y;
-    const float fileHeight = file.empty() ? 0 : S(2) + Measure(file, kTextSmall, false, textWidth).y;
     const float errorHeight = error.empty() ? 0 : S(4.8f) + Measure(error, kTextSmall, false, textWidth).y;
-    const float text = titleHeight + descriptionHeight + fileHeight + errorHeight;
+    const float text = std::max(titleHeight + bylineHeight + descriptionHeight + errorHeight, icon);
     const float inside = beside ? std::max(text, S(kButton)) : text + S(9.6f) + S(kButton);
     const ImRect at = flow.Next(inside + vertical * 2, 0);
 
     ImGui::PushID(addon.id.c_str());
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->AddRectFilled(at.Min, at.Max, kWell, S(kRowRounding));
-    const float left = at.Min.x + pad, right = left + textWidth;
-    float y = at.Min.y + vertical + (beside ? (inside - text) / 2 : 0);
-    y += Paragraph(draw, ImVec2(left, y), right, title, kInk, kTextBody, true);
+    const float top = at.Min.y + vertical + (beside ? (inside - text) / 2 : 0);
+    GameSquare(draw, ImVec2(at.Min.x + pad, top), icon, S(11.2f), addon.name, addon.icon, addon.id);
+    const float left = at.Min.x + pad + icon + iconGap, right = left + textWidth;
+    float y = top + std::max(0.0f, (icon - titleHeight - bylineHeight - descriptionHeight - errorHeight) / 2);
+    y += Paragraph(draw, ImVec2(left, y), right, addon.name, kInk, kTextBody, true);
+    if (!byline.empty())
+        y += S(2) + Paragraph(draw, ImVec2(left, y + S(2)), right, byline, kMist, kTextSmall);
     if (!description.empty())
         y += S(2) + Paragraph(draw, ImVec2(left, y + S(2)), right, description, kMist, kTextSmall);
-    if (!file.empty())
-        y += S(2) + Paragraph(draw, ImVec2(left, y + S(2)), right, file, kMist, kTextSmall);
     if (!error.empty())
         Paragraph(draw, ImVec2(left, y + S(4.8f)), right, error, kDanger, kTextSmall);
 
     float x = beside ? at.Max.x - pad - controls : left;
-    const float top = beside ? at.Min.y + (at.GetHeight() - S(kButton)) / 2 : at.Max.y - vertical - S(kButton);
-    if (switched)
-    {
-        const bool on = addon.state == AddonState::On;
-        const bool clicked = SwitchButton("switch", ImVec2(x, top + (S(kButton) - S(kSwitchHeight)) / 2), on);
-        if (addon.state == AddonState::Failed)
-            Tip("Turn on to try again");
-        if (clicked)
-            host.SetAddon(index, !on);
-    }
+    const float buttons = beside ? at.Min.y + (at.GetHeight() - S(kButton)) / 2 : at.Max.y - vertical - S(kButton);
     if (installing)
     {
         // How far it is, in the ring's colors across a black pill.
-        const ImVec2 barMin(x, top), barMax(x + progressWidth, top + S(kButton));
+        const ImVec2 barMin(x, buttons), barMax(x + progressWidth, buttons + S(kButton));
         draw->AddRectFilled(barMin, barMax, IM_COL32_BLACK, S(kButton) / 2);
         const float progress = std::clamp(Animate(ImGui::GetID("progress"), addon.progress, 0.2f, Curve::Linear), 0.0f, 1.0f);
         RainbowFill(draw, barMin, barMax, S(kButton) / 2, progress);
@@ -1810,9 +1807,9 @@ void AddonRow(Flow& flow, Host& host, const Addon& addon, size_t index)
     }
     for (size_t i = 0; i < actions.size(); ++i)
     {
-        if (PillButton(actions[i].label, ImVec2(x, top), S(kButton), actions[i].style))
+        if (PillButton(actions[i].label, ImVec2(x, buttons), S(kButton), actions[i].style))
         {
-            if (addon.state == AddonState::Available)
+            if (addon.state == AddonState::Available || switched)
                 host.InstallAddon(index);
             else if (installing)
                 host.CancelInstall(index);
@@ -1821,10 +1818,19 @@ void AddonRow(Flow& flow, Host& host, const Addon& addon, size_t index)
         }
         x += PillWidth(actions[i].label, actions[i].style) + gap;
     }
+    if (switched)
+    {
+        const bool on = addon.state == AddonState::On;
+        const bool clicked = SwitchButton("switch", ImVec2(x, buttons + (S(kButton) - S(kSwitchHeight)) / 2), on);
+        if (addon.state == AddonState::Failed)
+            Tip("Turn on to try again");
+        if (clicked)
+            host.SetAddon(index, !on);
+    }
     ImGui::PopID();
 }
 
-// Official add-ons, then the other files in the Addons folder. Their settings are in the tray's More, since each preset
+// Official add-ons, then the others in the Addons folder. Their settings are in the tray's More, since each preset
 // keeps them.
 float AddonsBody(const Model& model, Host& host, ImVec2 min, float width)
 {

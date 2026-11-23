@@ -1,6 +1,6 @@
 // DLSS5 as a Unishade add-on. It is part of Unishade_nvngx.dll, since nvngx_dlssnr.dll only takes calls from a module
-// whose path contains nvngx.dll, and runs dlss5.cpp on every frame before effects. nvngx_dlssnr.dll goes in
-// Addons/Unishade_nvngx. Evaluating waits for the graphics card, so the frame waits on the processor too.
+// whose path contains nvngx.dll, and runs dlss5.cpp on every frame before effects. nvngx_dlssnr.dll goes in its folder
+// with it. Evaluating waits for the graphics card, so the frame waits on the processor too.
 //
 // Nothing known about nvngx_dlssnr.dll says it takes HDR color: .plan/dlss5-research.md lists no such parameter or
 // creation flag. So an HDR picture is brought into an SDR one for it with a curve that can be undone, and what it

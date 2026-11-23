@@ -1,5 +1,7 @@
-# Writes the official add-on list into a source file of the program, at build time. LIST is official.ini, OUTPUT the
-# source file, VERSION the version, and BINARIES the add-ons this build made, as name=path separated by |.
+# Writes the official add-ons into a source file of the program, at build time: the list of their files, and each
+# one's manifest and icon. LIST is official.ini, OUTPUT the source file, VERSION the version, BINARIES the add-ons this
+# build made, as name=path separated by |, and FOLDERS the folders with each add-on's addon.ini and icon.png,
+# separated by |.
 file(READ "${LIST}" text)
 # Without its comments, which name the placeholders.
 string(REGEX REPLACE "(^|\n);[^\n]*" "" text "${text}")
@@ -13,4 +15,28 @@ foreach(binary IN LISTS binaries)
     file(SHA256 "${path}" hash)
     string(REPLACE "@${name}@" "${hash}" text "${text}")
 endforeach()
-file(WRITE "${OUTPUT}" "extern const char kOfficialAddons[];\nconst char kOfficialAddons[] = R\"list(${text})list\";\n")
+set(source "extern const char kOfficialAddons[];\nconst char kOfficialAddons[] = R\"list(${text})list\";\n")
+
+string(REPLACE "|" ";" folders "${FOLDERS}")
+set(manifests "")
+set(icons "")
+set(sizes "")
+set(count 0)
+foreach(folder IN LISTS folders)
+    file(READ "${folder}/addon.ini" manifest)
+    string(REGEX REPLACE "(^|\n);[^\n]*" "" manifest "${manifest}")
+    string(REGEX REPLACE "^\n+" "" manifest "${manifest}")
+    string(REPLACE "@VERSION@" "${VERSION}" manifest "${manifest}")
+    file(READ "${folder}/icon.png" icon HEX)
+    string(REGEX REPLACE "(..)" "0x\\1," icon "${icon}")
+    string(APPEND source "static const unsigned char kIcon${count}[] = {${icon}};\n")
+    string(APPEND manifests "    R\"manifest(${manifest})manifest\",\n")
+    string(APPEND icons "    kIcon${count},\n")
+    string(APPEND sizes "    sizeof(kIcon${count}),\n")
+    math(EXPR count "${count} + 1")
+endforeach()
+# Each array ends with an entry that is not an add-on's, so none of them is empty.
+string(APPEND source "extern const char* const kOfficialManifests[];\nconst char* const kOfficialManifests[] = {\n${manifests}    nullptr,\n};\n")
+string(APPEND source "extern const unsigned char* const kOfficialIcons[];\nconst unsigned char* const kOfficialIcons[] = {\n${icons}    nullptr,\n};\n")
+string(APPEND source "extern const unsigned kOfficialIconSizes[];\nconst unsigned kOfficialIconSizes[] = {\n${sizes}    0,\n};\n")
+file(WRITE "${OUTPUT}" "${source}")

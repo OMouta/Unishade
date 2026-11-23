@@ -3,7 +3,7 @@
 // shares, makes the model's input from it and turns the model's output into DEPTH. The model runs on a worker thread
 // and can take longer than a frame: frames that arrive meanwhile are skipped, and DEPTH keeps the last estimate.
 //
-// The files it needs are in Addons/Depth: depth-anything-v2-small.onnx, onnxruntime.dll and DirectML.dll.
+// The files it needs are in its folder with it: depth-anything-v2-small.onnx, onnxruntime.dll and DirectML.dll.
 
 #include "depth_model.h"
 #include "depth_shared.h"

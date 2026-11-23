@@ -83,6 +83,8 @@ constexpr char kHelpUrl[] = "https://discord.gg/wVbVUdENas";
 constexpr size_t kMaxPictures = 192;
 constexpr uint32_t kDescriptorPoolSize = kMaxPictures + 64;
 constexpr char kLogoPicture[] = "logo";
+// Then an official add-on's Id: its icon as the program has it.
+const std::string kAddonPicture = "addon:";
 
 struct DecodedPicture
 {
@@ -160,8 +162,8 @@ std::vector<uint8_t> Shrink(const uint8_t* rgba, int width, int height, int size
     return result;
 }
 
-// The picture a key names as RGBA: the logo, a folder's logo.png, a picture's file, or on Windows the icon of a
-// program's file.
+// The picture a key names as RGBA: the logo, an official add-on's icon, a folder's logo.png, a picture's file, or on
+// Windows the icon of a program's file.
 bool IsProgram(const std::string& file)
 {
     return file.size() > 4 && (file.ends_with(".exe") || file.ends_with(".EXE"));
@@ -180,8 +182,18 @@ std::vector<uint8_t> ReadPicture(const std::string& key, int& width, int& height
         return std::move(icon.rgba);
     }
 #endif
-    const image::Pixels pixels = key == kLogoPicture ? image::Decode(std::string_view(reinterpret_cast<const char*>(kLogoPng), kLogoPngSize))
-                                 : image::Read(fs::is_directory(path, error) ? path / "logo.png" : path);
+    image::Pixels pixels;
+    if (key == kLogoPicture)
+        pixels = image::Decode(std::string_view(reinterpret_cast<const char*>(kLogoPng), kLogoPngSize));
+    else if (key.starts_with(kAddonPicture))
+    {
+        // The official list stays as it is once Unishade started, so a thread can read it.
+        for (const Addons::Official& official : app.addons.OfficialList())
+            if (official.manifest.id == key.substr(kAddonPicture.size()))
+                pixels = image::Decode(std::string_view(reinterpret_cast<const char*>(official.icon.data()), official.icon.size()));
+    }
+    else
+        pixels = image::Read(fs::is_directory(path, error) ? path / "logo.png" : path);
     if (!pixels.data)
         return {};
     width = pixels.width;
@@ -575,6 +587,7 @@ void DrawDebugInfo(App& app)
 struct AddonInstall
 {
     Addons::Official official;
+    std::string folder; // in the Addons folder
     std::thread thread;
     std::atomic<bool> cancel = false;
     std::atomic<bool> done = false;
@@ -642,13 +655,13 @@ struct LauncherState
     // What the cards' buttons and the links do.
     std::vector<std::vector<std::function<void()>>> cards;
     std::vector<std::function<void()>> links;
-    // The file of each add-on the model lists, the installs under way, why the last install of each official add-on
-    // failed, and whether each has all its files, which is read with the presets.
-    std::vector<std::string> addonFiles;
+    // The folder of each add-on the model lists, the installs under way, why the last install of each official add-on
+    // failed, by its Id, and whether each has all its files, which is read with the presets.
+    std::vector<std::string> addonFolders;
     std::vector<std::unique_ptr<AddonInstall>> installs;
     std::map<std::string, std::string> installErrors;
     std::map<std::string, bool> addonsWhole;
-    std::string addonsFolder; // its files as last seen, with their sizes and times
+    std::string addonsFolder; // its add-ons' files as last seen, with their sizes and times
 #ifdef _WIN32
     bool startsWithWindows = false; // read with the presets, since Task Manager can turn it off meanwhile
 #endif
@@ -1631,40 +1644,41 @@ public:
     {
         const Addons::Official* official = OfficialOf(addon);
         if (!official || std::any_of(launcherState.installs.begin(), launcherState.installs.end(),
-                                     [&](const auto& install) { return install->official.name == official->name; }))
+                                     [&](const auto& install) { return install->official.manifest.id == official->manifest.id; }))
             return;
-        Log(LogLevel::Info, "Installing the add-on %s.", official->name.c_str());
+        Log(LogLevel::Info, "Installing the add-on %s.", official->manifest.id.c_str());
         launcherState.installs.push_back(std::make_unique<AddonInstall>());
         launcherState.installs.back()->official = *official;
-        launcherState.installErrors.erase(official->name);
+        launcherState.installs.back()->folder = app.addons.FolderOf(*official);
+        launcherState.installErrors.erase(official->manifest.id);
         // Windows does not let a library that is loaded be replaced.
-        app.addons.Pause(official->files[0].path);
+        app.addons.Pause(launcherState.installs.back()->folder);
     }
 
     void CancelInstall(size_t addon) override
     {
         if (const Addons::Official* official = OfficialOf(addon))
             for (const auto& install : launcherState.installs)
-                if (install->official.name == official->name)
+                if (install->official.manifest.id == official->manifest.id)
                     install->cancel = true;
     }
 
     void LoadAddon(size_t addon, bool load) override
     {
-        if (addon < launcherState.addonFiles.size())
-            app.addons.Approve(launcherState.addonFiles[addon], load);
+        if (addon < launcherState.addonFolders.size())
+            app.addons.Approve(launcherState.addonFolders[addon], load);
     }
 
     void SetAddon(size_t addon, bool on) override
     {
-        if (addon < launcherState.addonFiles.size())
-            app.addons.SetEnabled(launcherState.addonFiles[addon], on);
+        if (addon < launcherState.addonFolders.size())
+            app.addons.SetEnabled(launcherState.addonFolders[addon], on);
     }
 
     void BypassAddon(size_t addon, bool bypassed) override
     {
-        if (addon < launcherState.addonFiles.size())
-            app.addons.SetBypassed(launcherState.addonFiles[addon], bypassed);
+        if (addon < launcherState.addonFolders.size())
+            app.addons.SetBypassed(launcherState.addonFolders[addon], bypassed);
     }
 
     void SetAddonSetting(size_t addon, size_t setting, const launcher::EffectSetting& value) override
@@ -1672,8 +1686,8 @@ public:
         float values[4];
         for (int i = 0; i < 4; ++i)
             values[i] = value.floating ? value.floats[i] : static_cast<float>(value.ints[i]);
-        if (addon < launcherState.addonFiles.size())
-            app.addons.SetSetting(launcherState.addonFiles[addon], setting, values);
+        if (addon < launcherState.addonFolders.size())
+            app.addons.SetSetting(launcherState.addonFolders[addon], setting, values);
     }
 
     void OpenAddonsFolder() override
@@ -1864,16 +1878,15 @@ void FollowInstalls(App& app)
     for (auto it = installs.begin(); it != installs.end();)
     {
         AddonInstall& install = **it;
-        const std::string& file = install.official.files[0].path;
         if (!install.thread.joinable() && !install.done && install.cancel)
             install.done = true;
-        else if (!install.thread.joinable() && !install.done && !app.addons.Loaded(file))
+        else if (!install.thread.joinable() && !install.done && !app.addons.Loaded(install.folder))
             install.thread = std::thread([&install] {
                 try
                 {
                     // The add-on's own library is small next to the files it needs, so the bar follows those.
                     const size_t needed = install.official.files.size() - 1;
-                    Addons::Install(install.official, install.cancel, [&](size_t index, uint64_t received, uint64_t total) {
+                    Addons::Install(install.official, install.folder, install.cancel, [&](size_t index, uint64_t received, uint64_t total) {
                         const float part = total ? static_cast<float>(received) / static_cast<float>(total) : 0.0f;
                         install.progress = !needed ? part : index ? (static_cast<float>(index - 1) + part) / static_cast<float>(needed) : 0.0f;
                     });
@@ -1896,19 +1909,19 @@ void FollowInstalls(App& app)
         }
         if (install.thread.joinable())
             install.thread.join();
-        const std::string& name = install.official.name;
-        app.addons.Resume(file);
+        const std::string& name = install.official.manifest.name;
+        app.addons.Resume(install.folder);
         if (install.cancel)
             Log(LogLevel::Info, "Installing the add-on %s was cancelled.", name.c_str());
         else if (!install.error.empty())
         {
             Log(LogLevel::Warning, "Could not install the add-on %s: %s", name.c_str(), install.error.c_str());
-            launcherState.installErrors[name] = install.error;
+            launcherState.installErrors[install.official.manifest.id] = install.error;
         }
         else
         {
             Log(LogLevel::Info, "Installed the add-on %s.", name.c_str());
-            app.addons.SetEnabled(file, true);
+            app.addons.SetEnabled(install.folder, true);
         }
         it = installs.erase(it);
         RefreshLauncher();
@@ -1966,19 +1979,25 @@ launcher::EffectSetting SettingOf(const Addons::Setting& setting)
     return shown;
 }
 
-// Reads the Addons folder again when its files changed, so one dropped there shows without a restart. Installs write
-// there, and read it again once they are done.
+// Reads the Addons folder again when its add-ons' files changed, so one put there shows without a restart. Installs
+// write there, and read it again once they are done.
 void LookForAddons(App& app)
 {
     if (!launcherState.installs.empty())
         return;
     std::string files;
     std::error_code error;
-    for (fs::directory_iterator it(DataDirectory() / "Addons", error), end; !error && it != end; it.increment(error))
-        if (it->is_regular_file(error))
-            // libc++ counts file times in a 128-bit integer, which std::to_string does not take.
-            files += it->path().filename().string() + ' ' + std::to_string(it->file_size(error)) + ' ' +
-                     std::to_string(static_cast<long long>(it->last_write_time(error).time_since_epoch().count())) + '\n';
+    for (fs::directory_iterator folder(DataDirectory() / "Addons", error), end; !error && folder != end; folder.increment(error))
+    {
+        if (!folder->is_directory(error))
+            continue;
+        std::error_code inside;
+        for (fs::directory_iterator it(folder->path(), inside); !inside && it != end; it.increment(inside))
+            if (it->is_regular_file(inside))
+                // libc++ counts file times in a 128-bit integer, which std::to_string does not take.
+                files += folder->path().filename().string() + '/' + it->path().filename().string() + ' ' + std::to_string(it->file_size(inside)) + ' ' +
+                         std::to_string(static_cast<long long>(it->last_write_time(inside).time_since_epoch().count())) + '\n';
+    }
     if (files != launcherState.addonsFolder)
     {
         launcherState.addonsFolder = std::move(files);
@@ -1986,82 +2005,97 @@ void LookForAddons(App& app)
     }
 }
 
-// Whether every file of an official add-on is in the Addons folder, read once until the launcher reads the disk again.
-bool Whole(const Addons::Official& official)
+// Whether an official add-on's addon.ini and every file of it is in its folder, read once until the launcher reads the
+// disk again.
+bool Whole(const Addons::Official& official, const std::string& folder)
 {
-    auto [entry, added] = launcherState.addonsWhole.try_emplace(official.name);
+    auto [entry, added] = launcherState.addonsWhole.try_emplace(official.manifest.id);
     if (added)
-        entry->second = std::all_of(official.files.begin(), official.files.end(), [](const Addons::Official::File& file) {
-            std::error_code error;
-            return fs::is_regular_file(DataDirectory() / "Addons" / fs::path(file.path), error);
-        });
+    {
+        const fs::path path = DataDirectory() / "Addons" / fs::path(folder);
+        std::error_code error;
+        entry->second = fs::is_regular_file(path / addon::kManifestFile, error) &&
+                        std::all_of(official.files.begin(), official.files.end(), [&](const addon::Download& file) {
+                            std::error_code missing;
+                            return fs::is_regular_file(path / fs::path(file.path), missing);
+                        });
+    }
     return entry->second;
 }
 
-// The official add-ons, installed or not, then every other file in the Addons folder.
+// What the launcher shows of an add-on in the Addons folder.
+void DescribeInstalled(App& app, const Addons::Addon& installed, launcher::Addon& addon)
+{
+    addon.name = installed.manifest.name;
+    addon.description = installed.manifest.description;
+    addon.version = installed.manifest.version;
+    addon.author = installed.manifest.author;
+    addon.folder = installed.folder;
+    if (!installed.icon.empty())
+        addon.icon = installed.icon;
+    addon.official = installed.official;
+    addon.update = installed.replaceable;
+    addon.state = StateOf(installed.state);
+    addon.error = installed.error;
+    addon.changesPicture = addon.state == launcher::AddonState::On && app.addons.ChangesPicture(installed);
+    addon.bypassed = installed.bypassed;
+    if (addon.state == launcher::AddonState::On)
+        for (const Addons::Setting& setting : installed.settings)
+            addon.settings.push_back(SettingOf(setting));
+}
+
+// The official add-ons, installed or not, then every other add-on in the Addons folder.
 void DescribeAddons(App& app, launcher::Model& model)
 {
     FollowInstalls(app);
     std::vector<launcher::Addon>& list = model.addons.emplace();
-    std::vector<std::string>& files = launcherState.addonFiles;
-    files.clear();
+    std::vector<std::string>& folders = launcherState.addonFolders;
+    folders.clear();
     const std::vector<Addons::Addon>& found = app.addons.List();
     std::vector<bool> listed(found.size());
-    const auto installing = [](const std::string& file) {
-        return std::find_if(launcherState.installs.begin(), launcherState.installs.end(),
-                            [&](const auto& install) { return install->official.files[0].path == file; });
+    const auto installing = [](const std::string& folder) {
+        return std::find_if(launcherState.installs.begin(), launcherState.installs.end(), [&](const auto& install) { return install->folder == folder; });
     };
     for (const Addons::Official& official : app.addons.OfficialList())
     {
-        launcher::Addon addon{ .id = official.name, .name = official.name, .description = official.description, .file = official.files[0].path, .official = true };
+        const std::string folder = app.addons.FolderOf(official);
+        // Until it is installed, the launcher shows what this Unishade knows of it, with the icon in the program.
+        launcher::Addon addon{ .id = official.manifest.id,
+                               .name = official.manifest.name,
+                               .description = official.manifest.description,
+                               .version = official.manifest.version,
+                               .author = official.manifest.author,
+                               .icon = kAddonPicture + official.manifest.id,
+                               .folder = folder,
+                               .official = true };
         const auto installed =
-            std::find_if(found.begin(), found.end(), [&](const Addons::Addon& candidate) { return candidate.official && candidate.file == addon.file; });
+            std::find_if(found.begin(), found.end(), [&](const Addons::Addon& candidate) { return candidate.manifest.id == official.manifest.id; });
         if (installed != found.end())
             listed[installed - found.begin()] = true;
-        if (const auto install = installing(addon.file); install != launcherState.installs.end())
+        if (const auto install = installing(folder); install != launcherState.installs.end())
         {
             addon.state = launcher::AddonState::Installing;
             addon.progress = (*install)->progress;
         }
         // One with files missing fails to start for that reason, which installing it fixes.
-        else if (installed == found.end() || !Whole(official))
+        else if (installed == found.end() || !Whole(official, folder))
         {
             addon.state = launcher::AddonState::Available;
-            if (const auto error = launcherState.installErrors.find(official.name); error != launcherState.installErrors.end())
+            if (const auto error = launcherState.installErrors.find(official.manifest.id); error != launcherState.installErrors.end())
                 addon.error = error->second;
         }
         else
-        {
-            addon.state = StateOf(installed->state);
-            addon.error = installed->error;
-            addon.changesPicture = addon.state == launcher::AddonState::On && app.addons.ChangesPicture(*installed);
-            addon.bypassed = installed->bypassed;
-            if (addon.state == launcher::AddonState::On)
-                for (const Addons::Setting& setting : installed->settings)
-                    addon.settings.push_back(SettingOf(setting));
-        }
-        files.push_back(addon.file);
+            DescribeInstalled(app, *installed, addon);
+        folders.push_back(folder);
         list.push_back(std::move(addon));
     }
     for (size_t i = 0; i < found.size(); ++i)
     {
-        const Addons::Addon& other = found[i];
         // One that is being installed over goes once it is.
-        if (listed[i] || installing(other.file) != launcherState.installs.end())
+        if (listed[i] || installing(found[i].folder) != launcherState.installs.end())
             continue;
-        files.push_back(other.file);
-        launcher::Addon& addon = list.emplace_back(launcher::Addon{ .id = other.file,
-                                                                    .name = other.name,
-                                                                    .description = other.description,
-                                                                    .file = other.file,
-                                                                    .official = other.official,
-                                                                    .state = StateOf(other.state),
-                                                                    .error = other.error });
-        addon.changesPicture = addon.state == launcher::AddonState::On && app.addons.ChangesPicture(other);
-        addon.bypassed = other.bypassed;
-        if (addon.state == launcher::AddonState::On)
-            for (const Addons::Setting& setting : other.settings)
-                addon.settings.push_back(SettingOf(setting));
+        folders.push_back(found[i].folder);
+        DescribeInstalled(app, found[i], list.emplace_back(launcher::Addon{ .id = "folder:" + found[i].folder }));
     }
 }
 

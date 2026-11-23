@@ -524,14 +524,16 @@ bool QuitTests(Host& host)
     ok &= Check(!Find("Don't save"), "the question goes once nothing asks it");
     return ok;
 }
-// An official add-on that is on with a setting, one that can be installed, and a file that waits to be allowed.
+// An official add-on that is on with a setting, one that can be installed, and one that waits to be allowed.
 std::vector<launcher::Addon> Addons()
 {
     using launcher::AddonState;
     launcher::EffectSetting detail{ .control = launcher::EffectSetting::Control::Check, .floating = false, .label = "Detail", .resettable = false };
-    return { { .id = "Depth", .name = "Depth", .file = "Depth.dll", .official = true, .state = AddonState::On, .settings = { detail } },
-             { .id = "DLSS5", .name = "DLSS5", .file = "DLSS5.dll", .official = true, .state = AddonState::Available },
-             { .id = "Mine.dll", .name = "Mine", .file = "Mine.dll", .state = AddonState::Pending } };
+    return { { .id = "unishade.depth", .name = "Depth", .version = "1.0.0", .author = "Unishade", .folder = "unishade.depth", .official = true,
+               .state = AddonState::On, .settings = { detail } },
+             { .id = "unishade.dlss5", .name = "DLSS5", .version = "1.0.0", .author = "Unishade", .folder = "unishade.dlss5", .official = true,
+               .state = AddonState::Available },
+             { .id = "folder:mine", .name = "Mine", .version = "0.1", .author = "Someone", .folder = "mine", .state = AddonState::Pending } };
 }
 
 // Add-ons installs official add-ons, asks about files that are not official, and turns add-ons on and off.
@@ -546,7 +548,7 @@ bool AddonsTests(Host& host)
     ok &= Check(Click(host, model, "addons"), "the window has an Add-ons button");
     Settle(host, model);
     ok &= Check(Click(host, model, "Install"), "an official add-on that is not installed offers Install");
-    ok &= Check(Click(host, model, "Load"), "a file that is not official asks whether to load it");
+    ok &= Check(Click(host, model, "Load"), "an add-on that is not official asks whether to load it");
     ok &= Check(Click(host, model, "Don't load"), "it can be left unloaded");
     ok &= Check(Click(host, model, "switch"), "an add-on that is installed can be turned off");
     ok &= Check(host.calls == std::vector<std::string>{ "install 1", "load 2", "leave 2", "addon 0 off" }, "each control acts on its own add-on");
@@ -566,6 +568,16 @@ bool AddonsTests(Host& host)
     Frame(host, model);
     ok &= Check(Click(host, model, "switch"), "a failed add-on can be turned on");
     ok &= Check(host.calls == std::vector<std::string>{ "cancel 1", "install 1", "addon 0 on" }, "turning a failed add-on on tries it again");
+
+    host.calls.clear();
+    ok &= Check(!Find("Update"), "an add-on that is this version's offers no update");
+    (*model.addons)[0].state = launcher::AddonState::On;
+    (*model.addons)[0].error.clear();
+    (*model.addons)[0].update = true;
+    Frame(host, model);
+    ok &= Check(Click(host, model, "Update"), "an official add-on of another version offers Update");
+    ok &= Check(Click(host, model, "switch"), "and still has its switch");
+    ok &= Check(host.calls == std::vector<std::string>{ "install 0", "addon 0 off" }, "updating installs it again");
     return ok;
 }
 

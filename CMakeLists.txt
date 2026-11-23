@@ -97,8 +97,8 @@ if(WIN32 OR DEPTH_MACOS)
     endif()
 endif()
 
-# Depth estimation on macOS, Depth.dylib. Its model and libonnxruntime.dylib go in Addons/Depth. The linker signs it ad
-# hoc, which is all Apple silicon asks of a library a program without the hardened runtime loads, so the file the
+# Depth estimation on macOS, Depth.dylib. Its model and libonnxruntime.dylib go in its folder with it. The linker signs
+# it ad hoc, which is all Apple silicon asks of a library a program without the hardened runtime loads, so the file the
 # official list hashes is the file published.
 if(DEPTH_MACOS)
     add_library(depth_addon SHARED src/depth/depth_addon_macos.mm src/depth/depth_model.cpp)
@@ -112,7 +112,7 @@ if(NOT WIN32)
     return()
 endif()
 
-# Depth estimation as an add-on of the Vulkan host, Depth.dll. Its model and ONNX Runtime go in Addons/Depth.
+# Depth estimation as an add-on of the Vulkan host, Depth.dll. Its model and ONNX Runtime go in its folder with it.
 add_library(depth_addon SHARED src/depth/depth_addon.cpp src/depth/depth_model.cpp)
 set_target_properties(depth_addon PROPERTIES OUTPUT_NAME Depth)
 target_include_directories(depth_addon PRIVATE src "${ONNXRUNTIME_INCLUDE}")
@@ -169,7 +169,7 @@ set_target_properties(installer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/installer$<0:>")
 
 # DLSS5 calls NVIDIA's nvngx_dlssnr.dll directly. Unishade_nvngx.dll is also the DLSS5 add-on of the Vulkan host, which
-# takes nvngx_dlssnr.dll from Addons/Unishade_nvngx. A program that runs an image through it is built on request:
+# takes nvngx_dlssnr.dll from its own folder. A program that runs an image through it is built on request:
 # cmake --build build --config Release --target dlss5_check
 set(NGX_INCLUDE "${CMAKE_BINARY_DIR}/ngx")
 set(NGX_URL "https://raw.githubusercontent.com/NVIDIA/DLSS/v310.9.16/include")
