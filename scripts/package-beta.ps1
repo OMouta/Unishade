@@ -1,5 +1,6 @@
 # Builds Unishade and packs a portable copy for testers into build/beta. The zip has every official effect, the
-# presets and the official add-ons. Testers unzip it and run Unishade.exe.
+# presets and the official add-ons. Testers unzip it and run Unishade.exe. It is for handing out a commit between
+# releases. A beta everyone can download is a release the Build and release workflow publishes.
 #
 #   ./scripts/package-beta.ps1
 
@@ -8,7 +9,12 @@ $repo = Split-Path $PSScriptRoot -Parent
 $build = Join-Path $repo 'build'
 $out = Join-Path $build 'beta'
 
-$version = [regex]::Match((Get-Content "$repo/CMakeLists.txt" -Raw), 'project\(Unishade VERSION ([\d.]+)').Groups[1].Value
+# The version as the build names it: 0.7.0, or 0.7.0-beta.2 with set(UNISHADE_BETA 2).
+$cmake = Get-Content "$repo/CMakeLists.txt" -Raw
+$version = [regex]::Match($cmake, 'project\(Unishade VERSION ([\d.]+)').Groups[1].Value
+$beta = [regex]::Match($cmake, '(?m)^set\(UNISHADE_BETA (\d+)\)').Groups[1].Value
+if (-not $version -or -not $beta) { throw 'Could not read the version and UNISHADE_BETA from CMakeLists.txt.' }
+if ($beta -ne '0') { $version = "$version-beta.$beta" }
 $commit = git -C $repo rev-parse --short HEAD
 
 cmake -S $repo -B $build -A x64
@@ -34,13 +40,14 @@ if ($github.Success) {
 }
 $setup = Join-Path $build "installer/Unishade-Setup-$version.exe"
 $exitCode = (Start-Process $setup -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru).ExitCode
-# 2 means Setup left out effects or presets, which a beta should not ship without.
+# 2 means Setup left out effects or presets, which testers should not go without.
 if ($exitCode -eq 2) { throw "Setup left out effects or presets. See $log" }
 if ($exitCode -ne 0) { throw "Setup failed with exit code $exitCode. See $log" }
 
-# The Add-ons page installs the official add-ons from this version's release, which a beta does not have. They go in
-# from this build instead: each one's files for Windows, from the addresses in official.ini, in a folder of the Addons
-# folder named after its Id, with the addon.ini and icon Unishade would write there.
+# The Add-ons page installs the official add-ons from this version's release, whose files are not this build's, if
+# the release exists at all. They go in from this build instead: each one's files for Windows, from the addresses in
+# official.ini, in a folder of the Addons folder named after its Id, with the addon.ini and icon Unishade would write
+# there.
 $addons = Join-Path $folder 'Addons'
 $id = $null
 foreach ($line in Get-Content "$repo/addons/official.ini") {
@@ -79,6 +86,6 @@ foreach ($manifest in Get-ChildItem "$repo/addons/*/addon.ini") {
 # Setup's uninstall list means nothing outside an installation.
 Remove-Item (Join-Path $folder 'RobloxShadeHost-Setup.files') -ErrorAction SilentlyContinue
 
-$zip = Join-Path $out "Unishade-$version-beta-$commit.zip"
+$zip = Join-Path $out "Unishade-$version-$commit.zip"
 Compress-Archive -Path $folder -DestinationPath $zip -Force
 Write-Host "Packed $zip"
