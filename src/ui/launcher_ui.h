@@ -344,6 +344,8 @@ struct Picker
 struct Model
 {
     std::string version;
+    // A beta, which says so beside the logo.
+    bool beta = false;
     // A newer version Setup can install, such as 0.7.0, or empty. Its card is among cards.
     std::string update;
     Status status;

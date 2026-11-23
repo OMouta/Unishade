@@ -2307,6 +2307,9 @@ launcher::Model DescribeLauncher(App& app)
 {
     launcher::Model model;
     model.version = UNISHADE_VERSION;
+#ifdef UNISHADE_BETA
+    model.beta = true;
+#endif
     model.status = DescribeStatus(app);
     DescribeCards(app, model);
 

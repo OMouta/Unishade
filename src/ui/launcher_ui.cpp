@@ -1427,6 +1427,14 @@ void WindowView(const Model& model, Host& host)
     const ImVec2 logoMin(std::round(std::max(side, caption::bar.inset)), std::round(middle - logo / 2));
     if (const ImTextureID picture = Picture("logo", logo); picture != ImTextureID_Invalid)
         ImGui::GetWindowDrawList()->AddImage(picture, logoMin, logoMin + ImVec2(logo, logo));
+    // A beta says so beside the logo, in a badge like the top buttons'.
+    if (model.beta)
+    {
+        const float width = Measure("BETA", Css(12), true).x + S(12.8f);
+        const ImVec2 badgeMin(logoMin.x + logo + S(8), middle - S(8.8f));
+        ImGui::GetWindowDrawList()->AddRectFilled(badgeMin, badgeMin + ImVec2(width, S(17.6f)), kBadge, S(8.8f));
+        Line(ImGui::GetWindowDrawList(), badgeMin.x, badgeMin.x + width, middle, "BETA", kOnColor, Css(12), true, true);
+    }
 
     // The games, across the window.
     Shelf(model, host, ImVec2(side - S(6), S(kBar)), display.x - side * 2 + S(12), true);
