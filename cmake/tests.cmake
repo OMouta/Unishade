@@ -68,9 +68,10 @@ target_compile_definitions(addons_tests PRIVATE EXAMPLE_ADDON="$<TARGET_FILE:exa
     EXAMPLE_MANIFEST="${CMAKE_SOURCE_DIR}/addons/example/addon.ini")
 add_dependencies(addons_tests example_addon)
 
-unishade_test(posix_tests)
-target_link_libraries(posix_tests PRIVATE unishade_core)
+# Settings, games, shortcuts and the rules for macOS windows.
+unishade_test(host_tests)
+target_link_libraries(host_tests PRIVATE unishade_core)
 
-unishade_test(posix_effects_tests)
-target_link_libraries(posix_effects_tests PRIVATE unishade_core)
-target_compile_options(posix_effects_tests PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+unishade_test(effects_tests)
+target_link_libraries(effects_tests PRIVATE unishade_core)
+target_compile_options(effects_tests PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
