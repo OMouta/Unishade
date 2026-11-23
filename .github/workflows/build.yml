@@ -370,10 +370,9 @@ jobs:
           gh release create "$RELEASE_TAG" upload/* --target "$GITHUB_SHA" --title "$RELEASE_TAG" --notes-file release-notes.md "${prerelease[@]}"
       # Cloudflare builds the site from main, and a release changes nothing there. A release made with the workflow's token
       # doesn't start other workflows either, so the website workflow's release trigger doesn't fire. The deploy hook
-      # asks Cloudflare to build the site again, to point its download buttons at the new files. A beta is not among
-      # them.
+      # asks Cloudflare to build the site again, to point its download buttons at the new files, or its banner at the
+      # new beta.
       - name: Update the website
-        if: ${{ !contains(needs.build.outputs.version, '-beta.') }}
         env:
           DEPLOY_HOOK: ${{ secrets.CLOUDFLARE_DEPLOY_HOOK }}
         run: |

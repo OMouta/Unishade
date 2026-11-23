@@ -41,6 +41,29 @@ const platforms = [
       </p>
     </header>
 
+    {
+      release.beta && (
+        <aside class="beta">
+          <div>
+            <h2>
+              <span class="beta-tag">Beta</span> Unishade {release.beta.version}
+            </h2>
+            <p>
+              Try the next version before it's released. It can have bugs, and it isn't code-signed. Setup installs it over the Unishade
+              you have and keeps your presets and settings. <a href={release.beta.notes}>What's new</a>
+            </p>
+          </div>
+          <div class="beta-files">
+            <a class="button button-primary" href={release.beta.setup.url}>
+              Download the beta for Windows
+            </a>
+            {release.beta.macos && <a href={release.beta.macos.url}>macOS</a>}
+            {release.beta.linux && <a href={release.beta.linux.url}>Linux</a>}
+          </div>
+        </aside>
+      )
+    }
+
     <ul class="platforms">
       {
         platforms.map(({ id, name, file, needs, guide }) => (
@@ -144,6 +167,53 @@ const platforms = [
   .lede {
     color: var(--haze);
     font-size: 1.25rem;
+  }
+
+  /* A beta of the next version, when one is out, with the yellow badge its launcher has. */
+  .beta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px 32px;
+    padding: clamp(20px, 2.4vw, 30px) clamp(22px, 2.6vw, 34px);
+    border-radius: var(--block);
+    background: var(--night-raised);
+  }
+
+  .beta > div:first-child {
+    display: grid;
+    gap: 10px;
+    max-width: 62ch;
+  }
+
+  .beta h2 {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 1.35rem;
+  }
+
+  .beta-tag {
+    padding: 3px 11px;
+    border-radius: 999px;
+    color: #000;
+    background: var(--yellow);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .beta p {
+    color: var(--haze);
+  }
+
+  .beta-files {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 20px;
   }
 
   /* Three tiles in the ring's colors, as the effects are in the menu. */
