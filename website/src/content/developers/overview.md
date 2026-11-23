@@ -29,6 +29,10 @@ The whole interface is one C header, [unishade_addon.h](links:addonHeader). Any 
 
 [Your first add-on](/developers/first-add-on/) builds the [example add-on](links:addonExample) and loads it. It is about 160 lines of C with no graphics code, and it uses settings, controls, drawing and events.
 
+## For agents
+
+Every page here is also Markdown. **Copy as Markdown** at the top of a page copies it. The file's address is the page's with `.md` in place of the last slash, such as `/developers/settings.md`, and this page is `/developers/overview.md`. [llms.txt](/llms.txt) lists the pages, and [llms-full.txt](/llms-full.txt) is all of them in one file with the header and the example add-on.
+
 ## Trust
 
 An add-on runs as part of Unishade, with the same access to the computer. Unishade asks the user once before it loads an add-on that is not one of its own. A crash in an add-on is a crash in Unishade.

@@ -17,9 +17,11 @@ interface Props {
   kicker?: string;
   // The pages are mostly code, which then gets the width of the column.
   code?: boolean;
+  // Where the page is as Markdown, when it is. The page then offers to copy it, for pasting into a chat with an agent.
+  markdown?: string;
 }
 
-const { entry, pages, root, home, label, kicker, code } = Astro.props;
+const { entry, pages, root, home, label, kicker, code, markdown } = Astro.props;
 const { Content, headings } = await render(entry);
 const sections = headings.filter((heading) => heading.depth === 2);
 const href = (id: string) => (id === home ? root : `${root}${id}/`);
@@ -31,7 +33,7 @@ const tones = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'violet'];
 const tone = (page: Entry) => tones[pages.indexOf(page) % tones.length];
 ---
 
-<Base title={`${entry.data.title} | Unishade`} description={entry.data.description}>
+<Base title={`${entry.data.title} | Unishade`} description={entry.data.description} markdown={markdown}>
   <div class="docs">
     <header class="cover" data-tone={tone(entry)}>
       <div>
@@ -65,6 +67,17 @@ const tone = (page: Entry) => tones[pages.indexOf(page) % tones.length];
     </nav>
 
     <main class="guide">
+      {
+        markdown && (
+          <div class="markdown">
+            <button type="button" data-markdown={markdown}>
+              Copy as Markdown
+            </button>
+            <a href={markdown}>View as Markdown</a>
+            <a href="/llms.txt">llms.txt</a>
+          </div>
+        )
+      }
       <div class:list={['prose', { reference: code }]}>
         <Content />
       </div>
@@ -89,6 +102,32 @@ const tone = (page: Entry) => tones[pages.indexOf(page) % tones.length];
     </main>
   </div>
 </Base>
+
+<script>
+  // Copies the page as Markdown. The text is fetched after the click, which Safari only allows a ClipboardItem to wait
+  // for, so that is tried first.
+  const copy = document.querySelector<HTMLButtonElement>('button[data-markdown]');
+  if (copy) {
+    const label = copy.textContent;
+    copy.addEventListener('click', async () => {
+      const text = fetch(copy.dataset.markdown!).then((response) => {
+        if (!response.ok) throw new Error(response.statusText);
+        return response.text();
+      });
+      try {
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ 'text/plain': text.then((body) => new Blob([body], { type: 'text/plain' })) })]);
+        } catch {
+          await navigator.clipboard.writeText(await text);
+        }
+        copy.textContent = 'Copied';
+      } catch {
+        copy.textContent = "Couldn't copy";
+      }
+      setTimeout(() => (copy.textContent = label), 2000);
+    });
+  }
+</script>
 
 <script>
   // Marks the section being read in the sidebar.
@@ -271,6 +310,34 @@ const tone = (page: Entry) => tones[pages.indexOf(page) % tones.length];
 
   .guide {
     max-width: 760px;
+  }
+
+  /* The page as Markdown, in small pills above it. */
+  .markdown {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 28px;
+  }
+
+  .markdown button,
+  .markdown a {
+    padding: 7px 14px;
+    border: 0;
+    border-radius: 999px;
+    color: var(--haze);
+    font: inherit;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-decoration: none;
+    background: var(--night-raised);
+    cursor: pointer;
+  }
+
+  .markdown button:hover,
+  .markdown a:hover {
+    color: var(--ink);
+    background: var(--night-high);
   }
 
   .pager {

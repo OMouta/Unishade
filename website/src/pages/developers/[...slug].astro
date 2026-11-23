@@ -15,4 +15,13 @@ interface Props {
 const { entry, pages } = Astro.props;
 ---
 
-<Guide entry={entry} pages={pages} root="/developers/" home="overview" label="Developer docs" kicker="Unishade for developers" code />
+<Guide
+  entry={entry}
+  pages={pages}
+  root="/developers/"
+  home="overview"
+  label="Developer docs"
+  kicker="Unishade for developers"
+  markdown={`/developers/${entry.id}.md`}
+  code
+/>

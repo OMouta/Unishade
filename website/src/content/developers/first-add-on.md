@@ -8,14 +8,14 @@ This takes a C compiler and CMake. You end up with an add-on that shows a messag
 
 ## Get the example
 
-Copy [src/addons/example](links:addonExample) from Unishade's source, and put [unishade_addon.h](links:addonHeader) in the same folder. You now have four files:
+Put these four files in a folder:
 
-```text
-addon.ini
-example.c
-CMakeLists.txt
-unishade_addon.h
-```
+- [addon.ini](/developers/example/addon.ini)
+- [example.c](/developers/example/example.c)
+- [CMakeLists.txt](/developers/example/CMakeLists.txt)
+- [unishade_addon.h](links:addonHeader)
+
+The first three are [src/addons/example](links:addonExample) in Unishade's source.
 
 ## Build it
 

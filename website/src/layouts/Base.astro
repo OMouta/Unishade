@@ -20,9 +20,11 @@ interface Props {
   overlay?: boolean;
   // Keeps the page out of search results, like the 404 page, which Cloudflare shows at any address without a page.
   noindex?: boolean;
+  // Where the page is as Markdown, for agents that read it, when it is.
+  markdown?: string;
 }
 
-const { title, description, overlay = false, noindex = false } = Astro.props;
+const { title, description, overlay = false, noindex = false, markdown } = Astro.props;
 const canonical = new URL(Astro.url.pathname, Astro.site);
 
 // Small icons for browser tabs and home screens. The .ico stays for older browsers.
@@ -63,6 +65,7 @@ const discordEmbed = {
     <title>{title}</title>
     <meta name="description" content={description} />
     {noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={canonical} />}
+    {markdown && <link rel="alternate" type="text/markdown" href={markdown} title="This page as Markdown" />}
     <meta name="theme-color" content="#000000" />
     <Font cssVariable="--font-bricolage" preload={[{ weight: 400 }, { weight: 800 }]} />
     <link rel="icon" href={icon} sizes="48x48" />
