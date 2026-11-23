@@ -50,6 +50,14 @@
 // the add-on pointed. Unishade draws them as it draws its own. A control is told apart by its label, so labels are
 // different within an add-on. What follows ## in a label is not shown.
 //
+// Drawing
+//
+// An add-on with a draw function draws over the game: lines, rectangles, circles and text, such as a crosshair or a
+// frame rate. Unishade calls draw for every frame it shows while effects are on, and the add-on calls UnishadeDraw's
+// functions for what it wants in that frame. Everything is measured in the pixels of the game's picture, from its top
+// left corner. What it draws is under Unishade's menu, and is not in screenshots, which hold the picture alone. It
+// needs none of what Frames below describes.
+//
 // Frames
 //
 // An add-on that asks for the picture in its flags gets every frame the overlay draws with effects on. Before effects
@@ -441,6 +449,37 @@ typedef struct UnishadeUi
     void (*tooltip)(const struct UnishadeUi* ui, const char* text);
 } UnishadeUi;
 
+// Red, green, blue and alpha from 0 to 255 as a color for UnishadeDraw, such as UNISHADE_COLOR(255, 255, 255, 128) for
+// white that lets half of what is under it through.
+#define UNISHADE_COLOR(red, green, blue, alpha) \
+    (((uint32_t)(red) << 24) | ((uint32_t)(green) << 16) | ((uint32_t)(blue) << 8) | (uint32_t)(alpha))
+
+// What an add-on draws over the game with, as the comment at the top says under Drawing. Every function takes the draw
+// that the add-on's draw function was given. Positions, sizes and thicknesses are in pixels of the game's picture.
+typedef struct UnishadeDraw
+{
+    uint32_t size;
+    float width; // of the game's picture
+    float height;
+    // How large Unishade draws its own menu over this game, where 1 is 100%. Sizes multiplied by it suit the game's
+    // window as the menu does, whatever the picture's size and the display's scaling.
+    float scale;
+    float cursorX; // where the mouse is in the picture
+    float cursorY;
+    const float (*settings)[4]; // as UnishadeFrame.settings
+    double time;                // seconds since Unishade started
+    void (*line)(const struct UnishadeDraw* draw, float x1, float y1, float x2, float y2, uint32_t color, float thickness);
+    // A rectangle from its top left corner, with its corners rounded by rounding. Filled with a thickness of 0,
+    // otherwise its outline.
+    void (*rect)(const struct UnishadeDraw* draw, float x, float y, float width, float height, uint32_t color, float rounding, float thickness);
+    // A circle around x and y. Filled with a thickness of 0, otherwise its outline.
+    void (*circle)(const struct UnishadeDraw* draw, float x, float y, float radius, uint32_t color, float thickness);
+    // A line of text in Unishade's typeface, height high, from its top left corner.
+    void (*text)(const struct UnishadeDraw* draw, float x, float y, float height, uint32_t color, const char* text);
+    // How wide text is at a height.
+    float (*textWidth)(const struct UnishadeDraw* draw, float height, const char* text);
+} UnishadeDraw;
+
 typedef struct UnishadeAddon
 {
     uint32_t size; // sizeof(UnishadeAddon)
@@ -464,6 +503,8 @@ typedef struct UnishadeAddon
     void (*event)(void* addon, const UnishadeEvent* event);
     // Or NULL: draws the add-on's own controls, as the comment at the top says under Controls.
     void (*ui)(void* addon, const UnishadeUi* ui);
+    // Or NULL: draws over the game, as the comment at the top says under Drawing.
+    void (*draw)(void* addon, const UnishadeDraw* draw);
 } UnishadeAddon;
 
 typedef const UnishadeAddon* (*UnishadeGetAddonFunction)(void);

@@ -1,5 +1,6 @@
 // An add-on to start from. It takes no frames, so it needs no graphics code: it shows settings Unishade keeps, controls
-// it draws itself, what it is told of, and what it can ask of Unishade. unishade_addon.h says what everything is.
+// it draws itself, drawing over the game, what it is told of, and what it can ask of Unishade. unishade_addon.h says
+// what everything is.
 //
 // Build it with the CMakeLists.txt beside it, then put the library and addon.ini in a folder of Unishade's Addons
 // folder, which Add-ons > Open folder opens.
@@ -16,6 +17,7 @@ enum
     kGreeting,
     kTimes,
     kSayIt,
+    kFrameRate,
     kSettingCount,
 };
 
@@ -25,6 +27,8 @@ static const UnishadeSetting kSettings[kSettingCount] = {
     { .key = "Times", .label = "Times", .type = UNISHADE_SETTING_INTEGER, .defaultValue = { 1 }, .min = 1, .max = 3,
       .tooltip = "How many times it says it.", .group = "Message" },
     { .key = "SayIt", .label = "Say it", .type = UNISHADE_SETTING_BUTTON, .group = "Message" },
+    { .key = "FrameRate", .label = "Show the frame rate", .type = UNISHADE_SETTING_TOGGLE, .tooltip = "In the top left corner of the game.",
+      .group = "Over the game" },
 };
 
 typedef struct Example
@@ -125,6 +129,20 @@ static void Ui(void* addon, const UnishadeUi* ui)
         host->takeScreenshot(host);
 }
 
+// Over the game, for every frame Unishade shows: the frame rate in a dark box, sized as Unishade's menu is.
+static void Draw(void* addon, const UnishadeDraw* draw)
+{
+    const Example* example = addon;
+    const UnishadeState* state = example->host->getState(example->host);
+    if (draw->settings[kFrameRate][0] == 0)
+        return;
+    char text[32];
+    snprintf(text, sizeof(text), "%.0f fps", state->frameRate);
+    const float height = 16 * draw->scale, pad = 8 * draw->scale, edge = 12 * draw->scale;
+    draw->rect(draw, edge, edge, draw->textWidth(draw, height, text) + pad * 2, height + pad * 2, UNISHADE_COLOR(0, 0, 0, 160), pad, 0);
+    draw->text(draw, edge + pad, edge + pad, height, UNISHADE_COLOR(255, 255, 255, 255), text);
+}
+
 static const UnishadeAddon kAddon = {
     .size = sizeof(UnishadeAddon),
     .api = UNISHADE_API_VERSION,
@@ -136,6 +154,7 @@ static const UnishadeAddon kAddon = {
     .update = Update,
     .event = Event,
     .ui = Ui,
+    .draw = Draw,
 };
 
 UNISHADE_ADDON_EXPORT const UnishadeAddon* UnishadeGetAddon(void)

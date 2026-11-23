@@ -4,7 +4,7 @@ description: How to write a Unishade add-on, from its addon.ini to settings, con
 order: 7
 ---
 
-An add-on is a folder with a small text file and a native library. It can work on the game's picture before or after effects, change effects, react to what Unishade does, and put its own settings and controls in the menu.
+An add-on is a folder with a small text file and a native library. It can work on the game's picture before or after effects, draw over the game, change effects, react to what Unishade does, and put its own settings and controls in the menu.
 
 The interface is one C header, [unishade_addon.h](links:addonHeader). Its comments are the reference. This page is the short tour. The fastest start is to copy the [example add-on](links:addonExample), which is about 150 lines of C and needs no graphics code.
 
@@ -76,6 +76,7 @@ Unishade calls every function on its main thread. Leave out the functions you do
 | `frame` | For every frame, if the add-on asked for the picture. |
 | `event` | A game started or stopped, a preset loaded, the menu opened, a screenshot was saved. |
 | `ui` | For every frame the add-on's own controls show. |
+| `draw` | For every frame Unishade shows, to draw over the game. |
 
 ## Settings
 
@@ -108,6 +109,22 @@ static void Ui(void* addon, const UnishadeUi* ui)
 ```
 
 A control's function returns true once after the user used it. The controls show under the add-on's settings, in **More > Add-ons** of the menu over the game.
+
+## Drawing over the game
+
+A `draw` function draws lines, rectangles, circles and text on top of the game, for things like a crosshair or a frame rate. It needs no graphics code:
+
+```c
+static void Draw(void* addon, const UnishadeDraw* draw)
+{
+    const float x = draw->width / 2, y = draw->height / 2, arm = 10 * draw->scale;
+    const uint32_t white = UNISHADE_COLOR(255, 255, 255, 255);
+    draw->line(draw, x - arm, y, x + arm, y, white, 2 * draw->scale);
+    draw->line(draw, x, y - arm, x, y + arm, white, 2 * draw->scale);
+}
+```
+
+Positions are in pixels of the game's picture, from its top left corner. Multiply sizes by `scale` and they match Unishade's menu on any display. The drawing goes under the menu, hides while effects are off, and stays out of screenshots.
 
 ## Talking to Unishade
 

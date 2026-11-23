@@ -49,7 +49,7 @@ namespace
 constexpr uintmax_t kAddonLimit = 1ull << 30; // as net.h has it for Windows
 #endif
 // What an add-on and each of its settings have to say: what version 1 of the interface has. Later members are optional.
-constexpr size_t kSmallestAddon = offsetof(UnishadeAddon, ui) + sizeof(void*);
+constexpr size_t kSmallestAddon = offsetof(UnishadeAddon, draw) + sizeof(void*);
 constexpr size_t kSmallestSetting = offsetof(UnishadeSetting, units) + sizeof(char*);
 // Where Unishade.ini keeps the settings of an add-on that leaves the picture alone: this, then the add-on's Id.
 const std::string kSettingsSection = "ADDON:";
@@ -658,6 +658,19 @@ void Addons::UseControl(const std::string& folder, size_t control, const float* 
     std::array<float, 4> used{};
     std::copy(values, values + 4, used.begin());
     addon->library->used[addon->library->controls[control].id] = used;
+}
+
+void Addons::Draw(UnishadeDraw& draw)
+{
+    for (Addon& addon : addons)
+    {
+        const Library& library = *addon.library;
+        if (addon.state != State::Enabled || addon.bypassed || !library.instance || library.stopping || !library.addon->draw)
+            continue;
+        draw.settings = library.Values();
+        draw.time = told.time;
+        library.addon->draw(library.instance, &draw);
+    }
 }
 
 bool Addons::ReadsKeys() const

@@ -1,5 +1,6 @@
 // The add-on host with the example add-on, src/addons/example, and no graphics card: finding add-ons by their
-// addon.ini, asking before loading, settings, events, the add-on's own controls and what it asks of Unishade.
+// addon.ini, asking before loading, settings, events, the add-on's own controls, drawing over the game and what it
+// asks of Unishade.
 
 #include "../src/posix/addons.h"
 #include "../src/posix/config.h"
@@ -7,6 +8,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 
 namespace
@@ -33,6 +35,36 @@ public:
     std::vector<fs::path> ListPresets() override { return {}; }
     bool UsePreset(const fs::path&) override { return false; }
 };
+
+// What the add-on drew over the game, by the functions of a UnishadeDraw that only keep it.
+std::vector<std::string> drawn;
+
+void DrawnLine(const UnishadeDraw*, float, float, float, float, uint32_t, float)
+{
+    drawn.push_back("line");
+}
+
+void DrawnRect(const UnishadeDraw*, float x, float y, float width, float, uint32_t, float, float thickness)
+{
+    drawn.push_back("rect " + std::to_string(int(x)) + " " + std::to_string(int(y)) + " " + std::to_string(int(width)) + (thickness > 0 ? " outline" : " filled"));
+}
+
+void DrawnCircle(const UnishadeDraw*, float, float, float, uint32_t, float)
+{
+    drawn.push_back("circle");
+}
+
+void DrawnText(const UnishadeDraw*, float, float, float height, uint32_t color, const char* text)
+{
+    char line[128];
+    std::snprintf(line, sizeof(line), "text %d %08x %s", int(height), color, text);
+    drawn.push_back(line);
+}
+
+float DrawnTextWidth(const UnishadeDraw*, float height, const char* text)
+{
+    return height * static_cast<float>(std::strlen(text));
+}
 
 void Put(const fs::path& path, const std::string& text)
 {
@@ -88,6 +120,7 @@ int main()
     bool ok = true;
     const float one[4] = { 1, 0, 0, 0 };
     const float two[4] = { 2, 0, 0, 0 };
+    const float zero[4] = {};
     {
         fx::Runtime runtime;
         Services services;
@@ -123,7 +156,7 @@ int main()
         addons.Update();
         example = Named(addons, "example");
         ok &= Check(example->state == Addons::State::Enabled && addons.Loaded("example"), "once allowed, it loads and starts");
-        ok &= Check(example->settings.size() == 3 && example->settings[1].label == "Times" && example->settings[1].group == "Message" &&
+        ok &= Check(example->settings.size() == 4 && example->settings[1].label == "Times" && example->settings[1].group == "Message" &&
                         example->settings[1].value[0] == 1 && example->settings[0].choices.size() == 3,
                     "its settings are the ones it lists, with their defaults and groups");
         ok &= Check(!addons.ChangesPicture(*example) && addons.HasControls(*example) && !addons.ReadsKeys(), "it says what it does");
@@ -171,6 +204,31 @@ int main()
         addons.Update();
         ok &= Check(services.messages.size() == 2, "its own values change what it does");
 
+        // Over the game: it draws with the functions it is handed, in the picture's pixels, with its settings.
+        UnishadeDraw draw{};
+        draw.size = sizeof(draw);
+        draw.width = 1920;
+        draw.height = 1080;
+        draw.scale = 2;
+        draw.line = DrawnLine;
+        draw.rect = DrawnRect;
+        draw.circle = DrawnCircle;
+        draw.text = DrawnText;
+        draw.textWidth = DrawnTextWidth;
+        addons.Draw(draw);
+        ok &= Check(drawn.empty(), "it draws nothing over the game until its setting says to");
+        services.state.frameRate = 60;
+        addons.SetSetting("example", 3, one);
+        addons.Draw(draw);
+        ok &= Check(drawn == std::vector<std::string>{ "rect 24 24 224 filled", "text 32 ffffffff 60 fps" },
+                    "it draws over the game, with its settings, what Unishade says and the size Unishade's menu has");
+        drawn.clear();
+        addons.SetBypassed("example", true);
+        addons.Draw(draw);
+        ok &= Check(drawn.empty(), "an add-on that is bypassed draws nothing");
+        addons.SetBypassed("example", false);
+        addons.SetSetting("example", 3, zero);
+
         services.state.playing = false;
         addons.Update();
         controls = &addons.Controls("example");
@@ -192,7 +250,7 @@ int main()
         addons.Init(runtime, services);
         const Addons::Addon* example = Named(addons, "example");
         ok &= Check(example && example->state == Addons::State::Enabled, "an add-on that was allowed loads without asking again");
-        ok &= Check(example && example->settings.size() == 3 && example->settings[0].value[0] == 1 && example->settings[1].value[0] == 2,
+        ok &= Check(example && example->settings.size() == 4 && example->settings[0].value[0] == 1 && example->settings[1].value[0] == 2,
                     "with its settings as they were left");
 
         // The folder is read again when it changes: an add-on taken away stops.

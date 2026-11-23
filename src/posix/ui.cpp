@@ -458,6 +458,109 @@ void DrawUiMask(App& app)
     ImGui::GetBackgroundDrawList()->AddImage((ImTextureID)maskSet, ImVec2(0, 0), ImGui::GetIO().DisplaySize);
 }
 
+// What add-ons draw over the game, under the menu, while effects show. UnishadeDraw first, so the draw an add-on
+// passes back leads to the list it draws into. Add-ons measure in pixels of the game's picture, which fills the
+// overlay, so everything is multiplied by how large one of them is here.
+struct AddonDraw
+{
+    UnishadeDraw draw;
+    ImDrawList* list;
+    float pixel;
+};
+
+const AddonDraw& DrawOf(const UnishadeDraw* draw)
+{
+    return *reinterpret_cast<const AddonDraw*>(draw);
+}
+
+ImU32 AddonColor(uint32_t color)
+{
+    return IM_COL32(color >> 24, (color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF);
+}
+
+// Whether every number is one a shape can be drawn with.
+bool Finite(std::initializer_list<float> values)
+{
+    return std::all_of(values.begin(), values.end(), [](float value) { return std::isfinite(value); });
+}
+
+void AddonLine(const UnishadeDraw* draw, float x1, float y1, float x2, float y2, uint32_t color, float thickness)
+{
+    const AddonDraw& to = DrawOf(draw);
+    if (Finite({ x1, y1, x2, y2, thickness }))
+        to.list->AddLine(ImVec2(x1, y1) * to.pixel, ImVec2(x2, y2) * to.pixel, AddonColor(color), std::max(thickness, 1.0f) * to.pixel);
+}
+
+void AddonRect(const UnishadeDraw* draw, float x, float y, float width, float height, uint32_t color, float rounding, float thickness)
+{
+    const AddonDraw& to = DrawOf(draw);
+    if (!Finite({ x, y, width, height, rounding, thickness }) || width <= 0 || height <= 0)
+        return;
+    const ImVec2 min = ImVec2(x, y) * to.pixel, max = ImVec2(x + width, y + height) * to.pixel;
+    const float round = std::clamp(rounding, 0.0f, std::min(width, height) / 2) * to.pixel;
+    if (thickness > 0)
+        to.list->AddRect(min, max, AddonColor(color), round, 0, thickness * to.pixel);
+    else
+        to.list->AddRectFilled(min, max, AddonColor(color), round);
+}
+
+void AddonCircle(const UnishadeDraw* draw, float x, float y, float radius, uint32_t color, float thickness)
+{
+    const AddonDraw& to = DrawOf(draw);
+    if (!Finite({ x, y, radius, thickness }) || radius <= 0)
+        return;
+    if (thickness > 0)
+        to.list->AddCircle(ImVec2(x, y) * to.pixel, radius * to.pixel, AddonColor(color), 0, thickness * to.pixel);
+    else
+        to.list->AddCircleFilled(ImVec2(x, y) * to.pixel, radius * to.pixel, AddonColor(color));
+}
+
+// Text from a pixel of the game's to a quarter of its picture high.
+float AddonTextSize(const AddonDraw& to, float height)
+{
+    return std::isfinite(height) ? std::clamp(height, 1.0f, std::max(to.draw.height / 4, 1.0f)) * to.pixel : 0;
+}
+
+void AddonText(const UnishadeDraw* draw, float x, float y, float height, uint32_t color, const char* text)
+{
+    const AddonDraw& to = DrawOf(draw);
+    const float size = AddonTextSize(to, height);
+    if (text && size > 0 && Finite({ x, y }))
+        to.list->AddText(ImGui::GetFont(), size, ImVec2(x, y) * to.pixel, AddonColor(color), text);
+}
+
+float AddonTextWidth(const UnishadeDraw* draw, float height, const char* text)
+{
+    const AddonDraw& to = DrawOf(draw);
+    const float size = AddonTextSize(to, height);
+    return text && size > 0 ? ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0, text).x / to.pixel : 0;
+}
+
+void DrawAddons(App& app, float menuScale)
+{
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float width = static_cast<float>(app.runtime.Width()), height = static_cast<float>(app.runtime.Height());
+    // As add-ons' frames: not while effects are off, so comparing shows the game's own picture.
+    if (!app.active || !app.effectsEnabled || app.comparing || app.compareButton || width <= 0 || height <= 0 || display.x <= 0)
+        return;
+    AddonDraw to{};
+    to.list = ImGui::GetBackgroundDrawList();
+    to.pixel = display.x / width;
+    UnishadeDraw& draw = to.draw;
+    draw.size = sizeof(draw);
+    draw.width = width;
+    draw.height = height;
+    draw.scale = menuScale > 0 ? menuScale / to.pixel : 1;
+    draw.cursorX = app.runtime.mouseX;
+    draw.cursorY = app.runtime.mouseY;
+    draw.line = AddonLine;
+    draw.rect = AddonRect;
+    draw.circle = AddonCircle;
+    draw.text = AddonText;
+    draw.textWidth = AddonTextWidth;
+    app.addons.Draw(draw);
+}
+
 // Frame rates and frame times in a card at the top right of the game, while the setting asks for them.
 void DrawDebugInfo(App& app)
 {
@@ -2705,6 +2808,7 @@ void DrawOverlay(App& app)
     if (app.menuOpen && !app.toastKey.empty())
         app.toastUntil = 0;
     const float menuScale = MenuScale(app, ImGui::GetIO().DisplaySize);
+    DrawAddons(app, menuScale);
     if (menuScale <= 0)
     {
         if (app.menuClosing)

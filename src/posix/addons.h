@@ -160,6 +160,9 @@ public:
     // What the user did with one of them, by its place among them: its new values, or a press. The add-on's next
     // drawing tells it.
     void UseControl(const std::string& folder, size_t control, const float* values);
+    // Has every add-on that is on, and not bypassed, draw over the game with what the caller made: its size, the
+    // picture's and the functions that draw. Each add-on gets its settings and the time in it.
+    void Draw(UnishadeDraw& draw);
     // Whether an add-on that is on wants the keys read, for UnishadeHost.keyDown.
     bool ReadsKeys() const;
     // Tells every add-on that is on of something that happened.
