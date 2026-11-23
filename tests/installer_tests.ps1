@@ -256,4 +256,16 @@ foreach ($file in @('Unishade.exe', 'Unishade.ini', 'games.ini', 'presets', 'res
 }
 Assert-File $effectsAll 'Screenshot.png'
 
+# --launch starts the installed Unishade when a silent run is done, which an update that Unishade installs itself
+# relies on. Its log shows that it started, however long it runs on a machine without a graphics card.
+$launched = Invoke-TestInstaller 'launch' 'host' $true @('--launch')
+$started = $false
+for ($i = 0; $i -lt 300 -and -not $started; $i++) {
+    $started = Test-Path (Join-Path $launched 'Unishade.log')
+    if (-not $started) { Start-Sleep -Milliseconds 100 }
+}
+$launchedExe = [IO.Path]::GetFullPath((Join-Path $launched 'Unishade.exe'))
+Get-Process Unishade -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $launchedExe } | Stop-Process -Force
+if (-not $started) { throw "--launch did not start Unishade. See $testRoot/launch.log" }
+
 Write-Output "Installer checks passed. Test files and logs: $testRoot"

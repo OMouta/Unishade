@@ -133,6 +133,7 @@ struct Arguments
     bool uninstall = false;
     bool deleteUserFiles = false;
     bool portable = false;
+    bool launch = false;
     std::wstring directory;
     std::wstring components;
     std::wstring log;
@@ -933,10 +934,22 @@ int RunWindow(const Arguments& arguments)
 
 int RunSilent(const Arguments& arguments)
 {
+    InstallOptions options;
+    // An update Unishade started itself has Setup start it again. A failed installation leaves the folder as it was,
+    // so then the version before starts, which says that the update did not go through.
+    struct Launch
+    {
+        const fs::path& directory;
+        bool wanted;
+        ~Launch()
+        {
+            if (wanted && !directory.empty())
+                LaunchHost(directory);
+        }
+    } launch{ options.directory, arguments.launch && !arguments.uninstall };
     try
     {
         const auto installation = FindInstallation();
-        InstallOptions options;
         options.directory = !arguments.directory.empty() ? fs::absolute(arguments.directory).lexically_normal()
                             : installation               ? installation->directory
                                                          : DefaultDirectory();
@@ -998,6 +1011,8 @@ Arguments ParseArguments()
             arguments.deleteUserFiles = true;
         else if (argument == L"--portable")
             arguments.portable = true;
+        else if (argument == L"--launch")
+            arguments.launch = true;
         else if (argument == L"--dir")
             value(arguments.directory);
         else if (argument == L"--components")

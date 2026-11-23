@@ -61,6 +61,7 @@ Unattended installation of the host only:
 | `--dir <folder>` | Installation folder. Defaults to the registered installation or `%LOCALAPPDATA%\Programs\Unishade`. |
 | `--components <list>` | What to install with `--silent`. |
 | `--portable` | Leaves out the Start menu shortcuts, the app list entry and the copy of Setup. |
+| `--launch` | With `--silent`, starts Unishade from the folder when Setup is done. A failed installation leaves the folder as it was, so then the version before starts. Unishade's own updates use it. |
 | `--uninstall` | Opens the uninstall page, or uninstalls with `--silent`. |
 | `--delete-user-files` | With `--uninstall --silent`, also deletes the user's files listed above. |
 | `--log <file>` | Where to write the setup log. |
@@ -75,4 +76,4 @@ Tests use `--effects-url` and `--presets-url`, which Setup passes on to Unishade
 
 ## Verification
 
-Run `./tests/installer_tests.ps1` after building the installer. The tests install into fresh folders under `build/installer-tests` with `--portable`, so they do not touch the Start menu or Windows' app list. They check component selection, effect and preset installation, configuration preservation, updating an installation of Unishade 0.6.3, uninstalling, that uninstalling refuses other folders and ignores file list entries outside the folder, and that it removes only its own **Start with Windows** entry. That check sets and restores the current user's `Unishade` startup entry. Internet access is required for the effect packages. On GitHub Actions, the presets come from the commit being tested; elsewhere, pass `-PresetsBaseUrl` to test presets that are not on `main` yet.
+Run `./tests/installer_tests.ps1` after building the installer. The tests install into fresh folders under `build/installer-tests` with `--portable`, so they do not touch the Start menu or Windows' app list. They check component selection, effect and preset installation, configuration preservation, updating an installation of Unishade 0.6.3, uninstalling, that uninstalling refuses other folders and ignores file list entries outside the folder, that it removes only its own **Start with Windows** entry, and that `--launch` starts Unishade. That check sets and restores the current user's `Unishade` startup entry. Internet access is required for the effect packages. On GitHub Actions, the presets come from the commit being tested; elsewhere, pass `-PresetsBaseUrl` to test presets that are not on `main` yet.
