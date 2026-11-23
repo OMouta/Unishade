@@ -1,8 +1,8 @@
 #include "net/update.h"
 #include "app/log.h"
 #include "net/net.h"
+#include "net/version.h"
 
-#include <array>
 #include <atomic>
 #include <mutex>
 #include <optional>
@@ -21,28 +21,6 @@ Shared& shared = *new Shared;
 
 constexpr size_t kMissing = std::string_view::npos;
 constexpr std::string_view kSpace = " \t\r\n";
-
-// Reads 1.2.3 from the start of text. Returns false for anything else, such as the depth-assets release.
-bool ParseVersion(std::string_view text, std::array<int, 3>& version)
-{
-    size_t position = 0;
-    for (int part = 0; part < 3; ++part)
-    {
-        if (position >= text.size() || text[position] < '0' || text[position] > '9')
-            return false;
-        version[part] = 0;
-        // Nine digits always fit in an int.
-        for (int digits = 0; position < text.size() && text[position] >= '0' && text[position] <= '9'; ++digits)
-        {
-            if (digits == 9)
-                return false;
-            version[part] = version[part] * 10 + (text[position++] - '0');
-        }
-        if (part < 2 && (position >= text.size() || text[position++] != '.'))
-            return false;
-    }
-    return position == text.size();
-}
 
 // Where the value of "key": starts in GitHub's JSON, searching from from. kMissing when there is none.
 size_t JsonValue(std::string_view json, std::string_view key, size_t from)
@@ -96,10 +74,8 @@ bool HasSetup(std::string_view release)
 
 void Check()
 {
-    std::array<int, 3> current{};
-    std::array<int, 3> newest{};
-    ParseVersion(UNISHADE_VERSION, current);
-    newest = current;
+    const Version current = ParseVersion(UNISHADE_VERSION).value_or(Version{});
+    Version newest = current;
     std::string url;
 
     const std::atomic<bool> cancel = false;
@@ -112,15 +88,16 @@ void Check()
         const size_t next = releases.find("\"tag_name\"", position + 1);
         const std::string_view release = releases.substr(position, next == kMissing ? kMissing : next - position);
         position = next;
-        // Only digits after the v, since the tag goes into the release page's address.
+        // Nothing but a version after the v, since the tag goes into the release page's address.
         const std::string_view tag = JsonString(release, "tag_name", 0);
-        std::array<int, 3> version{};
-        if (tag.size() < 2 || tag[0] != 'v' || !ParseVersion(tag.substr(1), version) || version <= newest)
+        const std::optional<Version> version = tag.starts_with('v') ? ParseVersion(tag.substr(1)) : std::nullopt;
+        if (!version || !(newest < *version) || JsonBool(release, "draft", 0) == true || !HasSetup(release))
             continue;
-        // A prerelease flag that is missing or unreadable counts as set.
-        if (JsonBool(release, "prerelease", 0) == false && JsonBool(release, "draft", 0) != true && HasSetup(release))
+        // Only a beta is offered betas. Every build is offered a version itself, unless GitHub has it as a prerelease,
+        // and a prerelease flag that is missing or unreadable counts as set.
+        if (version->beta ? current.beta > 0 : JsonBool(release, "prerelease", 0) == false)
         {
-            newest = version;
+            newest = *version;
             url = "https://github.com/OMouta/Unishade/releases/tag/" + std::string(tag);
         }
     }
@@ -129,10 +106,9 @@ void Check()
         Log(LogLevel::Info, "Unishade is up to date.");
         return;
     }
-    const std::string version = std::to_string(newest[0]) + "." + std::to_string(newest[1]) + "." + std::to_string(newest[2]);
-    Log(LogLevel::Info, "Unishade %s is available.", version.c_str());
+    Log(LogLevel::Info, "Unishade %s is available.", newest.Text().c_str());
     std::lock_guard lock(shared.mutex);
-    shared.available = { version, url };
+    shared.available = { newest.Text(), url };
 }
 } // namespace
 
