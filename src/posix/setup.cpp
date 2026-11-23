@@ -68,8 +68,9 @@ fs::path MakeWorkFolder()
 #else
 // Downloads with curl, which macOS and nearly every Linux system have. Only https, redirects included, except for
 // the sources given on the command line, which tests can point at local files. Throws on failure or when cancelled.
+// A try may take as long as allowed says, which suits effect packages. A download that stalls ends sooner either way.
 void Download(const std::string& url, const fs::path& path, const std::atomic<bool>& cancel, uintmax_t limit, bool fromCommandLine = false,
-              const std::function<void(uintmax_t received)>& progress = {})
+              const std::function<void(uintmax_t received)>& progress = {}, std::chrono::seconds allowed = std::chrono::minutes(5))
 {
     const bool local = fromCommandLine && url.rfind("file://", 0) == 0;
     if (url.rfind("https://", 0) != 0 && !local)
@@ -80,14 +81,16 @@ void Download(const std::string& url, const fs::path& path, const std::atomic<bo
     fs::remove(path, error);
     const std::string output = path.string();
     const std::string maxSize = std::to_string(limit);
+    const std::string maxTime = std::to_string(allowed.count());
+    const std::string retryTime = std::to_string(allowed.count() * 2);
     const char* argv[] = { "curl", "-q", "-g", "-fsSL", "--proto", local ? "=https,file" : "=https", "--proto-redir", "=https", "--max-filesize", maxSize.c_str(),
-                           "--retry", "2", "--retry-max-time", "600", "--connect-timeout", "20", "--max-time", "300",
+                           "--retry", "2", "--retry-max-time", retryTime.c_str(), "--connect-timeout", "20", "--max-time", maxTime.c_str(),
                            "--speed-limit", "1024", "--speed-time", "30", "-o", output.c_str(), url.c_str(), nullptr };
     pid_t pid;
     if (posix_spawnp(&pid, "curl", nullptr, nullptr, const_cast<char* const*>(argv), environ) != 0)
         throw std::runtime_error("curl is needed to download effects. Install it and try again.");
     int status = 0;
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(10);
+    const auto deadline = std::chrono::steady_clock::now() + allowed * 2;
     for (;;)
     {
         const pid_t waited = waitpid(pid, &status, WNOHANG);
@@ -175,7 +178,8 @@ struct Sha256State
 void DownloadFile(const std::string& url, const fs::path& path, const std::atomic<bool>& cancel, uintmax_t limit,
                   const std::function<void(uintmax_t received)>& progress)
 {
-    Download(url, path, cancel, limit, false, progress);
+    // An add-on's files run to a hundred megabytes and more, which a slow connection does not bring in five minutes.
+    Download(url, path, cancel, limit, false, progress, std::chrono::hours(1));
 }
 #endif
 
