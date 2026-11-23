@@ -1967,11 +1967,36 @@ void DescribeCards(App& app, launcher::Model& model)
     if (Update update = AvailableUpdate(); !update.version.empty())
     {
         model.update = update.version;
-        card({ .title = "Unishade " + update.version + " is available",
-               .text = "Download the new Setup and run it. Your presets and settings stay.",
-               .attention = true,
-               .buttons = { "Download" } },
-             { [url = std::move(update.url)] { platform::Open(url); } });
+        const auto page = [url = update.url] { platform::Open(url); };
+        const UpdateInstall install = InstallingUpdate();
+        // A build that is not signed cannot tell whose Setup it downloads, so the user gets it from the release's page.
+        if (!update.installable)
+            card({ .title = "Unishade " + update.version + " is available",
+                   .text = "Download the new Setup and run it. Your presets and settings stay.",
+                   .attention = true,
+                   .buttons = { "Download" } },
+                 { page });
+        else if (install.stage == UpdateStage::Downloading)
+            card({ .title = "Updating to Unishade " + update.version,
+                   .text = "Downloading Setup",
+                   .progress = install.fraction,
+                   .buttons = { "Cancel" } },
+                 { CancelUpdate });
+        else if (install.stage == UpdateStage::Installing)
+            card({ .title = "Updating to Unishade " + update.version,
+                   .text = "Setup is installing it. Unishade closes and starts again when it is done." });
+        else if (install.stage == UpdateStage::Failed)
+            card({ .title = "Unishade " + update.version + " was not installed",
+                   .text = install.error,
+                   .attention = true,
+                   .buttons = { "Try again", "Release page" } },
+                 { InstallUpdate, page });
+        else
+            card({ .title = "Unishade " + update.version + " is available",
+                   .text = "Unishade downloads its Setup, installs it and starts again. Your presets and settings stay.",
+                   .attention = true,
+                   .buttons = { "Update", "What's new" } },
+                 { InstallUpdate, page });
     }
 #endif
     if (!platform::HasCapturePermission())
