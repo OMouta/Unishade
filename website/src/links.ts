@@ -15,6 +15,8 @@ export const links = {
   // For people who write add-ons: the header that is the whole interface, and an add-on to start from.
   addonHeader: `${github}/blob/main/src/addons/unishade_addon.h`,
   addonExample: `${github}/tree/main/src/addons/example`,
+  // Unishade's own add-ons, as working code.
+  addonSource: `${github}/tree/main/src/addons`,
   reshade: 'https://reshade.me',
   signpath: 'https://about.signpath.io/',
   signpathFoundation: 'https://signpath.org/',

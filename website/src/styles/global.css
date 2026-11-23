@@ -254,6 +254,11 @@ kbd {
   background: none;
 }
 
+/* Pages for developers are mostly code, which takes the width of the column. */
+.prose.reference pre {
+  max-width: none;
+}
+
 .prose table {
   width: 100%;
   border-collapse: collapse;

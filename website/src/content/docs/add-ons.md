@@ -27,4 +27,4 @@ Depth's detail is saved for your PC, not in the preset.
 
 **Open folder** opens the Addons folder. Put an add-on's folder there and Unishade asks whether to load it, with the name, version and author the add-on gives. An add-on runs as part of Unishade, so only load ones you trust.
 
-To write one, see [Make an add-on](/docs/add-on-development/).
+To write one, see [Unishade for developers](/developers/).
