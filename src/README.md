@@ -219,6 +219,7 @@ The add-on host. The interface add-ons are built against is `addons/unishade_add
 | --- | --- |
 | `net/net.cpp`, `net/net.h` | Windows: HTTPS downloads through WinHTTP, shared with Setup |
 | `net/update.cpp`, `net/update.h` | Windows: looks for a newer Unishade on GitHub, which Setup installs |
+| `net/version.h` | Reads versions such as `0.7.0` and `0.7.0-beta.2` and puts them in order |
 | `discord/discord.h`, `discord/discord_win32.cpp` | Discord Rich Presence. Windows only |
 | `discord/discord_rpc.h` | What goes through Discord's connection, the same on every system |
 | `setup/setup.cpp`, `setup/setup.h` | `--install-effects` and the launcher's download button. Downloads over https only, except the sources given with `--effects-url` and `--presets-url`, which tests can point at local files |

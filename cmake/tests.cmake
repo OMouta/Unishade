@@ -19,7 +19,7 @@ endif()
 # Windows builds the tests of files that stand alone. The tests that link Unishade's own code are not built there yet.
 if(WIN32)
     foreach(name frame_limit_tests frame_stats_tests menu_layout_tests ini_text_tests addon_manifest_tests preset_ini_tests
-            names_tests game_scan_tests discord_rpc_tests)
+            names_tests game_scan_tests discord_rpc_tests version_tests)
         unishade_test(${name})
         target_compile_options(${name} PRIVATE /W4 /permissive- /EHsc)
     endforeach()
@@ -52,6 +52,9 @@ target_compile_options(names_tests PRIVATE -Wall -Wextra -Wno-missing-field-init
 
 unishade_test(game_scan_tests)
 target_compile_options(game_scan_tests PRIVATE -Wall -Wextra)
+
+unishade_test(version_tests)
+target_compile_options(version_tests PRIVATE -Wall -Wextra)
 
 unishade_test(image_tests)
 target_link_libraries(image_tests PRIVATE unishade_libraries)
