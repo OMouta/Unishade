@@ -1,5 +1,5 @@
-// Unishade for macOS and Linux redraws the game's window with ReShade effects in a window of its own over the
-// game, the same design as on Windows. The game is only observed from outside, through its window and
+// Unishade redraws the game's window with ReShade effects in a window of its own over the game, the same on
+// Windows, macOS and Linux. The game is only observed from outside, through its window and Windows.Graphics.Capture,
 // ScreenCaptureKit or XComposite. No game memory is read and no code is injected.
 
 #include "app/app.h"

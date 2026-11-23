@@ -60,7 +60,7 @@ enum class ScreenshotKind
 };
 
 // The host: the launcher outside the game, and the overlay that redraws the game with effects and shows the
-// menu. The same design as on Windows, where ReShade draws on the host's own swapchain.
+// menu. The same on every system.
 class App
 {
 public:

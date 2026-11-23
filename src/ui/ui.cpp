@@ -1,5 +1,6 @@
-// The launcher, in its window and over the game as the menu. It is the one every platform shares, in src/ui. This fills
-// in what it shows and carries out what the user does, and draws the short messages at the bottom of the game.
+// The launcher, in its window and over the game as the menu, which launcher_ui.cpp draws the same on every platform.
+// This fills in what it shows and carries out what the user does, and draws the short messages at the bottom of the
+// game.
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "ui/ui.h"

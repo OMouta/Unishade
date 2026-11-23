@@ -5,9 +5,9 @@
 #include <string>
 #include <string_view>
 
-// Shortcuts are written the same way as on Windows, such as Ctrl+F8. Keys are Dear ImGui's, so the menu can
-// record a new shortcut from its own key events. The platform layer turns them into X11 keysyms or macOS key
-// codes.
+// Shortcuts are written the same way on every system, such as Ctrl+F8. Keys are Dear ImGui's, so the menu can
+// record a new shortcut from its own key events. The platform layer turns them into Windows virtual-key codes, X11
+// keysyms or macOS key codes.
 enum Modifier : unsigned
 {
     kCtrl = 1,

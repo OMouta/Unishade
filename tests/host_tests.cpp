@@ -1,5 +1,5 @@
-// Tests for the macOS and Linux host's parts that need no window: shortcuts, presets, the saved game list, file
-// names, notices and the checksum Setup verifies presets with.
+// Tests for the host's parts that need no window, built on macOS and Linux: shortcuts, presets, the saved game list,
+// file names, notices, the checksum presets are verified with and the rules for macOS windows.
 
 #include "app/config.h"
 #include "app/hotkeys.h"

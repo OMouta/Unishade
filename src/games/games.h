@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-// The same games.ini as on Windows.
+// An entry of games.ini, the same file on every system.
 struct AutoGame
 {
     // A filename such as RobloxPlayer, a full path, or a folder, which ends in a slash.

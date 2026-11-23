@@ -17,9 +17,9 @@
 
 struct GLFWwindow;
 
-// What differs between macOS and Linux: finding windows, copying their picture, global shortcuts and the
-// overlay window's place above the game. Implemented in platform_macos.mm and platform_x11.cpp. Everything here
-// runs on the main thread unless it says otherwise.
+// What differs between Windows, macOS and Linux: finding windows, copying their picture, global shortcuts and the
+// overlay window's place above the game. Implemented in platform_win32.cpp, platform_macos.mm and platform_x11.cpp.
+// Everything here runs on the main thread unless it says otherwise.
 namespace platform
 {
 using WindowId = uint64_t;
@@ -31,7 +31,7 @@ struct Window
     int pid = 0;
 };
 
-// The window's content area in GLFW screen coordinates: points on macOS, pixels on X11.
+// The window's content area in GLFW screen coordinates: points on macOS, pixels on Windows and X11.
 struct Rect
 {
     int x = 0, y = 0, width = 0, height = 0;

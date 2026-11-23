@@ -11,10 +11,10 @@
 #include <string_view>
 #include <vector>
 
-// Installs the effect packages from ReShade's list, for Setup on Windows and for the macOS and Linux host: unpacks a
-// package's zip, finds its effects and textures the way ReShade's own installer does, and copies them into
-// reshade-shaders. Errors are thrown as std::runtime_error with a readable message, which each platform reports in
-// its own way. Text is UTF-8, as zip files and EffectPackages.ini hold it.
+// Installs the effect packages from ReShade's list, for Unishade on every system, and checks paths for Setup on
+// Windows: unpacks a package's zip, finds its effects and textures the way ReShade's own installer does, and copies
+// them into reshade-shaders. Errors are thrown as std::runtime_error with a readable message, which each platform
+// reports in its own way. Text is UTF-8, as zip files and EffectPackages.ini hold it.
 
 namespace fs = std::filesystem;
 

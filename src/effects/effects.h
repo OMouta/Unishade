@@ -25,7 +25,7 @@
 
 // Runs ReShade effects on the game's picture. ReShade's own compiler turns each .fx file into SPIR-V, the same
 // way ReShade does for Vulkan games, and this runs the passes it describes. Presets are ReShade's .ini files,
-// so they move between Windows and here unchanged.
+// so they move between ReShade and Unishade, and between systems, unchanged.
 namespace fx
 {
 // The values the host sets in uniforms, by their source annotation.

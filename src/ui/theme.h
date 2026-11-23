@@ -1,6 +1,6 @@
 #pragma once
 
-// Unishade's colors, shared by Setup, the launcher, the menu and the macOS and Linux host. 0xRRGGBB.
+// Unishade's colors, shared by Setup, the launcher, the menu and the host on every system. 0xRRGGBB.
 namespace theme
 {
 // Black, like the space around the logo, so the ring's colors are the only bright ones.

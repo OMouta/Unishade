@@ -9,9 +9,10 @@
 #include <thread>
 #include <vector>
 
-// Downloads effects and presets into the data folder, like Setup does on Windows: every package in ReShade's
-// own EffectPackages.ini, then the presets listed in this repository's presets/downloads.ini. Files download
-// with the system's curl and unpack with miniz.
+// Downloads effects and presets into the data folder, for --install-effects, which Setup on Windows runs, and the
+// launcher's download button: every package in ReShade's own EffectPackages.ini, then the presets listed in this
+// repository's presets/downloads.ini. Files download through WinHTTP on Windows and the system's curl on macOS and
+// Linux, and unpack with miniz.
 class EffectSetup
 {
 public:
