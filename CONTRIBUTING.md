@@ -4,7 +4,7 @@ Bug reports, presets, and code changes are welcome. Open an issue before startin
 
 ## Report a bug
 
-Use the bug report form. Include the host version, how you installed it, your Windows version, and `Unishade.log` from the host's folder. Installer problems need the setup log, `%TEMP%\Unishade-Setup.log`.
+Use the bug report form. Include Unishade's version, how you installed it, your system and its version, and `Unishade.log`. **Settings > About > Open log** opens it. It is in the data folder: the folder of `Unishade.exe` on Windows, `~/Library/Application Support/Unishade` on macOS and `~/.local/share/unishade` on Linux. Problems with Setup on Windows need its log, `%TEMP%\Unishade-Setup.log`.
 
 ## Add a preset
 
