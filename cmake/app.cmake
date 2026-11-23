@@ -91,6 +91,10 @@ set(CORE_SOURCES
     "${SRC_DIR}/ui/launcher_ui.cpp"
     "${SRC_DIR}/ui/tray.cpp"
     "${SRC_DIR}/ui/ui.cpp")
+if(NOT WIN32)
+    # The update check without Setup, which only tells the user that a newer Unishade is out.
+    list(APPEND CORE_SOURCES "${SRC_DIR}/net/update_posix.cpp")
+endif()
 if(APPLE)
     list(APPEND CORE_SOURCES "${SRC_DIR}/platform/macos/platform_macos.mm" "${SRC_DIR}/platform/macos/emoji_macos.cpp")
 elseif(WIN32)

@@ -219,6 +219,7 @@ The add-on host. The interface add-ons are built against is `addons/unishade_add
 | --- | --- |
 | `net/net.cpp`, `net/net.h` | Windows: HTTPS downloads through WinHTTP, shared with Setup |
 | `net/update.cpp`, `net/update.h` | Windows: looks for a newer Unishade on GitHub and installs it. It downloads the release's Setup, checks it against the release's SHA-256 list and, for a version, its signature, and Setup starts the new version |
+| `net/update_posix.cpp` | macOS and Linux: looks for a newer Unishade on GitHub and offers the release's page, since there is no Setup to run |
 | `net/releases.h` | Picks the update out of GitHub's list of releases, and a file's SHA-256 out of a release's `SHA256SUMS.txt`. A beta is offered newer betas too |
 | `net/version.h` | Reads versions such as `0.7.0` and `0.7.0-beta.2` and puts them in order |
 | `discord/discord.h`, `discord/discord_win32.cpp` | Discord Rich Presence. Windows only |

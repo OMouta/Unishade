@@ -6,7 +6,6 @@
 #include "ui/ui.h"
 #ifdef _WIN32
 #include "discord/discord.h"
-#include "net/update.h"
 #endif
 #ifdef __APPLE__
 #include "platform/macos/emoji_macos.h"
@@ -15,6 +14,7 @@
 #include "base/image.h"
 #include "effects/uimask.h"
 #include "gpu/backdrop.h"
+#include "net/update.h"
 #include "ui/kit.h"
 #include "ui/launcher_ui.h"
 #include "ui/menu_layout.h"
@@ -1314,13 +1314,13 @@ public:
             SaveSettings(app.settings);
             Log(LogLevel::Info, "Settings: discord_presence=%d.", on);
         }
-#ifdef _WIN32
         else if (which == launcher::Switch::UpdateChecks)
         {
             app.settings.updateChecks = on;
             SaveSettings(app.settings);
             Log(LogLevel::Info, "Settings: update_checks=%d.", on);
         }
+#ifdef _WIN32
         else if (which == launcher::Switch::StartWithWindows)
         {
             platform::SetStartWithWindows(on);
@@ -1963,16 +1963,21 @@ void DescribeCards(App& app, launcher::Model& model)
         model.cards.push_back(std::move(shown));
         launcherState.cards.push_back(std::move(actions));
     };
-#ifdef _WIN32
     if (Update update = AvailableUpdate(); !update.version.empty())
     {
         model.update = update.version;
         const auto page = [url = update.url] { platform::Open(url); };
         const UpdateInstall install = InstallingUpdate();
-        // A build that is not signed cannot tell whose Setup it downloads, so the user gets it from the release's page.
+        // A build that is not signed cannot tell whose Setup it downloads, and macOS and Linux have no Setup, so the
+        // user gets it from the release's page.
+#ifdef _WIN32
+        const char* how = "Download the new Setup and run it. Your presets and settings stay.";
+#else
+        const char* how = "Download it and put it in place of this Unishade. Your presets and settings stay.";
+#endif
         if (!update.installable)
             card({ .title = "Unishade " + update.version + " is available",
-                   .text = "Download the new Setup and run it. Your presets and settings stay.",
+                   .text = how,
                    .attention = true,
                    .buttons = { "Download" } },
                  { page });
@@ -1998,7 +2003,6 @@ void DescribeCards(App& app, launcher::Model& model)
                    .buttons = { "Update", "What's new" } },
                  { InstallUpdate, page });
     }
-#endif
     if (!platform::HasCapturePermission())
     {
         const auto request = [] {
@@ -2477,8 +2481,8 @@ launcher::Model DescribeLauncher(App& app)
 
 #ifdef _WIN32
     model.settings.startWithWindows = launcherState.startsWithWindows;
-    model.settings.updateChecks = app.settings.updateChecks;
 #endif
+    model.settings.updateChecks = app.settings.updateChecks;
     model.settings.autoSavePresets = app.settings.autoSavePresets;
     model.settings.debugInfo = app.settings.debugInfo;
     model.settings.uiMaskShown = app.showUiMask;

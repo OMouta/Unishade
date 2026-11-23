@@ -2,11 +2,11 @@
 #include "app/log.h"
 #include "effects/uimask.h"
 #include "gpu/upscale.h"
+#include "net/update.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
 #ifdef _WIN32
 #include "discord/discord.h"
-#include "net/update.h"
 #endif
 
 #include <GLFW/glfw3.h>
@@ -106,10 +106,11 @@ bool App::Init(std::string& error)
     Log(LogLevel::Info, "Settings: skip_title_bar=%d.", settings.skipTitleBar);
 #endif
 #ifdef _WIN32
-    Log(LogLevel::Info, "Settings: discord_presence=%d, update_checks=%d.", settings.discordPresence, settings.updateChecks);
+    Log(LogLevel::Info, "Settings: discord_presence=%d.", settings.discordPresence);
+#endif
+    Log(LogLevel::Info, "Settings: update_checks=%d.", settings.updateChecks);
     if (settings.updateChecks)
         CheckForUpdate();
-#endif
     for (const fs::path& path : settings.effectPaths)
         Log(LogLevel::Info, "Effect search path: %s.", path.string().c_str());
     for (const fs::path& path : settings.texturePaths)
