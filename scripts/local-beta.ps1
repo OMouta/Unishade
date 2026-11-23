@@ -1,13 +1,14 @@
-# Builds Unishade and packs a portable copy for testers into build/beta. The zip has every official effect, the
-# presets and the official add-ons. Testers unzip it and run Unishade.exe. It is for handing out a commit between
-# releases. A beta everyone can download is a release the Build and release workflow publishes.
+# Builds a local beta: Unishade from this checkout, packed as a portable copy for testers into build/local-beta. The
+# zip has every official effect, the presets and the official add-ons as this build made them. Testers unzip it and
+# run Unishade.exe. It is for handing out a commit that is not a release. A beta everyone can download is a release
+# the Build and release workflow publishes.
 #
-#   ./scripts/package-beta.ps1
+#   ./scripts/local-beta.ps1
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $build = Join-Path $repo 'build'
-$out = Join-Path $build 'beta'
+$out = Join-Path $build 'local-beta'
 
 # The version as the build names it: 0.7.0, or 0.7.0-beta.2 with set(UNISHADE_BETA 2).
 $cmake = Get-Content "$repo/CMakeLists.txt" -Raw
@@ -62,7 +63,7 @@ foreach ($line in Get-Content "$repo/addons/official.ini") {
         Copy-Item (Join-Path $build "Release/$($Matches[1])") $file
         continue
     }
-    $kept = Join-Path $build "beta-downloads/$hash"
+    $kept = Join-Path $build "local-beta-downloads/$hash"
     if (-not (Test-Path $kept)) {
         New-Item -ItemType Directory -Path (Split-Path $kept -Parent) -Force | Out-Null
         Write-Host "Downloading $url"
@@ -86,6 +87,7 @@ foreach ($manifest in Get-ChildItem "$repo/addons/*/addon.ini") {
 # Setup's uninstall list means nothing outside an installation.
 Remove-Item (Join-Path $folder 'RobloxShadeHost-Setup.files') -ErrorAction SilentlyContinue
 
-$zip = Join-Path $out "Unishade-$version-$commit.zip"
+# "local" and the commit tell the zip apart from the published beta of the same version.
+$zip = Join-Path $out "Unishade-$version-local-$commit-windows-x64.zip"
 Compress-Archive -Path $folder -DestinationPath $zip -Force
 Write-Host "Packed $zip"
