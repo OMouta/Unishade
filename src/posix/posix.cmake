@@ -453,6 +453,10 @@ if(BUILD_TESTING AND NOT WIN32)
     set_target_properties(ini_text_tests PROPERTIES CXX_EXTENSIONS OFF)
     add_test(NAME ini_text_tests COMMAND ini_text_tests)
 
+    add_executable(addon_manifest_tests "${CMAKE_SOURCE_DIR}/tests/addon_manifest_tests.cpp")
+    target_compile_options(addon_manifest_tests PRIVATE -Wall -Wextra)
+    add_test(NAME addon_manifest_tests COMMAND addon_manifest_tests)
+
     add_executable(preset_ini_tests "${CMAKE_SOURCE_DIR}/tests/preset_ini_tests.cpp")
     target_compile_options(preset_ini_tests PRIVATE -Wall -Wextra)
     add_test(NAME preset_ini_tests COMMAND preset_ini_tests)

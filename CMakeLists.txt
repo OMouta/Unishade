@@ -213,6 +213,10 @@ if(BUILD_TESTING)
     target_compile_options(ini_text_tests PRIVATE /W4 /permissive- /EHsc)
     add_test(NAME ini_text_tests COMMAND ini_text_tests)
 
+    add_executable(addon_manifest_tests tests/addon_manifest_tests.cpp)
+    target_compile_options(addon_manifest_tests PRIVATE /W4 /permissive- /EHsc)
+    add_test(NAME addon_manifest_tests COMMAND addon_manifest_tests)
+
     add_executable(preset_ini_tests tests/preset_ini_tests.cpp)
     target_compile_options(preset_ini_tests PRIVATE /W4 /permissive- /EHsc)
     add_test(NAME preset_ini_tests COMMAND preset_ini_tests)
