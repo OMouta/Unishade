@@ -5,7 +5,7 @@
 // Over the game it floats, moves, docks at a side and resizes. In the launcher's window it sits on the page of the game
 // being played. launcher_ui.cpp draws it over the game, and its window can place it on a page.
 
-#include "launcher_ui.h"
+#include "ui/launcher_ui.h"
 
 #include <imgui.h>
 

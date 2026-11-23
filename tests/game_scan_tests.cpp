@@ -1,4 +1,4 @@
-#include "../src/game_scan.h"
+#include "games/game_scan.h"
 
 #include <cstdio>
 

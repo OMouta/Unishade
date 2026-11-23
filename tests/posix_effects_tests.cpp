@@ -1,7 +1,7 @@
 // Tests for the effect runtime's parts that need no graphics card: where uniform values go, the compile cache,
 // preset definitions and the order techniques run in.
 
-#include "effects.h"
+#include "effects/effects.h"
 
 #include <unistd.h>
 

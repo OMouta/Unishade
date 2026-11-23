@@ -3,8 +3,8 @@
 // Unishade's look in Dear ImGui: its colors, text sizes and controls, for the launcher in its window and over the game.
 // Sizes are given at 100% scaling and drawn at scale.
 
-#include "launcher_ui.h"
-#include "theme.h"
+#include "ui/launcher_ui.h"
+#include "ui/theme.h"
 
 #include <imgui.h>
 

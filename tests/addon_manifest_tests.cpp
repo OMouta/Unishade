@@ -1,4 +1,4 @@
-#include "../src/addon_manifest.h"
+#include "addons/addon_manifest.h"
 #include <cstdio>
 
 namespace

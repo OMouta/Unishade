@@ -1,11 +1,11 @@
 // The launcher's design, the same on every platform. See launcher_ui.h.
 
 #define IMGUI_DEFINE_MATH_OPERATORS
-#include "launcher_ui.h"
-#include "caption.h"
-#include "kit.h"
-#include "tray.h"
-#include "web_address.h"
+#include "ui/launcher_ui.h"
+#include "ui/caption.h"
+#include "ui/kit.h"
+#include "ui/tray.h"
+#include "base/web_address.h"
 
 #include <imgui_internal.h>
 

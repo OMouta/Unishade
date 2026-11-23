@@ -8,7 +8,7 @@
 //
 // An add-on is a folder in the Addons folder of Unishade's data folder, which on Windows is the folder of Unishade.exe.
 // The folder has an addon.ini that says what the add-on is: its Id, name, version, author, description and icon, the
-// version of this interface it was built for, and its library for each system. src/addon_manifest.h describes the
+// version of this interface it was built for, and its library for each system. src/addons/addon_manifest.h describes the
 // file, addons/example is a whole add-on to start from, and https://unishade.me/developers/ explains all of it. Unishade reads addon.ini without running anything, so
 // it can show the add-on before the user decides whether to load it.
 //

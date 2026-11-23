@@ -11,7 +11,7 @@ export const links = {
   releases: `${github}/releases`,
   license: `${github}/blob/main/LICENSE`,
   // How to build the macOS and Linux version.
-  build: `${github}/tree/main/src/posix#building`,
+  build: `${github}/tree/main/src#building`,
   // For people who write add-ons: the header that is the whole interface, which the site hands out as the
   // repository has it, and an add-on to start from.
   addonHeader: '/developers/unishade_addon.h',

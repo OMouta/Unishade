@@ -1,15 +1,15 @@
 // Tests for the macOS and Linux host's parts that need no window: shortcuts, presets, the saved game list, file
 // names, notices and the checksum Setup verifies presets with.
 
-#include "config.h"
-#include "game_list.h"
-#include "games.h"
-#include "hotkeys.h"
-#include "log.h"
-#include "macho.h"
-#include "preset_ini.h"
-#include "setup.h"
-#include "window_rules.h"
+#include "app/config.h"
+#include "games/game_list.h"
+#include "games/games.h"
+#include "app/hotkeys.h"
+#include "app/log.h"
+#include "platform/macos/macho.h"
+#include "effects/preset_ini.h"
+#include "setup/setup.h"
+#include "platform/macos/window_rules.h"
 
 #include <unistd.h>
 

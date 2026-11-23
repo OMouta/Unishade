@@ -23,237 +23,26 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-# Third-party files are downloaded once at configure time instead of being vendored. The download gets its final name
-# only after its hash matched, since CMake keeps a file that failed the check.
-function(fetch_file url hash destination)
-    if(NOT EXISTS "${destination}")
-        file(REMOVE "${destination}.part")
-        file(DOWNLOAD "${url}" "${destination}.part" EXPECTED_HASH "SHA256=${hash}" STATUS status)
-        list(GET status 0 code)
-        if(NOT code EQUAL 0)
-            file(REMOVE "${destination}.part")
-            list(GET status 1 message)
-            message(FATAL_ERROR "Could not download ${url}: ${message}")
-        endif()
-        file(RENAME "${destination}.part" "${destination}")
-    endif()
-endfunction()
-
-# Setup and the macOS and Linux host draw their windows with Dear ImGui and unpack effect packages with miniz.
-set(IMGUI_DIR "${CMAKE_BINARY_DIR}/imgui")
-set(IMGUI_URL "https://raw.githubusercontent.com/ocornut/imgui/v1.92.9b")
-fetch_file("${IMGUI_URL}/imgui.h" 0d8db1045db01d908853adfd26ae07c5bc5ab4789d4515f6ea34234a69ade0ca "${IMGUI_DIR}/imgui.h")
-fetch_file("${IMGUI_URL}/imgui.cpp" 5a1e5128c0305f50b6556a77f71fde35836505883b74c1d6ae44723243f1e8de "${IMGUI_DIR}/imgui.cpp")
-fetch_file("${IMGUI_URL}/imgui_internal.h" efba9bccc971cc49ec3da3168968ba412c7ea89745c104a7f5c004c8349bc71f "${IMGUI_DIR}/imgui_internal.h")
-fetch_file("${IMGUI_URL}/imgui_draw.cpp" 83d30419a8e06a5f0a8692ee6de186f7ecfddecdc33769e76244837e2975b400 "${IMGUI_DIR}/imgui_draw.cpp")
-fetch_file("${IMGUI_URL}/imgui_tables.cpp" b5deabe5b569ab712c11b6556562a646bf88327320fc60a451071b2a36498d72 "${IMGUI_DIR}/imgui_tables.cpp")
-fetch_file("${IMGUI_URL}/imgui_widgets.cpp" a8a0b2f65caa5711467d9e3ca4028fded48329ea65e11ec92a968293dc2aa231 "${IMGUI_DIR}/imgui_widgets.cpp")
-fetch_file("${IMGUI_URL}/imconfig.h" 5755e1b8d6ab0d7811a9d7cac0f509878b51fc5ee77e09bd0f235bcb414971e7 "${IMGUI_DIR}/imconfig.h")
-fetch_file("${IMGUI_URL}/imstb_rectpack.h" 889b396795202d1457560a797a7242e96f6f132d4b88ca2d69be58bf05e1771f "${IMGUI_DIR}/imstb_rectpack.h")
-fetch_file("${IMGUI_URL}/imstb_textedit.h" a985f5fa0ed97353d493b497961e9eef52082edcd045cf6954b69990ec9d0741 "${IMGUI_DIR}/imstb_textedit.h")
-fetch_file("${IMGUI_URL}/imstb_truetype.h" c51a0f7e7ea760f2366bd3752635ec58e21fccfec4a832501639990ba6ce0528 "${IMGUI_DIR}/imstb_truetype.h")
-
-set(MINIZ_DIR "${CMAKE_BINARY_DIR}/miniz")
-if(NOT EXISTS "${MINIZ_DIR}/miniz.c")
-    fetch_file("https://github.com/richgel999/miniz/releases/download/3.1.2/miniz-3.1.2.zip"
-        f0446d863f9c19926ad9483c523fdc42e42b8d4a6a431d27e09d49c79a140d9a "${CMAKE_BINARY_DIR}/miniz-3.1.2.zip")
-    file(ARCHIVE_EXTRACT INPUT "${CMAKE_BINARY_DIR}/miniz-3.1.2.zip" DESTINATION "${MINIZ_DIR}" PATTERNS miniz.c miniz.h)
+if(APPLE)
+    # Objective-C first: the language enabled first owns the .m extension, and GLFW's .m files are not C++.
+    enable_language(OBJC)
+    enable_language(OBJCXX)
 endif()
 
+# The build, one part to a file in cmake/. They share this folder's variables and targets, so their order matters.
+# Third-party files are downloaded, not vendored.
+include(cmake/fetch.cmake)
+# The libraries Unishade is built on.
+include(cmake/libraries.cmake)
 include(CTest)
+# The add-ons in addons/: the example, Depth and DLSS5.
+include(cmake/addons.cmake)
+# Unishade itself, in src/. It compiles effects with ReShade's effect compiler and runs them on Vulkan.
+include(cmake/app.cmake)
+# Setup for Windows, in installer/.
+if(WIN32)
+    include(cmake/installer.cmake)
+endif()
 if(BUILD_TESTING)
-    add_executable(launcher_ui_tests tests/launcher_ui_tests.cpp src/ui/launcher_ui.cpp src/ui/tray.cpp src/ui/kit.cpp
-        "${IMGUI_DIR}/imgui.cpp" "${IMGUI_DIR}/imgui_draw.cpp" "${IMGUI_DIR}/imgui_tables.cpp" "${IMGUI_DIR}/imgui_widgets.cpp")
-    target_include_directories(launcher_ui_tests PRIVATE src "${IMGUI_DIR}")
-    # Dear ImGui's test engine hooks tell the tests where each control is.
-    target_compile_definitions(launcher_ui_tests PRIVATE IMGUI_USE_WCHAR32 IMGUI_ENABLE_TEST_ENGINE)
-    if(WIN32)
-        target_compile_definitions(launcher_ui_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-    endif()
-    add_test(NAME launcher_ui_tests COMMAND launcher_ui_tests)
-endif()
-
-# The Depth add-on on macOS, Depth.dylib, runs ONNX Runtime's library for macOS, which Microsoft publishes for Apple
-# silicon only. So only a build for arm64 alone has it, and Unishade offers it only there.
-set(DEPTH_MACOS OFF)
-if(APPLE AND (CMAKE_OSX_ARCHITECTURES STREQUAL "arm64" OR (NOT CMAKE_OSX_ARCHITECTURES AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")))
-    set(DEPTH_MACOS ON)
-endif()
-
-# The host, in src/posix for every system. It compiles effects with ReShade's effect compiler and runs them on Vulkan.
-include(src/posix/posix.cmake)
-
-# The example add-on, addons/example, in C, so every build checks that unishade_addon.h is the C it says it is. The
-# host's tests load it.
-add_library(example_addon SHARED addons/example/example.c)
-set_target_properties(example_addon PROPERTIES OUTPUT_NAME Example PREFIX "" C_STANDARD 11 C_VISIBILITY_PRESET hidden)
-target_include_directories(example_addon PRIVATE addons)
-if(MSVC)
-    target_compile_options(example_addon PRIVATE /W4)
-else()
-    target_compile_options(example_addon PRIVATE -Wall -Wextra -pedantic)
-endif()
-
-# ONNX Runtime's headers come from its NuGet package for DirectML, whose three files are the ones of ONNX Runtime 1.24.4
-# with Windows line endings. The package is the one download whose hash is checked, and only the headers leave it. The
-# Mac takes the same C API header, since the Core ML provider needs no header of its own.
-if(WIN32 OR DEPTH_MACOS)
-    set(ONNXRUNTIME_DIR "${CMAKE_BINARY_DIR}/onnxruntime")
-    set(ONNXRUNTIME_INCLUDE "${ONNXRUNTIME_DIR}/build/native/include")
-    if(NOT EXISTS "${ONNXRUNTIME_INCLUDE}/dml_provider_factory.h")
-        fetch_file("https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/1.24.4/microsoft.ml.onnxruntime.directml.1.24.4.nupkg"
-            57e9f11b73437bef7a309496135d4c1f96b1a8e9ddba60013fa27bfc1d788681 "${CMAKE_BINARY_DIR}/onnxruntime-directml-1.24.4.zip")
-        file(ARCHIVE_EXTRACT INPUT "${CMAKE_BINARY_DIR}/onnxruntime-directml-1.24.4.zip" DESTINATION "${ONNXRUNTIME_DIR}"
-            PATTERNS build/native/include/onnxruntime_c_api.h build/native/include/onnxruntime_ep_c_api.h build/native/include/dml_provider_factory.h)
-    endif()
-endif()
-
-# Depth estimation on macOS, Depth.dylib. Its model and libonnxruntime.dylib go in its folder with it. The linker signs
-# it ad hoc, which is all Apple silicon asks of a library a program without the hardened runtime loads, so the file the
-# official list hashes is the file published.
-if(DEPTH_MACOS)
-    add_library(depth_addon SHARED addons/depth/depth_addon_macos.mm addons/depth/depth_model.cpp)
-    set_target_properties(depth_addon PROPERTIES OUTPUT_NAME Depth PREFIX "")
-    target_include_directories(depth_addon PRIVATE addons "${ONNXRUNTIME_INCLUDE}")
-    target_compile_options(depth_addon PRIVATE -Wall -Wextra -Wno-missing-field-initializers $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
-    target_link_libraries(depth_addon PRIVATE "-framework Foundation" "-framework Metal")
-endif()
-
-if(NOT WIN32)
-    return()
-endif()
-
-# Depth estimation as an add-on of the Vulkan host, Depth.dll. Its model and ONNX Runtime go in its folder with it.
-add_library(depth_addon SHARED addons/depth/depth_addon.cpp addons/depth/depth_model.cpp)
-set_target_properties(depth_addon PROPERTIES OUTPUT_NAME Depth)
-target_include_directories(depth_addon PRIVATE addons "${ONNXRUNTIME_INCLUDE}")
-target_compile_definitions(depth_addon PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
-target_compile_options(depth_addon PRIVATE /W4 /permissive- /EHsc)
-target_link_libraries(depth_addon PRIVATE d3d11 d3d12 d3dcompiler dxgi windowsapp)
-
-# Setup's window uses Dear ImGui's Win32 and Direct3D 11 backends.
-fetch_file("${IMGUI_URL}/backends/imgui_impl_win32.h" 2736595b8de1e56871661d5d9b96deec567d35521746fbe2ade8f0543acdfd2b "${IMGUI_DIR}/backends/imgui_impl_win32.h")
-fetch_file("${IMGUI_URL}/backends/imgui_impl_win32.cpp" 6a602ce28470bb209636c40633156e63a530acd49f137819d837d80688d52df6 "${IMGUI_DIR}/backends/imgui_impl_win32.cpp")
-fetch_file("${IMGUI_URL}/backends/imgui_impl_dx11.h" fb8a314a6a2904dcc5bfeb938a169389e170f233ad367d33f1ce5c7bde586a7c "${IMGUI_DIR}/backends/imgui_impl_dx11.h")
-fetch_file("${IMGUI_URL}/backends/imgui_impl_dx11.cpp" 749d12b01011f504284497db21cb52b3c6f73c59612e7115f46f41e0c4ea1c49 "${IMGUI_DIR}/backends/imgui_impl_dx11.cpp")
-
-add_library(setup_libraries STATIC EXCLUDE_FROM_ALL
-    "${IMGUI_DIR}/imgui.cpp"
-    "${IMGUI_DIR}/imgui_draw.cpp"
-    "${IMGUI_DIR}/imgui_tables.cpp"
-    "${IMGUI_DIR}/imgui_widgets.cpp"
-    "${IMGUI_DIR}/backends/imgui_impl_win32.cpp"
-    "${IMGUI_DIR}/backends/imgui_impl_dx11.cpp"
-    "${MINIZ_DIR}/miniz.c")
-target_include_directories(setup_libraries PUBLIC "${IMGUI_DIR}" "${IMGUI_DIR}/backends" "${MINIZ_DIR}")
-target_compile_definitions(setup_libraries PUBLIC MINIZ_NO_STDIO MINIZ_NO_TIME)
-# Otherwise the backend loads XInput by its bare name, which could find a DLL next to Setup.
-target_compile_definitions(setup_libraries PRIVATE IMGUI_IMPL_WIN32_DISABLE_GAMEPAD)
-
-# Built on request, like the Inno Setup installer it replaces: cmake --build build --config Release --target installer
-add_executable(installer WIN32 EXCLUDE_FROM_ALL
-    installer/main.cpp
-    installer/install.cpp
-    src/net.cpp
-    # The launcher's look and its font, so Setup's window is drawn as Unishade's is.
-    src/ui/kit.cpp
-    "${FONTS_SOURCE}"
-    installer/setup.rc)
-# setup.rc embeds Unishade.exe, found through the include path.
-target_include_directories(installer PRIVATE src "$<TARGET_FILE_DIR:Unishade>")
-target_compile_definitions(installer PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
-target_compile_definitions(installer PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
-target_compile_definitions(installer PRIVATE UNISHADE_USER_AGENT="Unishade-Setup/${PROJECT_VERSION}")
-target_compile_definitions(installer PRIVATE UNISHADE_VERSION_RESOURCE=${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0)
-target_compile_options(installer PRIVATE /W4 /permissive- /EHsc)
-target_link_libraries(installer PRIVATE setup_libraries d3d11 dxgi d3dcompiler dwmapi windowscodecs winhttp bcrypt imm32 delayimp)
-# Setup's copy lives in the installation folder, where Unishade 0.6.3 and earlier had ReShade's dxgi.dll, and Windows
-# looks for DLLs in the exe's folder first. Its imports load from System32 instead: the loader flag covers DLLs loaded
-# at startup (Windows 10 1607 and later), and the DLLs that are not KnownDLLs are delay-loaded, so they load after
-# wWinMain has limited the search to System32.
-target_link_options(installer PRIVATE /DEPENDENTLOADFLAG:0x800 /DELAYLOAD:d3d11.dll /DELAYLOAD:d3dcompiler_47.dll
-    /DELAYLOAD:dwmapi.dll /DELAYLOAD:winhttp.dll /DELAYLOAD:bcrypt.dll)
-add_dependencies(installer Unishade)
-# The generator expression keeps multi-config generators from adding a Release folder.
-set_target_properties(installer PROPERTIES
-    OUTPUT_NAME "Unishade-Setup-${PROJECT_VERSION}"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/installer$<0:>")
-
-# DLSS5 calls NVIDIA's nvngx_dlssnr.dll directly. Unishade_nvngx.dll is also the DLSS5 add-on of the Vulkan host, which
-# takes nvngx_dlssnr.dll from its own folder. A program that runs an image through it is built on request:
-# cmake --build build --config Release --target dlss5_check
-set(NGX_INCLUDE "${CMAKE_BINARY_DIR}/ngx")
-set(NGX_URL "https://raw.githubusercontent.com/NVIDIA/DLSS/v310.9.16/include")
-fetch_file("${NGX_URL}/nvsdk_ngx_defs.h" ea23f33497cd274860d1c25a97644fce807dcb0037c594547203343103fad03e "${NGX_INCLUDE}/nvsdk_ngx_defs.h")
-fetch_file("${NGX_URL}/nvsdk_ngx_params.h" 943bc8cc5cdae03b6303016fbad3183636f2335ae27a2d18776798c3b4efabbc "${NGX_INCLUDE}/nvsdk_ngx_params.h")
-
-# Its path has to contain nvngx.dll. See addons/dlss5/dlss5.cpp.
-add_library(Unishade_nvngx SHARED addons/dlss5/dlss5.cpp addons/dlss5/dlss5_addon.cpp)
-target_include_directories(Unishade_nvngx PRIVATE addons "${NGX_INCLUDE}")
-target_compile_definitions(Unishade_nvngx PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_DLSS5_EXPORTS)
-target_compile_definitions(Unishade_nvngx PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
-target_compile_options(Unishade_nvngx PRIVATE /W4 /permissive- /EHsc)
-target_link_libraries(Unishade_nvngx PRIVATE d3d12 dxgi windowsapp)
-
-set(STB_DIR "${CMAKE_BINARY_DIR}/stb")
-set(STB_URL "https://raw.githubusercontent.com/nothings/stb/f58f558c120e9b32c217290b80bad1a0729fbb2c")
-fetch_file("${STB_URL}/stb_image.h" 594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3 "${STB_DIR}/stb_image.h")
-fetch_file("${STB_URL}/stb_image_write.h" cbd5f0ad7a9cf4468affb36354a1d2338034f2c12473cf1a8e32053cb6914a05 "${STB_DIR}/stb_image_write.h")
-
-add_executable(dlss5_check EXCLUDE_FROM_ALL addons/dlss5/check.cpp)
-target_include_directories(dlss5_check PRIVATE "${STB_DIR}")
-target_compile_definitions(dlss5_check PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
-target_compile_options(dlss5_check PRIVATE /W4 /permissive- /EHsc)
-target_link_libraries(dlss5_check PRIVATE d3d12 windowsapp)
-add_dependencies(dlss5_check Unishade_nvngx)
-
-if(BUILD_TESTING)
-    add_executable(frame_limit_tests tests/frame_limit_tests.cpp)
-    target_compile_options(frame_limit_tests PRIVATE /W4 /permissive- /EHsc)
-    add_test(NAME frame_limit_tests COMMAND frame_limit_tests)
-
-    add_executable(frame_stats_tests tests/frame_stats_tests.cpp)
-    target_compile_options(frame_stats_tests PRIVATE /W4 /permissive- /EHsc)
-    add_test(NAME frame_stats_tests COMMAND frame_stats_tests)
-
-    add_executable(menu_layout_tests tests/menu_layout_tests.cpp)
-    target_compile_options(menu_layout_tests PRIVATE /W4 /permissive- /EHsc)
-    add_test(NAME menu_layout_tests COMMAND menu_layout_tests)
-
-    add_executable(ini_text_tests tests/ini_text_tests.cpp)
-    target_compile_options(ini_text_tests PRIVATE /W4 /permissive- /EHsc)
-    add_test(NAME ini_text_tests COMMAND ini_text_tests)
-
-    add_executable(addon_manifest_tests tests/addon_manifest_tests.cpp)
-    target_compile_options(addon_manifest_tests PRIVATE /W4 /permissive- /EHsc)
-    add_test(NAME addon_manifest_tests COMMAND addon_manifest_tests)
-
-    add_executable(preset_ini_tests tests/preset_ini_tests.cpp)
-    target_compile_options(preset_ini_tests PRIVATE /W4 /permissive- /EHsc)
-    add_test(NAME preset_ini_tests COMMAND preset_ini_tests)
-
-    add_executable(names_tests tests/names_tests.cpp)
-    target_compile_options(names_tests PRIVATE /W4 /permissive- /EHsc)
-    add_test(NAME names_tests COMMAND names_tests)
-
-    add_executable(game_scan_tests tests/game_scan_tests.cpp)
-    target_compile_options(game_scan_tests PRIVATE /W4 /permissive- /EHsc)
-    add_test(NAME game_scan_tests COMMAND game_scan_tests)
-
-    # Windows only, like the ReShade host whose settings it carries over.
-    add_executable(old_settings_tests tests/old_settings_tests.cpp)
-    target_compile_definitions(old_settings_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-    # The test's names outside ASCII are UTF-8 in the source.
-    target_compile_options(old_settings_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
-    add_test(NAME old_settings_tests COMMAND old_settings_tests)
-
-    add_executable(discord_rpc_tests tests/discord_rpc_tests.cpp)
-    target_compile_options(discord_rpc_tests PRIVATE /W4 /permissive- /EHsc)
-    add_test(NAME discord_rpc_tests COMMAND discord_rpc_tests)
-
-    # miniz comes with Setup's other libraries.
-    add_executable(package_files_tests tests/package_files_tests.cpp)
-    target_compile_options(package_files_tests PRIVATE /W4 /permissive- /EHsc)
-    target_link_libraries(package_files_tests PRIVATE setup_libraries)
-    add_test(NAME package_files_tests COMMAND package_files_tests)
+    include(cmake/tests.cmake)
 endif()

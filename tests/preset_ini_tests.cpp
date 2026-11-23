@@ -1,7 +1,7 @@
 // Tests for preset_ini.h: saving a preset changes only what changed, and keeps its comments and blank lines where
 // they were.
 
-#include "../src/preset_ini.h"
+#include "effects/preset_ini.h"
 
 #include <cstdio>
 #include <string>

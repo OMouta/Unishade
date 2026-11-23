@@ -230,7 +230,7 @@ jobs:
       - name: Package
         run: |
           mkdir -p package/Unishade
-          cp build/unishade LICENSE src/posix/CREDITS.txt package/Unishade/
+          cp build/unishade LICENSE CREDITS.txt package/Unishade/
           tar -czf Unishade-linux-x64.tar.gz -C package Unishade
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -270,7 +270,7 @@ jobs:
           done
       - name: Package
         run: |
-          cp LICENSE src/posix/CREDITS.txt build/
+          cp LICENSE CREDITS.txt build/
           cd build
           ditto -c -k --keepParent Unishade.app Unishade-macOS.zip
           zip -j Unishade-macOS.zip LICENSE CREDITS.txt

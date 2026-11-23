@@ -1,7 +1,7 @@
 #include "install.h"
 #include "resource.h"
-#include "../src/package_files.h"
-#include "../src/text.h"
+#include "setup/package_files.h"
+#include "base/text.h"
 
 #include <windows.h>
 #include <bcrypt.h>

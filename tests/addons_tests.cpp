@@ -2,9 +2,9 @@
 // addon.ini, asking before loading, settings, events, the add-on's own controls, drawing over the game and what it
 // asks of Unishade.
 
-#include "../src/posix/addons.h"
-#include "../src/posix/config.h"
-#include "../src/ini_text.h"
+#include "addons/addons.h"
+#include "app/config.h"
+#include "base/ini_text.h"
 
 #include <cstdio>
 #include <cstdlib>

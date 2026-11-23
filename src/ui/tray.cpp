@@ -1,8 +1,8 @@
 // The tray's design. See tray.h.
 
 #define IMGUI_DEFINE_MATH_OPERATORS
-#include "tray.h"
-#include "kit.h"
+#include "ui/tray.h"
+#include "ui/kit.h"
 
 #include <imgui_internal.h>
 

@@ -1,7 +1,7 @@
 // Tests for the names every platform gives preset folders and accepts for presets, folders and games: the same
 // rules for Windows' std::wstring and the UTF-8 text of macOS and Linux.
 
-#include "../src/names.h"
+#include "base/names.h"
 
 #include <cstdio>
 #include <string>

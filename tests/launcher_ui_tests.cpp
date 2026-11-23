@@ -1,4 +1,4 @@
-#include "../src/ui/kit.h"
+#include "ui/kit.h"
 
 #include <imgui_internal.h>
 

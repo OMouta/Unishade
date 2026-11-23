@@ -4,8 +4,8 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "install.h"
 #include "resource.h"
-#include "../src/text.h"
-#include "../src/ui/kit.h"
+#include "base/text.h"
+#include "ui/kit.h"
 
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
