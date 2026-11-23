@@ -112,7 +112,7 @@ endif()
 # it ad hoc, which is all Apple silicon asks of a library a program without the hardened runtime loads, so the file the
 # official list hashes is the file published.
 if(DEPTH_MACOS)
-    add_library(depth_addon SHARED src/depth/depth_addon_macos.mm src/depth/depth_model.cpp)
+    add_library(depth_addon SHARED src/addons/depth/depth_addon_macos.mm src/addons/depth/depth_model.cpp)
     set_target_properties(depth_addon PROPERTIES OUTPUT_NAME Depth PREFIX "")
     target_include_directories(depth_addon PRIVATE src "${ONNXRUNTIME_INCLUDE}")
     target_compile_options(depth_addon PRIVATE -Wall -Wextra -Wno-missing-field-initializers $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
@@ -124,7 +124,7 @@ if(NOT WIN32)
 endif()
 
 # Depth estimation as an add-on of the Vulkan host, Depth.dll. Its model and ONNX Runtime go in its folder with it.
-add_library(depth_addon SHARED src/depth/depth_addon.cpp src/depth/depth_model.cpp)
+add_library(depth_addon SHARED src/addons/depth/depth_addon.cpp src/addons/depth/depth_model.cpp)
 set_target_properties(depth_addon PROPERTIES OUTPUT_NAME Depth)
 target_include_directories(depth_addon PRIVATE src "${ONNXRUNTIME_INCLUDE}")
 target_compile_definitions(depth_addon PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -187,8 +187,8 @@ set(NGX_URL "https://raw.githubusercontent.com/NVIDIA/DLSS/v310.9.16/include")
 fetch_file("${NGX_URL}/nvsdk_ngx_defs.h" ea23f33497cd274860d1c25a97644fce807dcb0037c594547203343103fad03e "${NGX_INCLUDE}/nvsdk_ngx_defs.h")
 fetch_file("${NGX_URL}/nvsdk_ngx_params.h" 943bc8cc5cdae03b6303016fbad3183636f2335ae27a2d18776798c3b4efabbc "${NGX_INCLUDE}/nvsdk_ngx_params.h")
 
-# Its path has to contain nvngx.dll. See src/dlss5/dlss5.cpp.
-add_library(Unishade_nvngx SHARED src/dlss5/dlss5.cpp src/dlss5/dlss5_addon.cpp)
+# Its path has to contain nvngx.dll. See src/addons/dlss5/dlss5.cpp.
+add_library(Unishade_nvngx SHARED src/addons/dlss5/dlss5.cpp src/addons/dlss5/dlss5_addon.cpp)
 target_include_directories(Unishade_nvngx PRIVATE src "${NGX_INCLUDE}")
 target_compile_definitions(Unishade_nvngx PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_DLSS5_EXPORTS)
 target_compile_definitions(Unishade_nvngx PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
@@ -200,7 +200,7 @@ set(STB_URL "https://raw.githubusercontent.com/nothings/stb/f58f558c120e9b32c217
 fetch_file("${STB_URL}/stb_image.h" 594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3 "${STB_DIR}/stb_image.h")
 fetch_file("${STB_URL}/stb_image_write.h" cbd5f0ad7a9cf4468affb36354a1d2338034f2c12473cf1a8e32053cb6914a05 "${STB_DIR}/stb_image_write.h")
 
-add_executable(dlss5_check EXCLUDE_FROM_ALL src/dlss5/check.cpp)
+add_executable(dlss5_check EXCLUDE_FROM_ALL src/addons/dlss5/check.cpp)
 target_include_directories(dlss5_check PRIVATE "${STB_DIR}")
 target_compile_definitions(dlss5_check PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(dlss5_check PRIVATE /W4 /permissive- /EHsc)
