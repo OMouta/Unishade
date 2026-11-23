@@ -91,7 +91,7 @@ elseif(DEPTH_MACOS)
 endif()
 add_custom_command(OUTPUT "${OFFICIAL_ADDONS_SOURCE}"
     COMMAND "${CMAKE_COMMAND}" "-DLIST=${CMAKE_SOURCE_DIR}/addons/official.ini" "-DOUTPUT=${OFFICIAL_ADDONS_SOURCE}"
-            "-DVERSION=${PROJECT_VERSION}" "-DBINARIES=${OFFICIAL_ADDONS_BINARIES}" "-DFOLDERS=${OFFICIAL_ADDONS_FOLDERS}"
+            "-DVERSION=${UNISHADE_VERSION}" "-DBINARIES=${OFFICIAL_ADDONS_BINARIES}" "-DFOLDERS=${OFFICIAL_ADDONS_FOLDERS}"
             -P "${CMAKE_SOURCE_DIR}/cmake/official_addons.cmake"
     DEPENDS "${CMAKE_SOURCE_DIR}/addons/official.ini" "${CMAKE_SOURCE_DIR}/cmake/official_addons.cmake"
             "${CMAKE_SOURCE_DIR}/addons/depth/addon.ini" "${CMAKE_SOURCE_DIR}/addons/depth/icon.png"

@@ -91,7 +91,10 @@ endif()
 add_library(unishade_core STATIC ${CORE_SOURCES})
 # Files are included by their path from src, and the add-on interface by its name.
 target_include_directories(unishade_core PUBLIC "${SRC_DIR}" "${CMAKE_SOURCE_DIR}/addons")
-target_compile_definitions(unishade_core PUBLIC UNISHADE_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(unishade_core PUBLIC UNISHADE_VERSION="${UNISHADE_VERSION}")
+if(UNISHADE_BETA GREATER 0)
+    target_compile_definitions(unishade_core PUBLIC UNISHADE_BETA=${UNISHADE_BETA})
+endif()
 target_compile_options(unishade_core PRIVATE ${HOST_COMPILE_OPTIONS})
 set_source_files_properties("${SRC_DIR}/effects/effects.cpp" PROPERTIES COMPILE_DEFINITIONS UNISHADE_COMPILER_ID="${RESHADEFX_ID}")
 target_link_libraries(unishade_core PUBLIC reshadefx unishade_libraries Threads::Threads)
@@ -103,7 +106,7 @@ if(APPLE)
 elseif(WIN32)
     # The standard and POSIX C functions MSVC warns about are used as on the other systems.
     target_compile_definitions(unishade_core PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
-    target_compile_definitions(unishade_core PRIVATE UNISHADE_USER_AGENT="Unishade/${PROJECT_VERSION}")
+    target_compile_definitions(unishade_core PRIVATE UNISHADE_USER_AGENT="Unishade/${UNISHADE_VERSION}")
     target_link_libraries(unishade_core PUBLIC d3d11 d3dcompiler dxgi dwmapi windowsapp winhttp bcrypt comdlg32)
 else()
     target_link_libraries(unishade_core PUBLIC X11::X11 X11::Xcomposite X11::Xext)
@@ -146,7 +149,7 @@ if(APPLE)
     set_target_properties(Unishade PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST "${SRC_DIR}/platform/macos/Info.plist.in"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${UNISHADE_VERSION}"
         INSTALL_RPATH "@executable_path/../Frameworks"
         BUILD_WITH_INSTALL_RPATH ON)
     # MoltenVK goes inside the app, which is then signed again since changing it breaks the signature.

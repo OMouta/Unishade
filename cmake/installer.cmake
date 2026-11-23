@@ -29,8 +29,11 @@ add_executable(installer WIN32 EXCLUDE_FROM_ALL
 # setup.rc embeds Unishade.exe, found through the include path.
 target_include_directories(installer PRIVATE src "$<TARGET_FILE_DIR:Unishade>")
 target_compile_definitions(installer PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
-target_compile_definitions(installer PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
-target_compile_definitions(installer PRIVATE UNISHADE_USER_AGENT="Unishade-Setup/${PROJECT_VERSION}")
+target_compile_definitions(installer PRIVATE UNISHADE_VERSION="${UNISHADE_VERSION}")
+if(UNISHADE_BETA GREATER 0)
+    target_compile_definitions(installer PRIVATE UNISHADE_BETA=${UNISHADE_BETA})
+endif()
+target_compile_definitions(installer PRIVATE UNISHADE_USER_AGENT="Unishade-Setup/${UNISHADE_VERSION}")
 target_compile_definitions(installer PRIVATE UNISHADE_VERSION_RESOURCE=${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0)
 target_compile_options(installer PRIVATE /W4 /permissive- /EHsc)
 target_link_libraries(installer PRIVATE setup_libraries d3d11 dxgi d3dcompiler dwmapi windowscodecs winhttp bcrypt imm32 delayimp)
@@ -43,5 +46,5 @@ target_link_options(installer PRIVATE /DEPENDENTLOADFLAG:0x800 /DELAYLOAD:d3d11.
 add_dependencies(installer Unishade)
 # The generator expression keeps multi-config generators from adding a Release folder.
 set_target_properties(installer PROPERTIES
-    OUTPUT_NAME "Unishade-Setup-${PROJECT_VERSION}"
+    OUTPUT_NAME "Unishade-Setup-${UNISHADE_VERSION}"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/installer$<0:>")
