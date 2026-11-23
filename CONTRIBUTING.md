@@ -36,7 +36,11 @@ The EXE is at `build\Release\Unishade.exe`. See `installer/README.md` for buildi
 
 GitHub Actions builds and tests the Windows, Linux and macOS versions for pushes and pull requests, and runs `tests/installer_tests.ps1` against the new Setup. You can also run **Build and release** manually from the Actions tab, which signs the Windows files through [SignPath](https://unishade.me/code-signing/) with the test certificate. Successful builds provide `Unishade-windows-x64` (the EXE, the add-ons `Depth.dll` and `Unishade_nvngx.dll`, and Setup), `Unishade-linux-x64` and `Unishade-macOS` artifacts.
 
-To publish a release, run **Build and release** manually on `main` with **Publish a release** checked. It releases the version in `project(Unishade VERSION X.Y.Z)` in `CMakeLists.txt` as `vX.Y.Z`, and refuses a version that's already released. The Windows files are signed with the release certificate, and each signing request waits for an approver in SignPath. After the builds and tests pass, it creates the tag and a GitHub release with Setup, the EXE, `Depth.dll` and `Unishade_nvngx.dll`, the macOS and Linux archives, `LICENSE` and `SHA256SUMS.txt`, which lists the SHA-256 of each file, and then rebuilds the website. Pushes and pull requests do not publish releases.
+To publish a release, run **Build and release** manually on `main` with **Publish a release** checked. It releases the version in `project(Unishade VERSION X.Y.Z)` in `CMakeLists.txt` as `vX.Y.Z`, and refuses a version that's already released.
+
+`set(UNISHADE_BETA N)` below that line makes the build a beta. With `N` above 0 the version is `X.Y.Z-beta.N`, the program and Setup have the beta icon from `assets/UnishadeBeta.ico` and `assets/UnishadeBeta.png`, and the launcher shows a BETA badge beside its logo. The workflow publishes a beta as `vX.Y.Z-beta.N`, marked as a prerelease on GitHub, and does so from any branch. The website and the update check of a released version skip prereleases. A beta's own update check offers newer betas and the version itself. To ship the next beta, raise `N`. To release the version, set it to 0. `swift scripts/beta_icon.swift` makes the beta icon again from `assets/Unishade.png` when the logo changes.
+
+For both kinds of release, the Windows files are signed with the release certificate, and each signing request waits for an approver in SignPath. After the builds and tests pass, it creates the tag and a GitHub release with Setup, the EXE, `Depth.dll` and `Unishade_nvngx.dll`, the macOS and Linux archives, `LICENSE` and `SHA256SUMS.txt`, which lists the SHA-256 of each file. After a version, not a beta, it rebuilds the website. Pushes and pull requests do not publish releases.
 
 ## Website
 
@@ -76,7 +80,7 @@ Game discovery lives in `src/games/games.cpp`. `FindGameTarget()` uses a manual 
 - Hotkey parsing has tests in `tests/host_tests.cpp`, which builds on macOS and Linux. Add a case when you change it.
 - Installer changes must pass `tests/installer_tests.ps1`. It downloads all effect packages, so it takes a few minutes. CI runs it too, with the presets from your commit.
 - Keep pull requests focused. Separate unrelated fixes into their own pull requests.
-- Do not change the version in `CMakeLists.txt`. The maintainer raises it for a release, and the release workflow creates the tag from it.
+- Do not change the version or `UNISHADE_BETA` in `CMakeLists.txt`. The maintainer raises them for a release, and the release workflow creates the tag from them.
 
 ## Pull requests
 
