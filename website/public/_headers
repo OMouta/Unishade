@@ -7,6 +7,17 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=()
 
+# The developer docs as Markdown are the pages again, which search engines have as pages. The header and the example
+# add-on show as text rather than download.
+/developers/*.md
+  X-Robots-Tag: noindex
+/llms-full.txt
+  X-Robots-Tag: noindex
+/developers/unishade_addon.h
+  Content-Type: text/plain; charset=utf-8
+/developers/example/*
+  Content-Type: text/plain; charset=utf-8
+
 # Astro names these files after their content, so a name never gets new content.
 /_astro/*
   Cache-Control: public, max-age=31536000, immutable

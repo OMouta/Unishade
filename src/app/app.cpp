@@ -1,0 +1,1499 @@
+#include "app/app.h"
+#include "app/log.h"
+#include "effects/uimask.h"
+#include "gpu/upscale.h"
+#include "net/update.h"
+#include "ui/theme.h"
+#include "ui/ui.h"
+#ifdef _WIN32
+#include "discord/discord.h"
+#endif
+
+#include <GLFW/glfw3.h>
+#include "base/image.h"
+#include <stb_image_write.h>
+
+#include <algorithm>
+#include <array>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <iterator>
+#ifdef _WIN32
+#define strcasecmp _stricmp
+#else
+#include <strings.h>
+#endif
+#include <system_error>
+
+App app;
+
+namespace
+{
+// What add-ons ask of Unishade, answered by the app.
+class AddonServices final : public AddonHost
+{
+public:
+    State DescribeForAddons() override
+    {
+        State state;
+        state.playing = app.active.has_value();
+        state.effectsOn = app.effectsEnabled;
+        state.menuOpen = app.menuOpen;
+        state.frameRate = static_cast<float>(app.frameStats.shownFps);
+        state.time = glfwGetTime();
+        if (app.active)
+        {
+            state.gameName = app.game.empty() ? app.active->title : app.game;
+            state.executable = app.activeExecutable;
+        }
+        return state;
+    }
+
+    void ShowMessage(const std::string& text) override { app.ShowToast(text); }
+
+    void SetEffectsOn(bool on) override { app.effectsEnabled = on; }
+
+    void TakeScreenshot() override
+    {
+        // As the menu's button, which saves what the screenshot settings say.
+        const Settings& settings = app.settings;
+        const ScreenshotKind both = settings.shotTwoFiles ? ScreenshotKind::TwoFiles : ScreenshotKind::SideBySide;
+        app.RequestScreenshot(!settings.shotOriginal ? ScreenshotKind::Effects : settings.shotEffects ? both : ScreenshotKind::Original);
+    }
+
+    std::vector<fs::path> ListPresets() override
+    {
+        std::vector<fs::path> presets;
+        for (const PresetFolder& folder : app.PresetFolders())
+            presets.insert(presets.end(), folder.presets.begin(), folder.presets.end());
+        return presets;
+    }
+
+    bool UsePreset(const fs::path& preset) override
+    {
+        if (app.runtime.Dirty() && !app.settings.autoSavePresets)
+            return false;
+        return app.SwitchPreset(preset, true, false);
+    }
+};
+AddonServices addonServices;
+} // namespace
+
+namespace
+{
+double Now()
+{
+    return glfwGetTime();
+}
+
+const Shortcut* FindShortcut(int id)
+{
+    for (const Shortcut& shortcut : kShortcuts)
+        if (shortcut.id == id)
+            return &shortcut;
+    return nullptr;
+}
+} // namespace
+
+bool App::Init(std::string& error)
+{
+    settings = LoadSettings();
+    UpdateFrameRateLimit();
+    Log(LogLevel::Info, "Settings: auto_save=%d, preset=%s, definitions=%s.", settings.autoSavePresets, settings.preset.string().c_str(),
+        FormatDefinitions(settings.definitions).c_str());
+#ifdef __APPLE__
+    Log(LogLevel::Info, "Settings: skip_title_bar=%d.", settings.skipTitleBar);
+#endif
+#ifdef _WIN32
+    Log(LogLevel::Info, "Settings: discord_presence=%d.", settings.discordPresence);
+#endif
+    Log(LogLevel::Info, "Settings: update_checks=%d.", settings.updateChecks);
+    if (settings.updateChecks)
+        CheckForUpdate();
+    for (const fs::path& path : settings.effectPaths)
+        Log(LogLevel::Info, "Effect search path: %s.", path.string().c_str());
+    for (const fs::path& path : settings.texturePaths)
+        Log(LogLevel::Info, "Texture search path: %s.", path.string().c_str());
+    for (const Shortcut& shortcut : kShortcuts)
+        Log(LogLevel::Info, "Shortcut: %s=%s.", shortcut.label, FormatHotkey(settings.hotkeys.*shortcut.member).c_str());
+    try
+    {
+        // Without a list of games, this is the first start, and the launcher offers the ones installed.
+        std::error_code missing;
+        if (!fs::exists(DataDirectory() / "games.ini", missing))
+            foundGames = FindInstalledGames();
+        autoGames = LoadAutoGames(DataDirectory() / "games.ini");
+    }
+    catch (const std::exception& e)
+    {
+        Log(LogLevel::Warning, "Could not load games.ini: %s", e.what());
+        autoGames = DefaultAutoGames();
+    }
+
+    if (!platform::Init(error) || !gpu.Init(false, error))
+        return false;
+    platform::SetSkipTitleBar(settings.skipTitleBar);
+    if (!runtime.Init(settings))
+    {
+        error = "Could not prepare the graphics card for effects.";
+        return false;
+    }
+    runtime.LoadPreset(settings.preset);
+    addons.Init(runtime, addonServices);
+
+    glfwDefaultWindowHints();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    // The same sizes as on Windows, at 100% scaling.
+    launcher.window = glfwCreateWindow(1120, 740, "Unishade", nullptr, nullptr);
+    if (!launcher.window || !launcher.surface.Create(launcher.window, false, error) || !InitUi(launcher, error))
+    {
+        if (error.empty())
+            error = "Could not open the launcher window.";
+        return false;
+    }
+    SetWindowIcon(launcher.window);
+    platform::SetupLauncherWindow(launcher.window);
+    // Limits are in the screen's units, which macOS keeps the same at every scaling.
+    float scaleX = 1, scaleY = 1;
+#ifndef __APPLE__
+    glfwGetWindowContentScale(launcher.window, &scaleX, &scaleY);
+#endif
+    glfwSetWindowSizeLimits(launcher.window, static_cast<int>(880 * scaleX), static_cast<int>(560 * scaleY), GLFW_DONT_CARE, GLFW_DONT_CARE);
+
+    // The overlay covers the game's window exactly. Clicks go through to the game until the menu opens.
+    glfwDefaultWindowHints();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+    glfwWindowHint(GLFW_FLOATING, GLFW_TRUE);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
+    glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_FALSE);
+    glfwWindowHint(GLFW_MOUSE_PASSTHROUGH, GLFW_TRUE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
+    platform::PrepareOverlayWindow();
+    overlay.window = glfwCreateWindow(64, 64, "Unishade overlay", nullptr, nullptr);
+    if (!overlay.window)
+    {
+        error = "Could not create the overlay window.";
+        return false;
+    }
+    platform::SetupOverlayWindow(overlay.window);
+    if (!overlay.surface.Create(overlay.window, true, error) || !InitUi(overlay, error))
+        return false;
+
+    // Closing the launcher leaves Unishade running in the notification area, where Quit ends it. Without one, it quits.
+    platform::AddTrayIcon({ .open = [this] { ShowLauncher(); },
+                            .effectsShown = [this] { return captureEnabled; },
+                            .toggleEffects = [this] { ToggleOverlay(); },
+                            .quit = [this] { Quit(); } });
+    glfwSetWindowCloseCallback(launcher.window, [](GLFWwindow* window) {
+        glfwSetWindowShouldClose(window, GLFW_FALSE);
+        if (platform::TrayIconShown())
+            glfwHideWindow(window);
+        else
+            app.Quit();
+    });
+    platform::SetSessionEndCallback([this] { EndSession(); });
+    if (!startMinimized)
+        glfwShowWindow(launcher.window);
+    else if (!platform::TrayIconShown())
+        glfwIconifyWindow(launcher.window);
+
+    platform::SetHotkeyCallback([this](int id, bool pressed) { OnHotkey(id, pressed); });
+    for (const Shortcut& shortcut : kShortcuts)
+        if (shortcut.always && !RegisterShortcut(shortcut, settings.hotkeys.*shortcut.member))
+            Report(LogLevel::Warning, "%s is used by another program, so it cannot %s.", FormatHotkey(settings.hotkeys.*shortcut.member).c_str(),
+                   Lowercase(shortcut.label).c_str());
+    if (!platform::HasCapturePermission())
+        Report(LogLevel::Warning, "Unishade needs permission to record the screen before it can copy the game's picture.");
+    return true;
+}
+
+void App::Run()
+{
+    Log(LogLevel::Info, "Waiting for a supported game...");
+    double nextStateLog = Now();
+    while (!glfwWindowShouldClose(launcher.window))
+    {
+        // A render held back happens as soon as it is due, so the last change in the menu always gets drawn.
+        double timeout = overlayVisible ? (menuOpen || menuClosing ? overlayInterval : 0.1) : 0.25;
+        if (overlayVisible && renderHeld)
+            timeout = std::min(timeout, lastOverlayFrame + std::max(overlayInterval, frameRateLimit ? 0.5 / frameRateLimit : 0.0) - Now());
+        // The launcher draws only when something happens, so while it animates the next frame is due at once, and the
+        // display paces it. With the game's picture on its page it keeps up with that.
+        if (glfwGetWindowAttrib(launcher.window, GLFW_VISIBLE) && !glfwGetWindowAttrib(launcher.window, GLFW_ICONIFIED))
+        {
+            if (launcherAnimating)
+                timeout = 0;
+            else if (overlayVisible && (glfwGetWindowAttrib(launcher.window, GLFW_FOCUSED) || glfwGetWindowAttrib(launcher.window, GLFW_HOVERED)))
+                timeout = std::min(timeout, lastLauncherFrame + 1.0 / 30 - Now());
+        }
+        glfwWaitEventsTimeout(std::max(timeout, 0.001));
+        platform::PollHotkeys();
+        runtime.Update();
+        const bool installing = setup.Read().running;
+        if (setup.TakeFinished())
+        {
+            effectsCheckTime = -10;
+            // The launcher asks to save or discard changes before downloading, but the menu can make more meanwhile.
+            // Those stay, unsaved, rather than the preset being read again from its file.
+            if (runtime.Dirty())
+                runtime.ReloadKeepingChanges();
+            else
+            {
+                runtime.LoadPreset(settings.preset);
+                runtime.Reload();
+            }
+        }
+        // The installer's files load once it is done, above, not as it writes them. Whether it runs is read before
+        // that check, so a run that ends in between still holds file changes until its reload.
+        runtime.holdFileChanges = installing;
+        TakeScreenshots();
+        addons.Update();
+
+        UpdateTarget();
+#ifdef _WIN32
+        UpdateDiscord();
+#endif
+        // Once per pass, since on X11 each asks the X server.
+        const bool overlayFocused = glfwGetWindowAttrib(overlay.window, GLFW_FOCUSED);
+        inFront = active && (platform::ProcessInFront(active->pid) || overlayFocused);
+        UpdateGameHotkeys();
+        UpdateOverlay();
+        // A menu on its way out has nowhere to go once the overlay hides.
+        if (menuClosing && !overlayVisible)
+            ForgetMenu(*this);
+
+        if (menuOpen)
+        {
+            // Another window took focus, as the menu closes on Windows when the host loses it.
+            if (overlayFocused)
+                menuFocused = true;
+            else if (menuFocused)
+                CloseMenu(false);
+        }
+        else if (overlayVisible && overlayFocused && active)
+            platform::ReturnFocus(overlay.window, *active); // the window manager focused the overlay, which should never have it
+
+        const bool newFrame = active && platform::TakeFrame(frame);
+        // Capture works again, so the next failure is news.
+        if (newFrame && failingWindow)
+        {
+            failingWindow = 0;
+            loggedCaptureError.clear();
+        }
+        if (Now() >= nextStateLog)
+        {
+            Log(LogLevel::Info, "State: window=%llu, pid=%d, capture=%d, visible=%d, menu=%d, in_front=%d, frame=%ux%u, serial=%llu, "
+                               "gpu_frame=%d, effects_loading=%d, device_lost=%d, preset=%s.",
+                static_cast<unsigned long long>(active ? active->id : 0), active ? active->pid : 0, captureEnabled, overlayVisible,
+                menuOpen, inFront, frame.width, frame.height, static_cast<unsigned long long>(frame.serial), frame.image != VK_NULL_HANDLE,
+                runtime.Loading(), gpu.lost, runtime.PresetPath().string().c_str());
+            nextStateLog = Now() + 30;
+        }
+        // A new frame is drawn at once, unless the frame rate limit holds it back. Other renders, for the menu, a
+        // message or to keep effects that move going, are held to the display's rate as well: mouse events wake the
+        // loop far more often, and each render runs the whole effect chain.
+        const bool toastShowing = !toast.empty() && Now() < toastUntil;
+        renderHeld = false;
+        framePending = (framePending || newFrame) && overlayVisible;
+        if (overlayVisible && HasFrame())
+        {
+            UpdateOverlayInterval();
+            const bool wanted = menuOpen || menuClosing || toastShowing || Now() - lastOverlayFrame > 0.1;
+            const int64_t time = static_cast<int64_t>(Now() * 1e6);
+            const int64_t interval = frameRateLimit ? 1000000 / frameRateLimit : 0;
+            if ((!frameRateLimit || frameLimit.Ready(time, interval)) && (framePending || (wanted && Now() - lastOverlayFrame >= overlayInterval)))
+            {
+                RenderOverlay();
+                framePending = false;
+                if (frameRateLimit)
+                    frameLimit.Allow(time, interval);
+            }
+            else
+                renderHeld = wanted || framePending;
+        }
+
+        // Once the preset's own effects are in. The rest of the library can take minutes at low priority, and a
+        // preset saved meanwhile keeps the techniques, order and sections of effects not loaded yet.
+        if (settings.autoSavePresets && runtime.Dirty() && !runtime.PresetLoading() && Now() - lastAutoSave > 1.0)
+        {
+            runtime.SavePreset();
+            lastAutoSave = Now();
+        }
+
+        const bool launcherActive = glfwGetWindowAttrib(launcher.window, GLFW_FOCUSED) || glfwGetWindowAttrib(launcher.window, GLFW_HOVERED);
+        const bool launcherShown = glfwGetWindowAttrib(launcher.window, GLFW_VISIBLE) && !glfwGetWindowAttrib(launcher.window, GLFW_ICONIFIED);
+        const double launcherInterval = launcherAnimating ? 0 : launcherActive ? 1.0 / 60 : 0.25;
+        if (launcherShown && Now() - lastLauncherFrame >= launcherInterval)
+        {
+            // Drawing says whether it still animates. A frame that could not be drawn must not keep the loop spinning.
+            launcherAnimating = false;
+            RenderLauncher();
+        }
+        else if (!launcherShown)
+            launcherAnimating = false;
+    }
+}
+
+void App::Quit()
+{
+    // With auto-save off, the launcher asks first, since unsaved changes are lost otherwise.
+    if (runtime.Dirty() && !settings.autoSavePresets)
+    {
+        quitAsked = true;
+        ShowLauncher();
+    }
+    else
+        glfwSetWindowShouldClose(launcher.window, GLFW_TRUE);
+}
+
+void App::ShowLauncher()
+{
+    glfwShowWindow(launcher.window);
+    if (glfwGetWindowAttrib(launcher.window, GLFW_ICONIFIED))
+        glfwRestoreWindow(launcher.window);
+    glfwFocusWindow(launcher.window);
+}
+
+// Windows ends Unishade once this returns. With auto-save off, unsaved changes stay unsaved: nobody can be asked now,
+// and writing them could overwrite a preset the user chose not to save.
+void App::EndSession()
+{
+    Log(LogLevel::Info, "Windows is shutting down or signing out. Saving presets.");
+    for (PendingScreenshot& screenshot : screenshots)
+        screenshot.message.wait();
+    if (runtime.Dirty() && settings.autoSavePresets)
+        runtime.SavePreset();
+    else if (runtime.Dirty())
+        Log(LogLevel::Warning, "The unsaved changes to %s were not saved.", runtime.PresetPath().stem().string().c_str());
+    FlushLog();
+}
+
+void App::Shutdown()
+{
+    Log(LogLevel::Info, "Shutdown requested. Stopping capture, effects and graphics resources.");
+    for (PendingScreenshot& screenshot : screenshots)
+        screenshot.message.wait();
+    screenshots.clear();
+    StopCapture();
+    if (runtime.Dirty() && settings.autoSavePresets)
+        runtime.SavePreset();
+    setup.Cancel();
+    if (gpu.device)
+        vkDeviceWaitIdle(gpu.device);
+    addons.Shutdown();
+    for (UiWindow* ui : { &overlay, &launcher })
+    {
+        ShutdownUi(*ui);
+        ui->surface.Destroy();
+        if (ui->window)
+            glfwDestroyWindow(ui->window);
+        ui->window = nullptr;
+    }
+    ReleaseGamePictures();
+    runtime.Shutdown();
+    ReleaseUpscaler();
+    platform::Shutdown();
+    gpu.Shutdown();
+}
+
+// Finding the game
+
+void App::StartCapture(const platform::Window& window)
+{
+    // A window that cannot be captured is tried again every two seconds, which the log does not need to hear about.
+    const bool retrying = window.id == failingWindow;
+    if (!retrying)
+        Log(LogLevel::Info, "Attaching: window=%llu, pid=%d, title=%s, executable=%s.", static_cast<unsigned long long>(window.id),
+            window.pid, window.title.c_str(), platform::ProcessExecutable(window.pid).c_str());
+    if (!platform::HasCapturePermission())
+    {
+        lastCaptureError = "Unishade needs permission to record the screen.";
+        captureRetry = Now() + 2;
+        return;
+    }
+    std::string error;
+    if (!platform::StartCapture(window, error))
+    {
+        lastCaptureError = "Could not capture " + window.title + ": " + error;
+        WarnCaptureError();
+        failingWindow = window.id;
+        captureRetry = Now() + 2;
+        return;
+    }
+    active = window;
+    activeExecutable = platform::ProcessExecutable(window.pid);
+    activeCommand = platform::ProcessCommand(window.pid);
+    frame = {};
+    failedWidth = failedHeight = 0;
+    cursorKnown = false;
+    lastCaptureError.clear();
+    if (!retrying)
+        Log(LogLevel::Info, "Capturing %s", window.title.c_str());
+    FollowGame();
+    effectResolution = EffectResolution(game);
+#ifdef _WIN32
+    platform::SetFrameScale(effectResolution);
+#endif
+    Log(LogLevel::Info, "Effect resolution: %d%%.", effectResolution);
+#ifdef _WIN32
+    hdrOutput = HdrOutput(game);
+    Log(LogLevel::Info, "HDR output: %s.", hdrOutput ? "on" : "off");
+    // Now rather than at the first render, so effects do not compile for SDR first.
+    platform::SetHdrOutput(hdrOutput && overlay.surface.HdrAvailable());
+    nextHdrCheck = Now() + 1;
+#endif
+    if (!startHintShown)
+    {
+        ShowToast("opens the Unishade menu", 6, HotkeyText(kEditModeHotkey));
+        startHintShown = true;
+    }
+}
+
+void App::StopCapture()
+{
+    if (menuOpen)
+        CloseMenu(false);
+    // The platform's images go away with the capture, so the graphics card must be done with them.
+    if (gpu.device)
+        vkDeviceWaitIdle(gpu.device);
+    frame = {};
+    inFlight.reset();
+    platform::StopCapture();
+    if (active && active->id != failingWindow)
+        Log(LogLevel::Info, "Stopped capturing %s.", active->title.c_str());
+    active.reset();
+    activeExecutable.clear();
+    activeCommand.clear();
+    game.clear();
+    if (overlayVisible)
+        platform::ShowOverlay(overlay.window, false);
+    overlayVisible = false;
+    gameCovered = false;
+    nextCoverCheck = 0;
+}
+
+void App::UpdateTarget()
+{
+    // Nothing can draw once the graphics card is lost, so there is nothing to capture for.
+    if (!captureEnabled || gpu.lost)
+    {
+        if (active)
+            StopCapture();
+        return;
+    }
+    if (active && !platform::WindowExists(*active))
+    {
+        Log(LogLevel::Info, "%s closed.", active->title.c_str());
+        StopCapture();
+    }
+    else if (active && !platform::Capturing())
+    {
+        const platform::WindowId failed = active->id;
+        const bool stoppedByUser = platform::CaptureStoppedByUser();
+        lastCaptureError = platform::CaptureError();
+        WarnCaptureError();
+        StopCapture();
+        failingWindow = failed;
+        captureRetry = Now() + 2;
+        if (stoppedByUser)
+        {
+            // Starting again at once would undo what the user did, so effects turn off as with the overlay shortcut.
+            // The launcher then says how to turn them back on.
+            ToggleOverlay();
+            lastCaptureError = "Recording was stopped from the menu bar, so effects are off.";
+            return;
+        }
+    }
+
+    // Nothing else is looked for while the game is in front or the menu is open, or while a picked window is.
+    if ((active && (selected || menuOpen || inFront)) || Now() < nextSearch || Now() < captureRetry)
+        return;
+    nextSearch = Now() + 0.5;
+    std::optional<platform::Window> found;
+    if (selected)
+        found = FindGameTarget(selected, autoGames, 0);
+    else
+    {
+        // The window in front first, which is quick to check. Every process only while no game is attached, and
+        // only now and then, since that reads all of them.
+        found = GameInFront();
+        if (!found && !active && Now() >= nextScan)
+        {
+            nextScan = Now() + 2;
+            std::vector<GameProcess> windowless;
+            found = FindGameTarget(std::nullopt, autoGames, platform::ForegroundWindow(), &windowless);
+            NoticeWindowless(windowless);
+        }
+    }
+    if (found && (!active || found->id != active->id))
+    {
+        if (active)
+            StopCapture();
+        StartCapture(*found);
+    }
+}
+
+// The saved game whose window is in front, other than the one attached.
+std::optional<platform::Window> App::GameInFront()
+{
+    const platform::WindowId foreground = platform::ForegroundWindow();
+    if (!foreground || foreground == notGame || (active && foreground == active->id))
+        return std::nullopt;
+    std::optional<platform::Window> window = platform::ListedWindow(foreground);
+    if (!window)
+        return std::nullopt;
+    const int index = MatchingGame(autoGames, platform::ProcessExecutable(window->pid), platform::ProcessCommand(window->pid));
+    if (index < 0)
+    {
+        notGame = foreground;
+        return std::nullopt;
+    }
+    window->title = autoGames[index].name;
+    return window;
+}
+
+// Under Wayland, a game that draws to Wayland directly has no X11 window, which looks like a game that never opens.
+// That is said once per process, after a while, since games also start without a window.
+void App::NoticeWindowless(const std::vector<GameProcess>& processes)
+{
+    std::map<int, double> since;
+    if (!processes.empty() && platform::WaylandDesktop())
+    {
+        const std::set<int> owners = platform::WindowOwners();
+        for (const GameProcess& process : processes)
+        {
+            if (owners.count(process.pid))
+                continue;
+            const auto known = windowlessSince.find(process.pid);
+            const double first = known != windowlessSince.end() ? known->second : Now();
+            since[process.pid] = first;
+            if (Now() - first >= 10 && windowlessNoticed.insert(process.pid).second)
+                Report(LogLevel::Warning,
+                       "%s is running without an X11 window, so Unishade cannot see it. Unishade works with games that run through "
+                       "XWayland: start this one with SDL_VIDEODRIVER=x11, or turn off Wayland in Wine, Proton or the game's launcher.",
+                       autoGames[process.game].name.c_str());
+        }
+    }
+    windowlessSince = std::move(since);
+}
+
+void App::Select(std::optional<platform::Window> window)
+{
+    selected = std::move(window);
+    nextSearch = 0;
+    captureRetry = 0;
+    if (active && (!selected || selected->id != active->id))
+        StopCapture();
+}
+
+void App::SaveGames()
+{
+    // The window in front may be one of the games now.
+    notGame = 0;
+    if (!SaveAutoGames(DataDirectory() / "games.ini", autoGames))
+        Report(LogLevel::Warning, "Could not save the game list.");
+}
+
+const std::vector<platform::Window>& App::Windows()
+{
+    if (Now() - windowsTime > 2)
+    {
+        windows = platform::ListWindows();
+        windowsTime = Now();
+    }
+    return windows;
+}
+
+// The overlay
+
+void App::UpdateOverlay()
+{
+    platform::Rect bounds;
+    const bool sized = frame.width != failedWidth || frame.height != failedHeight;
+    // A game behind another window keeps its effects when the user asked for that.
+    const bool behind = !menuOpen && !inFront && settings.keepEffectsVisible && platform::OverlayCanStayBehind();
+    const bool visible = captureEnabled && active && HasFrame() && sized && (menuOpen || inFront || behind) && platform::WindowBounds(active->id, bounds) &&
+                         !GameCovered();
+    platform::SetCaptureIdle(!visible);
+    if (!visible)
+    {
+        if (overlayVisible)
+        {
+            Log(LogLevel::Info, "Overlay hidden: capture=%d, frame=%d, sized=%d, in_front=%d, menu=%d, keep_visible=%d, covered=%d.",
+                captureEnabled, HasFrame(), sized, inFront, menuOpen, settings.keepEffectsVisible, gameCovered);
+            platform::ShowOverlay(overlay.window, false);
+        }
+        overlayVisible = false;
+        return;
+    }
+    platform::MatchOverlay(overlay.window, active->id, behind);
+    if (!overlayVisible || !(bounds == overlayBounds))
+    {
+        Log(LogLevel::Info, "Overlay placed: bounds=%d,%d %dx%d, frame=%ux%u.", bounds.x, bounds.y, bounds.width, bounds.height, frame.width, frame.height);
+        glfwSetWindowPos(overlay.window, bounds.x, bounds.y);
+        glfwSetWindowSize(overlay.window, bounds.width, bounds.height);
+        overlayBounds = bounds;
+    }
+    if (!overlayVisible)
+    {
+        platform::ShowOverlay(overlay.window, true);
+        overlayVisible = true;
+    }
+}
+
+// The game's dialogs, such as a message box or a file picker, would sit under the overlay's old picture of the game, so
+// the overlay hides while one is above the game's window. Asked a few times a second, since that lists windows.
+bool App::GameCovered()
+{
+    if (Now() >= nextCoverCheck)
+    {
+        gameCovered = active && platform::GameWindowCovered(*active);
+        nextCoverCheck = Now() + 0.25;
+    }
+    return gameCovered;
+}
+
+// The refresh interval of the monitor with the middle of the overlay, or of the first monitor when none has it. GLFW
+// only tells a window's monitor in full screen, so the monitors' places are compared.
+void App::UpdateOverlayInterval()
+{
+    if (Now() < nextRefreshCheck)
+        return;
+    nextRefreshCheck = Now() + 2;
+    int x = 0, y = 0, width = 0, height = 0;
+    glfwGetWindowPos(overlay.window, &x, &y);
+    glfwGetWindowSize(overlay.window, &width, &height);
+    const int centerX = x + width / 2, centerY = y + height / 2;
+    int count = 0;
+    GLFWmonitor** monitors = glfwGetMonitors(&count);
+    int refreshRate = 0;
+    for (int i = 0; i < count; ++i)
+    {
+        const GLFWvidmode* mode = glfwGetVideoMode(monitors[i]);
+        if (!mode)
+            continue;
+        int monitorX = 0, monitorY = 0;
+        glfwGetMonitorPos(monitors[i], &monitorX, &monitorY);
+        const bool holds = centerX >= monitorX && centerX < monitorX + mode->width && centerY >= monitorY && centerY < monitorY + mode->height;
+        if (holds || i == 0)
+            refreshRate = mode->refreshRate;
+        if (holds)
+            break;
+    }
+    overlayInterval = 1.0 / (refreshRate > 0 ? refreshRate : 60);
+}
+
+void App::RenderOverlay()
+{
+#ifdef _WIN32
+    // An HDR game's picture stays HDR while the setting allows it and the overlay's swapchain can be scRGB, which its
+    // surface lists while the display has HDR on. Each frame says which it is, since frames captured before a change
+    // keep their format, and the swapchain and effects follow it.
+    if (Now() >= nextHdrCheck)
+    {
+        nextHdrCheck = Now() + 1;
+        platform::SetHdrOutput(hdrOutput && overlay.surface.HdrAvailable());
+    }
+    overlay.surface.SetHdr(frame.hdr, frame.sdrWhite);
+    runtime.SetHdr(frame.hdr, frame.sdrWhite);
+#endif
+    // Effects work at the size of the game's picture. Where the graphics card cannot make room for that, the overlay
+    // hides rather than cover the game with nothing. Windows captures frames at the effect resolution already, and
+    // elsewhere the runtime scales them down to it as it copies them in.
+#ifdef _WIN32
+    runtime.SetSize(frame.width, frame.height);
+#else
+    const uint32_t percent = static_cast<uint32_t>(effectResolution);
+    runtime.SetSize(frame.width, frame.height, std::max(frame.width * percent / 100, 1u), std::max(frame.height * percent / 100, 1u));
+#endif
+    // The effects' size stays behind the picture's while a new one waits for its effects, so only none is a failure.
+    if (!runtime.Width() || !runtime.Height())
+    {
+        // A size still being prepared, or a lost graphics card, says nothing about room for effects.
+        if (runtime.Loading() || gpu.lost)
+            return;
+        failedWidth = frame.width;
+        failedHeight = frame.height;
+        Report(LogLevel::Warning, "The graphics card has no room for effects on a %ux%u picture. The overlay stays hidden until the game's window changes size.",
+               frame.width, frame.height);
+        if (menuOpen)
+            CloseMenu();
+        UpdateOverlay();
+        return;
+    }
+    failedWidth = failedHeight = 0;
+
+    const double started = Now();
+    Surface& surface = overlay.surface;
+    if (!surface.BeginFrame())
+        return;
+#ifdef _WIN32
+    // The swapchain could not be scRGB after all, so capture goes back to SDR from the next frame.
+    if (frame.hdr && !surface.hdr)
+    {
+        platform::SetHdrOutput(false);
+        nextHdrCheck = Now() + 1;
+    }
+#endif
+    // The previous frame's commands are done, so its buffer can go back to the platform. A frame in memory is copied
+    // to the graphics card during Render, so only frames on the graphics card are held here.
+    inFlight = frame.image ? frame.hold : nullptr;
+    lastOverlayFrame = Now();
+    runtime.menuOpen = menuOpen;
+    runtime.timeTechniques = settings.debugInfo;
+    double x = 0, y = 0;
+    int width = 1, height = 1;
+    glfwGetCursorPos(overlay.window, &x, &y);
+    glfwGetWindowSize(overlay.window, &width, &height);
+    runtime.mouseX = static_cast<float>(x * runtime.Width() / std::max(width, 1));
+    runtime.mouseY = static_cast<float>(y * runtime.Height() / std::max(height, 1));
+    // Effects can leave themselves out of screenshots, so only a frame rendered knowing it is one is saved. A
+    // request made in this frame's menu is taken by the next frame.
+    const bool screenshot = screenshotRequested;
+    UpdateInput();
+
+    // Add-ons work on the picture before and after effects, and not while effects are off, so comparing shows the
+    // game's own.
+    const bool effects = effectsEnabled && !comparing && !compareButton;
+    uimask::SetPicture(frame.serial);
+    if (!effects || !addons.Frame(surface, Source(), frame.serial))
+        runtime.Render(surface.commands, Source(), effects);
+    FullBarrier(surface.commands);
+    const GpuImage& output = runtime.Output();
+    if (!Upscale(surface.commands, effectResolution, output, surface.image, surface.extent))
+    {
+        VkImageBlit blit{};
+        blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blit.srcOffsets[1] = { int(output.width), int(output.height), 1 };
+        blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blit.dstOffsets[1] = { int(surface.extent.width), int(surface.extent.height), 1 };
+        vkCmdBlitImage(surface.commands, output.image, VK_IMAGE_LAYOUT_GENERAL, surface.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                       VK_FILTER_LINEAR);
+    }
+    DrawGamePictures(*this, surface.commands, output, screenshot);
+
+    BeginUi(overlay);
+    DrawOverlay(*this);
+    // For effects in the next frame. The wheel only reaches the overlay while the menu is open.
+    const ImGuiIO& io = ImGui::GetIO();
+    menuWheel = io.MouseWheel;
+    menuActive = ImGui::IsAnyItemActive();
+    menuHovered = io.WantCaptureMouse;
+    menuTyping = io.WantTextInput;
+    EndUi(overlay);
+    frameStats.Shown(Now(), frame.serial, (Now() - started) * 1000, frame.captured);
+
+    if (screenshot)
+        SaveScreenshot();
+}
+
+// What effects read of the keyboard and mouse. Keys are read for the whole system, so only while they go to the game
+// or the menu, and only while something loaded reads them.
+void App::UpdateInput()
+{
+    std::array<bool, 256> keys{};
+    std::array<bool, 5> buttons{};
+    const bool reachable = menuOpen || inFront;
+    const bool read = reachable && (runtime.ReadsInput() || addons.ReadsKeys());
+    if (read)
+        platform::ReadInput(keys, buttons);
+    // Keys count as let go while they are not read. When reading starts again because something now reads them, a
+    // key held all along is held rather than just pressed, as it would be had it been read all along. Coming back to
+    // the game still counts a held key as pressed, as before.
+    const bool resumed = read && inputSkipped;
+    inputSkipped = reachable && !read;
+    // Windows also has a code for Shift, Ctrl and Alt on either side, and counts the mouse buttons as keys.
+    keys[0x10] = keys[0xA0] || keys[0xA1];
+    keys[0x11] = keys[0xA2] || keys[0xA3];
+    keys[0x12] = keys[0xA4] || keys[0xA5];
+    keys[0x01] = buttons[0];
+    keys[0x02] = buttons[1];
+    keys[0x04] = buttons[2];
+    keys[0x05] = buttons[3];
+    keys[0x06] = buttons[4];
+
+    fx::EffectInput& input = runtime.input;
+    // Typing in the menu, such as a search, must not set off technique shortcuts.
+    const bool typing = menuOpen && menuTyping;
+    for (size_t i = 0; i < keys.size(); ++i)
+    {
+        input.keysPressed[i] = keys[i] && !input.keysDown[i] && !typing && !resumed;
+        input.keysDown[i] = keys[i];
+    }
+    for (size_t i = 0; i < buttons.size(); ++i)
+    {
+        input.buttonsPressed[i] = buttons[i] && !input.buttonsDown[i] && !resumed;
+        input.buttonsDown[i] = buttons[i];
+    }
+    // The first frame of a capture has nothing to compare with.
+    input.cursorDeltaX = cursorKnown ? runtime.mouseX - lastMouseX : 0;
+    input.cursorDeltaY = cursorKnown ? runtime.mouseY - lastMouseY : 0;
+    lastMouseX = runtime.mouseX;
+    lastMouseY = runtime.mouseY;
+    cursorKnown = true;
+    input.wheelDelta = menuOpen ? menuWheel : 0;
+    input.overlayActive = menuOpen && menuActive;
+    input.overlayHovered = menuOpen && menuHovered;
+    input.activeUniform = menuOpen ? menuActiveUniform : nullptr;
+    input.hoveredUniform = menuOpen ? menuHoveredUniform : nullptr;
+    input.screenshot = screenshotRequested;
+}
+
+void App::RenderLauncher()
+{
+    Surface& surface = launcher.surface;
+    if (!surface.BeginFrame(false))
+        return;
+    lastLauncherFrame = Now();
+    VkClearColorValue background{};
+    background.float32[0] = ((theme::kBackground >> 16) & 0xFF) / 255.0f;
+    background.float32[1] = ((theme::kBackground >> 8) & 0xFF) / 255.0f;
+    background.float32[2] = (theme::kBackground & 0xFF) / 255.0f;
+    background.float32[3] = 1.0f;
+    const VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    vkCmdClearColorImage(surface.commands, surface.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &background, 1, &range);
+    BeginUi(launcher);
+    DrawLauncher(*this);
+    EndUi(launcher);
+}
+
+void App::OpenMenu()
+{
+    if (menuOpen || !captureEnabled || !active || !overlayVisible)
+        return;
+    // Opened again on its way out, it comes back from where it is.
+    menuOpen = true;
+    menuClosing = false;
+    menuFocused = false;
+    glfwSetWindowAttrib(overlay.window, GLFW_MOUSE_PASSTHROUGH, GLFW_FALSE);
+    platform::FocusOverlay(overlay.window);
+    Log(LogLevel::Info, "Menu opened.");
+}
+
+void App::CloseMenu(bool returnToGame)
+{
+    if (!menuOpen)
+        return;
+    menuOpen = false;
+    // The input goes back to the game now, and the menu is drawn on its way out until DrawOverlay sees it gone.
+    menuClosing = true;
+    ResetMenu(*this);
+    glfwSetWindowAttrib(overlay.window, GLFW_MOUSE_PASSTHROUGH, GLFW_TRUE);
+    if (settings.autoSavePresets && runtime.Dirty())
+        runtime.SavePreset();
+    if (returnToGame && active)
+        platform::ReturnFocus(overlay.window, *active);
+    Log(LogLevel::Info, "Input returned to the game.");
+}
+
+void App::ToggleOverlay()
+{
+    captureEnabled = !captureEnabled;
+    if (!captureEnabled && menuOpen)
+        CloseMenu();
+    // Turned on or off by hand, so what goes wrong next is worth logging again.
+    failingWindow = 0;
+    loggedCaptureError.clear();
+    // Such as recording stopped from the menu bar, which turning effects back on answers.
+    if (captureEnabled)
+        lastCaptureError.clear();
+    Log(LogLevel::Info, captureEnabled ? "Overlay on." : "Overlay off. Frame capture stopped.");
+}
+
+void App::WarnCaptureError()
+{
+    if (lastCaptureError.empty() || lastCaptureError == loggedCaptureError)
+        return;
+    Log(LogLevel::Warning, "%s", lastCaptureError.c_str());
+    loggedCaptureError = lastCaptureError;
+}
+
+void App::ShowToast(std::string text, double seconds, std::string key)
+{
+    toast = std::move(text);
+    toastKey = std::move(key);
+    toastUntil = Now() + seconds;
+}
+
+// Shortcuts
+
+std::string App::HotkeyText(int id) const
+{
+    const Shortcut* shortcut = FindShortcut(id);
+    return shortcut ? FormatHotkey(settings.hotkeys.*shortcut->member) : std::string();
+}
+
+// A shortcut left unassigned has nothing to register.
+bool App::RegisterShortcut(const Shortcut& shortcut, const Hotkey& hotkey)
+{
+    return hotkey.key == ImGuiKey_None || platform::RegisterHotkey(shortcut.id, hotkey);
+}
+
+void App::OnHotkey(int id, bool pressed)
+{
+    switch (id)
+    {
+    case kEditModeHotkey:
+        if (pressed)
+            menuOpen ? CloseMenu() : OpenMenu();
+        break;
+    case kOverlayToggleHotkey:
+        // The overlay stays, so the menu still opens with effects off. Stopping capture is in the tray and the
+        // launcher, and from there the shortcut starts it again.
+        if (pressed && !captureEnabled)
+        {
+            ToggleOverlay();
+            effectsEnabled = true;
+        }
+        else if (pressed)
+        {
+            effectsEnabled = !effectsEnabled;
+            ShowToast(effectsEnabled ? "Effects on" : "Effects off");
+        }
+        break;
+    case kCompareHotkey:
+        comparing = pressed;
+        break;
+    case kScreenshotHotkey:
+    case kBeforeAfterHotkey:
+        if (pressed)
+            RequestScreenshot(id == kBeforeAfterHotkey ? ScreenshotKind::SideBySide : ScreenshotKind::Effects);
+        break;
+    case kNextPresetHotkey:
+    case kPreviousPresetHotkey:
+        if (pressed)
+            StepPreset(id == kNextPresetHotkey ? 1 : -1);
+        break;
+    }
+}
+
+// Holding a bare key such as Home all the time would break it in every other program, so most shortcuts are only
+// held while the game or the menu is in front.
+void App::UpdateGameHotkeys()
+{
+    const bool wanted = !hotkeysSuspended && active && (menuOpen || inFront);
+    if (wanted == gameHotkeys)
+        return;
+    gameHotkeys = wanted;
+    for (const Shortcut& shortcut : kShortcuts)
+    {
+        if (shortcut.always)
+            continue;
+        if (!wanted)
+            platform::UnregisterHotkey(shortcut.id);
+        else if (!RegisterShortcut(shortcut, settings.hotkeys.*shortcut.member))
+            Report(LogLevel::Warning, "%s is used by another program, so it cannot %s.", FormatHotkey(settings.hotkeys.*shortcut.member).c_str(),
+                   Lowercase(shortcut.label).c_str());
+    }
+    if (!wanted)
+        comparing = false;
+}
+
+void App::SuspendHotkeys(bool suspended)
+{
+    if (suspended == hotkeysSuspended)
+        return;
+    hotkeysSuspended = suspended;
+    for (const Shortcut& shortcut : kShortcuts)
+    {
+        if (suspended)
+            platform::UnregisterHotkey(shortcut.id);
+        else if (shortcut.always || gameHotkeys)
+            RegisterShortcut(shortcut, settings.hotkeys.*shortcut.member);
+    }
+}
+
+bool App::ChangeHotkeys(const InputHotkeys& hotkeys, std::string& error)
+{
+    for (const Shortcut& a : kShortcuts)
+        for (const Shortcut& b : kShortcuts)
+            if (&a < &b && (hotkeys.*a.member).key != ImGuiKey_None && hotkeys.*a.member == hotkeys.*b.member)
+            {
+                error = std::string(a.label) + " and " + Lowercase(b.label) + " cannot share " + FormatHotkey(hotkeys.*a.member) + ".";
+                return false;
+            }
+    for (const Shortcut& shortcut : kShortcuts)
+        platform::UnregisterHotkey(shortcut.id);
+    const auto registerAll = [this](const InputHotkeys& keys, const Shortcut** failed) {
+        for (const Shortcut& shortcut : kShortcuts)
+            if ((shortcut.always || gameHotkeys) && !RegisterShortcut(shortcut, keys.*shortcut.member))
+            {
+                if (failed)
+                    *failed = &shortcut;
+                return false;
+            }
+        return true;
+    };
+    const Shortcut* failed = nullptr;
+    if (!registerAll(hotkeys, &failed))
+    {
+        error = FormatHotkey(hotkeys.*failed->member) + " is used by another program.";
+        for (const Shortcut& shortcut : kShortcuts)
+            platform::UnregisterHotkey(shortcut.id);
+        registerAll(settings.hotkeys, nullptr);
+        return false;
+    }
+    settings.hotkeys = hotkeys;
+    SaveSettings(settings);
+    return true;
+}
+
+// Presets
+
+std::vector<fs::path> PresetsIn(const fs::path& folder)
+{
+    std::vector<fs::path> presets;
+    std::error_code error;
+    for (const auto& entry : fs::directory_iterator(folder, error))
+        if (entry.is_regular_file(error) && Lowercase(entry.path().extension().string()) == ".ini")
+            presets.push_back(entry.path());
+    std::sort(presets.begin(), presets.end(), [](const fs::path& a, const fs::path& b) {
+        return strcasecmp(a.stem().string().c_str(), b.stem().string().c_str()) < 0;
+    });
+    return presets;
+}
+
+std::vector<PresetFolder> App::PresetFolders() const
+{
+    const fs::path root = PresetsDirectory();
+    // The game being played is listed even before it has presets, since new ones go there.
+    PresetFolder playing{ .path = root / game, .name = game, .game = true, .playing = true };
+    PresetFolder all{ .path = root, .name = "All games", .all = true, .presets = PresetsIn(root) };
+    std::vector<PresetFolder> others;
+    std::error_code error;
+    for (const auto& entry : fs::directory_iterator(root, error))
+    {
+        if (!entry.is_directory(error))
+            continue;
+        const std::string name = entry.path().filename().string();
+        if (!game.empty() && !strcasecmp(name.c_str(), game.c_str()))
+        {
+            playing.path = entry.path();
+            playing.name = name;
+            playing.presets = PresetsIn(entry.path());
+            continue;
+        }
+        PresetFolder folder{ .path = entry.path(), .name = name, .presets = PresetsIn(entry.path()) };
+        folder.game = std::any_of(autoGames.begin(), autoGames.end(),
+                                  [&](const AutoGame& saved) { return !strcasecmp(FolderName(saved.name).c_str(), name.c_str()); });
+        if (!folder.presets.empty())
+            others.push_back(std::move(folder));
+    }
+    std::sort(others.begin(), others.end(), [](const PresetFolder& a, const PresetFolder& b) { return strcasecmp(a.name.c_str(), b.name.c_str()) < 0; });
+
+    std::vector<PresetFolder> folders;
+    if (!game.empty())
+        folders.push_back(std::move(playing));
+    folders.push_back(std::move(all));
+    std::move(others.begin(), others.end(), std::back_inserter(folders));
+    // Unishade.ini can name a preset elsewhere, which is listed with all games.
+    const fs::path& current = runtime.PresetPath();
+    const auto listed = [&](const PresetFolder& folder) {
+        return std::find(folder.presets.begin(), folder.presets.end(), current) != folder.presets.end();
+    };
+    if (!current.empty() && std::none_of(folders.begin(), folders.end(), listed))
+    {
+        const auto folder = std::find_if(folders.begin(), folders.end(), [&](const PresetFolder& folder) { return folder.path == current.parent_path(); });
+        (folder != folders.end() ? *folder : folders[game.empty() ? 0 : 1]).presets.push_back(current);
+    }
+    return folders;
+}
+
+bool App::FolderOpen(const PresetFolder& folder) const
+{
+    if (const auto found = folderOpen.find(folder.path.string()); found != folderOpen.end())
+        return found->second;
+    return !folder.game || folder.playing || std::find(folder.presets.begin(), folder.presets.end(), runtime.PresetPath()) != folder.presets.end();
+}
+
+fs::path App::NewPresetFolder() const
+{
+    const fs::path root = PresetsDirectory();
+    if (game.empty())
+        return root;
+    // Names on Linux differ by case, and a folder named in another case is still the game's.
+    std::error_code error;
+    for (const auto& entry : fs::directory_iterator(root, error))
+        if (entry.is_directory(error) && !strcasecmp(entry.path().filename().string().c_str(), game.c_str()))
+            return entry.path();
+    return root / game;
+}
+
+bool App::MovePreset(const fs::path& preset, const fs::path& folder, std::string& error)
+{
+    const fs::path target = folder / preset.filename();
+    std::error_code failure;
+    if (fs::exists(target, failure))
+    {
+        error = "There is already a preset named " + preset.stem().string() + " there.";
+        return false;
+    }
+    fs::create_directories(folder, failure);
+    if (!failure)
+        fs::rename(preset, target, failure);
+    if (failure)
+    {
+        error = "Could not move " + preset.stem().string() + ".";
+        return false;
+    }
+    return true;
+}
+
+// Switching to a saved game switches to the preset last used in it.
+void App::UpdateUiMask()
+{
+    uimask::Set(UiMask(game));
+    // Kept with the game's presets and logo. A window picked for now has no folder to keep it in.
+    uimask::Detect(DetectUi(game), game.empty() ? fs::path() : NewPresetFolder() / "interface.png");
+}
+
+void App::UpdateFrameRateLimit()
+{
+    const int limit = FrameRateLimit(game);
+    if (limit != frameRateLimit)
+        Log(LogLevel::Info, "Frame rate limit: %d for %s.", limit, game.empty() ? "every game" : game.c_str());
+    frameRateLimit = limit;
+}
+
+void App::FollowGame()
+{
+    game.clear();
+    for (const AutoGame& saved : autoGames)
+        if (MatchesProcess(saved, activeExecutable, activeCommand))
+        {
+            game = FolderName(saved.name);
+            break;
+        }
+    UpdateFrameRateLimit();
+    UpdateUiMask();
+    if (game.empty())
+        return;
+
+    // Games saved by filename, like Roblox, can only be found while they run, so their icon is kept. A small one, as
+    // Steam keeps for the games it installed, gives way to the program's own.
+    const fs::path logo = NewPresetFolder() / "logo.png";
+    std::error_code error;
+    if (!fs::exists(logo, error) || image::Read(logo).width < 64)
+    {
+        fs::create_directories(logo.parent_path(), error);
+        platform::SaveWindowIcon(*active, logo.string());
+    }
+
+    const fs::path preset = GamePreset(game);
+    if (preset.empty())
+        SetGamePreset(game, runtime.PresetPath());
+    else if (preset != runtime.PresetPath() && fs::exists(preset, error) && !SwitchPreset(preset, settings.autoSavePresets, false))
+        ShowToast("Save or discard the changes to " + runtime.PresetPath().stem().string() + " to switch to " + preset.stem().string());
+}
+
+void App::UsePreset(const fs::path& path)
+{
+    settings.preset = path;
+    SaveSettings(settings);
+    if (!game.empty())
+        SetGamePreset(game, path);
+}
+
+bool App::SwitchPreset(const fs::path& path, bool save, bool discard)
+{
+    if (path == runtime.PresetPath() && !discard)
+        return true;
+    if (runtime.Dirty() && path != runtime.PresetPath())
+    {
+        if (save)
+            runtime.SavePreset();
+        else if (!discard)
+            return false;
+    }
+    runtime.LoadPreset(path);
+    UsePreset(path);
+    ShowToast("Preset: " + path.stem().string());
+    return true;
+}
+
+std::string PresetNameProblem(const std::string& name)
+{
+    if (!name.empty() && name[0] == '.')
+        return "Names cannot start with a dot.";
+    switch (CheckName(name, false))
+    {
+    case NameIssue::None:
+        return {};
+    case NameIssue::Empty:
+        return "Type a name.";
+    case NameIssue::Control:
+    case NameIssue::Character:
+        return "Names cannot contain \\ / : * ? \" < > | or control characters.";
+    case NameIssue::End:
+        return "Names cannot end in a dot or a space.";
+    case NameIssue::Device:
+        return "Windows keeps that name for a device. Pick another one.";
+    }
+    return {};
+}
+
+bool App::NewPreset(const std::string& name, bool copyCurrent, std::string& error)
+{
+    if (std::string problem = PresetNameProblem(name); !problem.empty())
+    {
+        error = std::move(problem);
+        return false;
+    }
+    const fs::path path = NewPresetFolder() / (name + ".ini");
+    std::error_code missing;
+    if (fs::exists(path, missing))
+    {
+        error = "A preset with that name already exists.";
+        return false;
+    }
+    if (copyCurrent)
+    {
+        // The active preset is copied as it is on screen, unsaved changes included.
+        if (!runtime.SavePresetAs(path))
+        {
+            error = "Could not write the preset.";
+            return false;
+        }
+        UsePreset(path);
+        return true;
+    }
+    if (runtime.Dirty() && !settings.autoSavePresets)
+    {
+        error = "Save or discard the current preset's changes first.";
+        return false;
+    }
+    if (!WriteFile(path, "Techniques=\n"))
+    {
+        error = "Could not write the preset.";
+        return false;
+    }
+    return SwitchPreset(path, true, false);
+}
+
+void App::StepPreset(int step)
+{
+    // The presets in open folders, in the order the menu shows them.
+    std::vector<fs::path> presets;
+    for (const PresetFolder& folder : PresetFolders())
+        if (FolderOpen(folder))
+            presets.insert(presets.end(), folder.presets.begin(), folder.presets.end());
+    if (presets.empty())
+        return;
+    if (runtime.Dirty() && !settings.autoSavePresets)
+    {
+        ShowToast("Save or discard the preset's changes first");
+        return;
+    }
+    const auto current = std::find(presets.begin(), presets.end(), runtime.PresetPath());
+    const long count = static_cast<long>(presets.size());
+    // From a preset in a closed folder, the next one is the first shown and the previous one the last.
+    const long index = current != presets.end() ? static_cast<long>(current - presets.begin()) : step > 0 ? -1 : count;
+    SwitchPreset(presets[((index + step) % count + count) % count], true, false);
+}
+
+// Screenshots
+
+void App::RequestScreenshot(ScreenshotKind kind, bool copy)
+{
+    if (screenshots.size() >= 2)
+        return;
+    screenshotRequested = true;
+    screenshotKind = kind;
+    screenshotCopy = copy;
+}
+
+bool App::HasFrame() const
+{
+    return frame.image || frame.memory || !frame.pixels.empty();
+}
+
+fx::Runtime::Source App::Source() const
+{
+    return { frame.pixels.empty() ? nullptr : frame.pixels.data(), frame.image, frame.x, frame.y, frame.foreign, frame.memory, frame.stride };
+}
+
+void App::SaveScreenshot()
+{
+    screenshotRequested = false;
+    if (screenshots.size() >= 2)
+        return;
+    std::vector<uint8_t> after = runtime.ReadOutput();
+    if (after.empty())
+        return;
+    const uint32_t width = runtime.Width(), height = runtime.Height();
+    std::vector<uint8_t> before;
+    std::vector<uint32_t> beforePixels;
+    // The game's own picture is saved at the size of the one with effects. At another size, which a lower effect
+    // resolution outside Windows or a new size waiting for its effects gives, the runtime reads it as it scaled it.
+    const bool sameSize = frame.width == width && frame.height == height;
+    if (screenshotKind != ScreenshotKind::Effects)
+    {
+        if (frame.image || !sameSize)
+            before = runtime.ReadSource(Source());
+        else if (frame.memory)
+        {
+            // The platform's buffer goes back to it while the screenshot is written, so its rows are copied now.
+            beforePixels.resize(size_t(width) * height);
+            for (uint32_t y = 0; y < height; ++y)
+                std::memcpy(&beforePixels[size_t(y) * width], frame.memory + y * frame.stride, size_t(width) * 4);
+        }
+        else
+            beforePixels = frame.pixels;
+    }
+    // Without the game's own picture, every kind saves the picture with effects.
+    const ScreenshotKind kind = before.empty() && beforePixels.empty() ? ScreenshotKind::Effects : screenshotKind;
+    const bool beforeAfter = kind != ScreenshotKind::Effects;
+
+    char stamp[64];
+    const time_t now = time(nullptr);
+    tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    strftime(stamp, sizeof(stamp), "%Y-%m-%d %H-%M-%S", &local);
+    // Window titles can hold anything, slashes included, so the name keeps none of that.
+    std::string name = SafeFileName(active ? active->title : "Unishade") + " " + stamp;
+    // Another screenshot in the same second gets a name of its own, rather than the same file written twice at once.
+    screenshotsInStamp = screenshotStamp == stamp ? screenshotsInStamp + 1 : 1;
+    screenshotStamp = stamp;
+    if (screenshotsInStamp > 1)
+        name += " " + std::to_string(screenshotsInStamp);
+    const fs::path folder = ScreenshotDirectory();
+    const bool twoFiles = kind == ScreenshotKind::TwoFiles, original = kind == ScreenshotKind::Original;
+    const char* const suffix = twoFiles ? " after" : original ? " without effects" : beforeAfter ? " before-after" : "";
+    const fs::path path = folder / (name + suffix + ".png");
+    const fs::path beforePath = folder / (name + " before.png");
+    std::string shown = folder.string();
+    if (const char* home = getenv("HOME"); home && *home && shown.rfind(home, 0) == 0)
+        shown = "~" + shown.substr(strlen(home));
+
+    // Encoding the PNG takes long enough to hold up the game's picture, so it happens on a thread of its own.
+    auto write = [path, beforePath, twoFiles, original, copy = screenshotCopy, shown, width, height, after = std::move(after), before = std::move(before),
+                  beforePixels = std::move(beforePixels)]() mutable -> std::string {
+        if (!beforePixels.empty())
+        {
+            before.resize(size_t(width) * height * 4);
+            for (size_t i = 0; i < beforePixels.size(); ++i)
+            {
+                const uint32_t pixel = beforePixels[i];
+                before[i * 4] = (pixel >> 16) & 0xFF;
+                before[i * 4 + 1] = (pixel >> 8) & 0xFF;
+                before[i * 4 + 2] = pixel & 0xFF;
+                before[i * 4 + 3] = 255;
+            }
+        }
+        std::error_code error;
+        if (!copy)
+            fs::create_directories(path.parent_path(), error);
+        if (twoFiles && !before.empty() && !stbi_write_png(beforePath.string().c_str(), int(width), int(height), 4, before.data(), int(width) * 4))
+        {
+            Report(LogLevel::Warning, "Could not save the screenshot to %s.", beforePath.string().c_str());
+            return {};
+        }
+        std::vector<uint8_t> image;
+        uint32_t imageWidth = width;
+        if (original && !before.empty())
+            image = std::move(before);
+        else if (!before.empty() && !twoFiles)
+        {
+            // The game's own picture on the left, with effects on the right.
+            imageWidth = width * 2;
+            image.resize(size_t(imageWidth) * height * 4);
+            for (uint32_t y = 0; y < height; ++y)
+            {
+                std::memcpy(&image[size_t(y) * imageWidth * 4], &before[size_t(y) * width * 4], size_t(width) * 4);
+                std::memcpy(&image[(size_t(y) * imageWidth + width) * 4], &after[size_t(y) * width * 4], size_t(width) * 4);
+            }
+        }
+        else
+            image = std::move(after);
+        if (copy)
+        {
+            if (platform::CopyImage(image.data(), imageWidth, height))
+                return "Screenshot copied";
+            Report(LogLevel::Warning, "Could not copy the screenshot.");
+            return {};
+        }
+        if (!stbi_write_png(path.string().c_str(), int(imageWidth), int(height), 4, image.data(), int(imageWidth) * 4))
+        {
+            Report(LogLevel::Warning, "Could not save the screenshot to %s.", path.string().c_str());
+            return {};
+        }
+        Log(LogLevel::Info, "Screenshot saved to %s", path.string().c_str());
+        return (twoFiles ? "Screenshots saved to " : "Screenshot saved to ") + shown;
+    };
+    try
+    {
+        const std::string file = screenshotCopy ? std::string() : path.string();
+        screenshots.push_back({ std::async(std::launch::async, std::move(write)), file });
+    }
+    catch (const std::system_error&)
+    {
+        Report(LogLevel::Warning, "Could not save the screenshot to %s.", path.string().c_str());
+    }
+}
+
+// Shows where each screenshot went once it is written.
+void App::TakeScreenshots()
+{
+    for (auto screenshot = screenshots.begin(); screenshot != screenshots.end();)
+    {
+        if (screenshot->message.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        {
+            ++screenshot;
+            continue;
+        }
+        if (const std::string message = screenshot->message.get(); !message.empty())
+        {
+            ShowToast(message);
+            if (!screenshot->file.empty())
+                addons.Tell(UNISHADE_EVENT_SCREENSHOT_SAVED, 0, screenshot->file);
+        }
+        screenshot = screenshots.erase(screenshot);
+    }
+}
+
+void App::UpdateEffectResolution()
+{
+    const int percent = EffectResolution(game);
+    if (percent != effectResolution)
+        Log(LogLevel::Info, "Effect resolution: %d%% for %s.", percent, game.empty() ? "every game" : game.c_str());
+    effectResolution = percent;
+#ifdef _WIN32
+    platform::SetFrameScale(effectResolution);
+#endif
+}
+
+#ifdef _WIN32
+void App::UpdateHdrOutput()
+{
+    const bool on = HdrOutput(game);
+    if (on != hdrOutput)
+        Log(LogLevel::Info, "HDR output: %s for %s.", on ? "on" : "off", game.empty() ? "every game" : game.c_str());
+    hdrOutput = on;
+    nextHdrCheck = 0;
+}
+#endif
+
+bool App::EffectsInstalled()
+{
+    if (Now() - effectsCheckTime < 5)
+        return effectsInstalled;
+    effectsCheckTime = Now();
+    effectsInstalled = false;
+    for (const fs::path& root : settings.effectPaths)
+    {
+        std::error_code error;
+        for (fs::recursive_directory_iterator it(root, error), end; it != end && !effectsInstalled; it.increment(error))
+            effectsInstalled = !error && Lowercase(it->path().extension().string()) == ".fx";
+    }
+    return effectsInstalled;
+}

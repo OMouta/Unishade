@@ -1,6 +1,7 @@
 // The newest release, read from GitHub once per build. Publishing a release rebuilds the site, so the download
 // buttons link straight to the newest files. When GitHub can't be reached, or has no release with a Setup, the
-// buttons link to the Releases page instead and the build goes on.
+// buttons link to the Releases page instead and the build goes on. A beta of the version after it, when one is out,
+// comes along for the download page's banner.
 import cmake from '../../CMakeLists.txt?raw';
 import { links, repository } from './links';
 
@@ -11,20 +12,29 @@ export interface Download {
   size?: number;
 }
 
+// A beta of the version after the newest release, such as 0.7.0-beta.2.
+export interface Beta {
+  version: string;
+  notes: string;
+  setup: Download;
+  macos?: Download;
+  linux?: Download;
+}
+
 export interface Release {
   // Undefined when there's no release to link to.
   version?: string;
   date?: Date;
   // The release's page, or the Releases page.
   notes: string;
-  // The version this site describes, from CMakeLists.txt, when it's newer than the release.
-  upcoming?: string;
-  // The release's files still have RobloxShadeHost's name.
-  oldName: boolean;
   setup: Download;
   host?: Download;
   macos?: Download;
   linux?: Download;
+  // The newest beta, unless the version it leads to is out.
+  beta?: Beta;
+  // The version the site describes, from CMakeLists.txt, while it's newer than the release. The docs say so.
+  upcoming?: string;
 }
 
 interface Asset {
@@ -45,9 +55,11 @@ interface GitHubRelease {
 // GitHub Actions sets GITHUB_API_URL. Pointing it at a host that doesn't answer shows the site as it builds offline.
 const api = process.env.GITHUB_API_URL || 'https://api.github.com';
 
+// A version's three numbers, then which beta of it this is, as in 0.7.0-beta.2. A version itself counts as
+// Infinity there, so it comes after its betas.
 function parse(version: string) {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
-  return match ? match.slice(1).map(Number) : undefined;
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-beta\.([1-9]\d*))?$/.exec(version);
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3]), match[4] ? Number(match[4]) : Infinity] : undefined;
 }
 
 function newer(a: number[], b: number[]) {
@@ -76,7 +88,7 @@ async function list() {
 }
 
 async function newest(): Promise<Release> {
-  const fallback: Release = { notes: links.releases, oldName: false, setup: { url: links.releases } };
+  const fallback: Release = { notes: links.releases, setup: { url: links.releases } };
   let releases: GitHubRelease[];
   try {
     releases = await list();
@@ -87,34 +99,44 @@ async function newest(): Promise<Release> {
     return fallback;
   }
 
-  // The depth and DLSS5 files are releases too, so only vX.Y.Z tags count, like the host's update check.
-  let best: { release: GitHubRelease; setup: Asset; version: number[] } | undefined;
+  // The depth and DLSS5 files are releases too, so only vX.Y.Z and vX.Y.Z-beta.N tags count, like the host's update
+  // check. A tag that names a beta makes the release one, whatever its prerelease flag says.
+  type Found = { release: GitHubRelease; setup: Asset; version: number[] };
+  let best: Found | undefined;
+  let beta: Found | undefined;
   for (const release of releases) {
     const parts = release.tag_name?.startsWith('v') ? parse(release.tag_name.slice(1)) : undefined;
-    const setup = release.assets?.find((asset) => /-Setup-\d+\.\d+\.\d+\.exe$/.test(asset.name));
-    if (parts && setup && !release.draft && !release.prerelease && (!best || newer(parts, best.version)))
-      best = { release, setup, version: parts };
+    const setup = release.assets?.find((asset) => /-Setup-\d+\.\d+\.\d+(-beta\.\d+)?\.exe$/.test(asset.name));
+    if (!parts || !setup || release.draft) continue;
+    if (parts[3] !== Infinity) {
+      if (!beta || newer(parts, beta.version)) beta = { release, setup, version: parts };
+    } else if (!release.prerelease && (!best || newer(parts, best.version))) best = { release, setup, version: parts };
   }
   if (!best) {
     console.warn(`${repository} has no release with a Setup EXE. The download buttons link to GitHub Releases.`);
     return fallback;
   }
 
+  const files = (release: GitHubRelease) => {
+    const asset = (pattern: RegExp) => download(release.assets.find((file) => pattern.test(file.name)));
+    // Releases before macOS and Linux support have neither.
+    return { macos: asset(/^Unishade-macOS\.zip$/), linux: asset(/^Unishade-linux-x64\.tar\.gz$/) };
+  };
   const { release, setup, version } = best;
   const target = project ? parse(project) : undefined;
-  const asset = (pattern: RegExp) => download(release.assets.find((file) => pattern.test(file.name)));
   return {
-    version: version.join('.'),
+    version: version.slice(0, 3).join('.'),
     date: new Date(release.published_at),
     notes: release.html_url,
-    upcoming: target && newer(target, version) ? project : undefined,
-    // Releases before the rename call Setup RobloxShadeHost-Setup-x.y.z.exe and the host RobloxShadeHost.exe.
-    oldName: !setup.name.startsWith('Unishade-'),
     setup: download(setup)!,
-    host: asset(/^(Unishade|RobloxShadeHost)\.exe$/),
-    // Releases before macOS and Linux support have neither.
-    macos: asset(/^Unishade-macOS\.zip$/),
-    linux: asset(/^Unishade-linux-x64\.tar\.gz$/),
+    host: download(release.assets.find((file) => /^(Unishade|RobloxShadeHost)\.exe$/.test(file.name))),
+    ...files(release),
+    // Once its version is out, a beta is older than the newest release.
+    beta:
+      beta && newer(beta.version, version)
+        ? { version: beta.release.tag_name.slice(1), notes: beta.release.html_url, setup: download(beta.setup)!, ...files(beta.release) }
+        : undefined,
+    upcoming: target && newer(target, version) ? project : undefined,
   };
 }
 

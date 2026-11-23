@@ -4,13 +4,13 @@ Bug reports, presets, and code changes are welcome. Open an issue before startin
 
 ## Report a bug
 
-Use the bug report form. Include the host version, how you installed it, your Windows version, and `Unishade.log` from the host's folder. Installer problems need the setup log, `%TEMP%\Unishade-Setup.log`.
+Use the bug report form. Include Unishade's version, how you installed it, your system and its version, and `Unishade.log`. **Settings > About > Open log** opens it. It is in the data folder: the folder of `Unishade.exe` on Windows, `~/Library/Application Support/Unishade` on macOS and `~/.local/share/unishade` on Linux. Problems with Setup on Windows need its log, `%TEMP%\Unishade-Setup.log`.
 
 ## Add a preset
 
 Presets live in `presets/`. Every effect a preset uses must come from [ReShade's official package list](https://github.com/crosire/reshade-shaders/blob/list/EffectPackages.ini); the installer downloads all of those and nothing else. Do not reference shaders from other sources.
 
-1. Save the preset from ReShade and copy the `.ini` into `presets/`.
+1. Save the preset in Unishade and copy the `.ini` into `presets/`.
 2. Test it with the host on a supported game and name the game in your submission. Roblox provides no depth buffer; depth effects require the optional depth estimation add-on.
 3. Add its filename and SHA-256 to `presets/downloads.ini`:
 
@@ -32,11 +32,15 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-The EXE is at `build\Release\Unishade.exe`. See `installer/README.md` for building and testing the installer, and [src/posix](src/posix/README.md) for macOS and Linux.
+The EXE is at `build\Release\Unishade.exe`. See `installer/README.md` for building and testing the installer, and [src/README.md](src/README.md) for macOS and Linux and for how the source is laid out.
 
-GitHub Actions builds and tests the Windows, Linux and macOS versions for pushes and pull requests, and runs `tests/installer_tests.ps1` against the new Setup. You can also run **Build and release** manually from the Actions tab, which signs the Windows files through [SignPath](https://unishade.me/code-signing/) with the test certificate. Successful builds provide `Unishade-windows-x64` (the EXE and Setup), `Unishade-linux-x64` and `Unishade-macOS` artifacts.
+GitHub Actions builds and tests the Windows, Linux and macOS versions for pushes and pull requests, and runs `tests/installer_tests.ps1` against the new Setup. You can also run **Build and release** manually from the Actions tab, which signs the Windows files through [SignPath](https://unishade.me/code-signing/) with the test certificate. Successful builds provide `Unishade-windows-x64` (the EXE, the add-ons `Depth.dll` and `Unishade_nvngx.dll`, and Setup), `Unishade-linux-x64` and `Unishade-macOS` artifacts.
 
-To publish a release, run **Build and release** manually on `main` with **Publish a release** checked. It releases the version in `project(Unishade VERSION X.Y.Z)` in `CMakeLists.txt` as `vX.Y.Z`, and refuses a version that's already released. The Windows files are signed with the release certificate, and each signing request waits for an approver in SignPath. After the builds and tests pass, it creates the tag and a GitHub release with Setup, the EXE, the macOS and Linux archives, `LICENSE` and `SHA256SUMS.txt`, which lists the SHA-256 of each file, and then rebuilds the website. Pushes and pull requests do not publish releases.
+To publish a release, run **Build and release** manually on `main` with **Publish a release** checked. It releases the version in `project(Unishade VERSION X.Y.Z)` in `CMakeLists.txt` as `vX.Y.Z`, and refuses a version that's already released.
+
+`set(UNISHADE_BETA N)` below that line makes the build a beta. With `N` above 0 the version is `X.Y.Z-beta.N`, the program and Setup have the beta icon from `assets/UnishadeBeta.ico` and `assets/UnishadeBeta.png`, and the launcher shows a BETA badge beside its logo. The workflow publishes a beta as `vX.Y.Z-beta.N`, marked as a prerelease on GitHub, and does so from any branch. A beta is not signed, so the run skips SignPath. The download buttons on the website and the update check of a released version skip betas, and the download page shows the newest beta in a banner until its version is released. A beta's own update check offers newer betas and the version itself. On Windows, **Update** on the launcher's card installs what the check offers: Unishade downloads the release's `Unishade-Setup-<version>.exe` and runs it with `--silent --launch`, but only when it has the SHA-256 the release's `SHA256SUMS.txt` lists and its version resource names that version. A version's Setup also has to have a signature Windows trusts, from the signer of the running `Unishade.exe` when that is signed. A beta's Setup is not signed, so GitHub's release is all a beta's update is checked against. Signed builds and betas update themselves. Any other build, such as a version built on your own machine, opens the release's page instead. So do macOS and Linux, where the same check runs and there is no Setup. To ship the next beta, raise `N`. To release the version, set it to 0. `swift scripts/beta_icon.swift` makes the beta icon again from `assets/Unishade.png` when the logo changes.
+
+A version's Windows files are signed with the release certificate, and each signing request waits for an approver in SignPath. After the builds and tests pass, the workflow creates the tag and a GitHub release with Setup, the EXE, `Depth.dll` and `Unishade_nvngx.dll`, the macOS and Linux archives, `LICENSE` and `SHA256SUMS.txt`, which lists the SHA-256 of each file, and then rebuilds the website. Pushes and pull requests do not publish releases.
 
 ## Website
 
@@ -67,14 +71,16 @@ A release doesn't change `main`, so Cloudflare would keep linking the old files.
 
 ## Code changes
 
-Game discovery lives in `src/game_integration.cpp`. `FindGameTarget()` uses a manual window selection or the executable list saved in `games.ini`, with Roblox enabled by default. Custom games match their full executable path; Roblox matches its filename because its install folder changes with updates. Discovery queries executable metadata without reading game memory or injecting code.
+Windows, macOS and Linux build the same sources in `src/`, with what differs between the systems in `src/platform/`. The build is in `cmake/`, the add-on interface and the official add-ons in `addons/`, Setup in `installer/` and the tests in `tests/`. `src/README.md` lists what each folder and file does.
+
+Game discovery lives in `src/games/games.cpp`. `FindGameTarget()` uses a manual window selection or the executable list saved in `games.ini`. On macOS and Linux the list starts with Roblox. On Windows it starts empty, and Unishade offers the games `src/games/game_scan.cpp` finds installed. Custom games match their full executable path; Roblox matches its filename because its install folder changes with updates. Discovery queries executable metadata without reading game memory or injecting code.
 
 - The host is C++20.
-- Builds use `/W4`. Fix warnings rather than suppressing them.
-- Hotkey parsing has tests in `tests/hotkey_tests.cpp`. Add a case when you change it.
-- Installer changes must pass `tests/installer_tests.ps1`. It downloads ReShade and all effect packages, so it takes a few minutes. CI runs it too, with the presets from your commit.
+- Builds use `/W4` with MSVC and `-Wall -Wextra` with GCC and Clang. Fix warnings rather than suppressing them.
+- Hotkey parsing has tests in `tests/host_tests.cpp`, which builds on macOS and Linux. Add a case when you change it.
+- Installer changes must pass `tests/installer_tests.ps1`. It downloads all effect packages, so it takes a few minutes. CI runs it too, with the presets from your commit.
 - Keep pull requests focused. Separate unrelated fixes into their own pull requests.
-- Do not bump the version. Releases are cut from tags by the maintainer.
+- Do not change the version or `UNISHADE_BETA` in `CMakeLists.txt`. The maintainer raises them for a release, and the release workflow creates the tag from them.
 
 ## Pull requests
 

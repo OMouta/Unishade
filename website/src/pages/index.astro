@@ -1,192 +1,521 @@
 ---
+// Seven bands in the ring's seven colors, each a tile as big as the window that slides over the one before it. Big
+// type below, and a picture of the game or the app above it.
 import { Image } from 'astro:assets';
 import Base from '../layouts/Base.astro';
 import DownloadButton from '../components/DownloadButton.astro';
-import Hero from '../components/Hero.astro';
-import Steps from '../components/Steps.astro';
-import { links } from '../links';
-import { videos } from '../videos';
+import before from '../assets/shots/game-before.jpg';
+import after from '../assets/shots/game-after.jpg';
+import dusk from '../assets/shots/game-after-1.jpg';
+import found from '../assets/shots/crop-found.png';
+import menu from '../assets/shots/menu.jpg';
+import menuPresets from '../assets/shots/menu-presets.jpg';
+import addons from '../assets/shots/crop-addons.png';
 import logo from '../../../assets/UnishadeSmall.png';
-import GithubIcon from '../icons/github.svg';
+import { release } from '../release';
+import { requirements } from '../site';
 
-const [featured, ...more] = videos;
+// The bands, for the dots at the side that say which one shows.
+const sections = [
+  ['red', 'Nothing goes into the game'],
+  ['orange', 'Pick your games once'],
+  ['yellow', 'Change it while you play'],
+  ['green', 'A preset for every game'],
+  ['cyan', 'Hold to compare'],
+  ['blue', 'Add-ons'],
+  ['violet', 'Download'],
+];
+
+// When the newest release has no file for a system, its button goes to the download page, which says why.
+const platforms = [
+  { name: 'Windows', needs: requirements.windowsShort, href: release.setup.name ? release.setup.url : '/download/' },
+  { name: 'macOS', needs: requirements.macosShort, href: release.macos?.url ?? '/download/#macos' },
+  { name: 'Linux', needs: requirements.linuxShort, href: release.linux?.url ?? '/download/#linux' },
+];
 ---
 
 <Base
   title="Unishade | Universal post-processing without injection."
-  description="ReShade effects without injecting anything into your game. Free and open source."
+  description="ReShade effects over your game without injecting anything into it. Free and open source, for Windows, macOS and Linux."
   overlay
 >
+  <header class="top">
+    <Image src={logo} widths={[480, 960, 1232]} sizes="(max-width: 800px) 90vw, 58vw" alt="" class="logo" priority />
+
+    <div class="pitch">
+      <h1>Universal <span>post-processing</span> without injection.</h1>
+      <p>Run ReShade effects on your games without installing anything into them. Free and open source, for Windows, macOS and Linux.</p>
+      <DownloadButton detect />
+    </div>
+  </header>
+
   <main>
-    <Hero />
+    <section class="band red" id="red">
+      <Image src={after} widths={[960, 1440, 1920]} sizes="92vw" alt="A game with Unishade's effects" class="shot photo" />
+      <h2>Nothing goes into the game.</h2>
+      <p>Unishade draws effects on top of it instead.</p>
+    </section>
 
-    <Steps />
-
-    <section class="videos">
-      <div class="videos-text">
-        <h2>Seen on YouTube</h2>
-        <p class="dim">Creators trying DLSS5 in Greenville, Driving Empire and other Roblox games.</p>
+    <section class="band orange" id="orange">
+      <div class="shot photo stage">
+        <Image src={found} widths={[480, found.width]} sizes={`(max-width: 800px) 84vw, ${found.width}px`} alt="Unishade listing the games it found" class="front" />
       </div>
-      <a class="video featured" href={featured.url}>
-        <Image src={featured.thumbnail} widths={[640, 1280]} sizes="(max-width: 900px) 100vw, 600px" alt="" class="thumb" />
-        <span class="video-title">{featured.title}</span>
-        <span class="dim">{featured.channel}</span>
-      </a>
-      <ul class="video-grid">
+      <h2>Pick your games once.</h2>
+      <p>After that, just open the game.</p>
+    </section>
+
+    <section class="band yellow" id="yellow">
+      <Image src={menu} widths={[960, 1440, 1920]} sizes="92vw" alt="Unishade's menu over a game: the preset's effects as colored tiles, with the preset's name and buttons under them" class="shot photo low" />
+      <h2>Change it while you play.</h2>
+      <p>The menu opens over the game, one tile per effect.</p>
+    </section>
+
+    <section class="band green" id="green">
+      <Image src={menuPresets} widths={[960, 1440, 1920]} sizes="92vw" alt="The menu's list of presets over a game" class="shot photo low" />
+      <h2>A preset for every game.</h2>
+      <p>Every game keeps the look you gave it.</p>
+    </section>
+
+    <section class="band cyan" id="cyan">
+      <div class="shot photo split">
+        <Image src={before} widths={[960, 1440, 1920]} sizes="92vw" alt="The game without effects" />
+        <Image src={after} widths={[960, 1440, 1920]} sizes="92vw" alt="The same view with effects" />
+      </div>
+      <h2>Hold to compare.</h2>
+      <p>See what your effects change.</p>
+    </section>
+
+    <section class="band blue" id="blue">
+      <div class="shot photo stage">
+        <Image src={after} widths={[960, 1440, 1920]} sizes="92vw" alt="" class="back dim" />
+        <Image src={addons} widths={[480, addons.width]} sizes={`(max-width: 800px) 84vw, ${addons.width}px`} alt="The Add-ons window, with its add-ons turned on" class="front" />
+      </div>
+      <h2>Extend it with add-ons.</h2>
+      <p>For when effects alone aren't enough.</p>
+    </section>
+
+    <section class="band violet" id="violet">
+      <Image src={dusk} widths={[960, 1440, 1920]} sizes="92vw" alt="A game with another preset's effects" class="shot photo" />
+      <h2>Windows, macOS, Linux.</h2>
+      <ul>
         {
-          more.map((video) => (
+          platforms.map((platform) => (
             <li>
-              <a class="video" href={video.url}>
-                <Image src={video.thumbnail} widths={[320, 640]} sizes="(max-width: 900px) 50vw, 290px" alt="" class="thumb" />
-                <span class="video-title">{video.title}</span>
-                <span class="dim">{video.channel}</span>
+              <a href={platform.href}>
+                <strong>Download for {platform.name}</strong>
+                <span>{platform.needs}</span>
               </a>
             </li>
           ))
         }
       </ul>
     </section>
-
-    <section class="closing">
-      <Image src={logo} widths={[460, 920]} sizes="(max-width: 600px) 78vw, 460px" alt="" class="closing-logo" />
-      <h2>Free and open source</h2>
-      <DownloadButton>
-        <a class="button button-secondary" href={links.github}><GithubIcon aria-hidden="true" />View on GitHub</a>
-      </DownloadButton>
-    </section>
   </main>
+
+  <nav class="rail" aria-label="Sections">
+    {
+      sections.map(([id, label]) => (
+        <a href={`#${id}`} aria-label={label}>
+          <i />
+        </a>
+      ))
+    }
+  </nav>
+
 </Base>
 
+<script>
+  // The dots at the side: which band shows, and how far through it the scrolling is. A band holds still for a
+  // while, so the dot filling up is what says the page still follows the wheel.
+  const bands = [...document.querySelectorAll<HTMLElement>('.band')];
+  const rail = document.querySelector<HTMLElement>('.rail')!;
+  const dots = [...rail.querySelectorAll<HTMLAnchorElement>('a')];
+  let starts: number[] = [];
+  let holds: number[] = [];
+
+  // Where each band reaches the top of the window, and how much scrolling it then stays for.
+  const measure = () => {
+    let top = bands[0].parentElement!.getBoundingClientRect().top + scrollY;
+    starts = [];
+    holds = [];
+    for (const band of bands) {
+      const hold = parseFloat(getComputedStyle(band).marginBottom) || 0;
+      starts.push(top);
+      holds.push(hold);
+      top += band.offsetHeight + hold;
+    }
+  };
+
+  const update = () => {
+    const stacked = getComputedStyle(bands[0]).position === 'sticky';
+    let current = -1;
+    starts.forEach((start, index) => {
+      if (scrollY >= start - innerHeight / 2) current = index;
+    });
+    const past = scrollY > starts[starts.length - 1] + innerHeight * 0.6;
+    rail.classList.toggle('shown', stacked && current >= 0 && !past);
+    dots.forEach((dot, index) => {
+      if (index === current) dot.setAttribute('aria-current', 'true');
+      else dot.removeAttribute('aria-current');
+      const through = index < current ? 1 : index > current ? 0 : holds[index] ? (scrollY - starts[index]) / holds[index] : 1;
+      dot.style.setProperty('--through', `${Math.min(Math.max(through, 0), 1) * 100}%`);
+    });
+  };
+
+  // A band that is stuck at the top is already in view to the browser, so the dots scroll to where it starts.
+  dots.forEach((dot, index) =>
+    dot.addEventListener('click', (event) => {
+      event.preventDefault();
+      scrollTo({ top: starts[index], behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    }),
+  );
+
+  const refresh = () => {
+    measure();
+    update();
+  };
+  refresh();
+  addEventListener('scroll', update, { passive: true });
+  addEventListener('resize', refresh);
+  addEventListener('load', refresh);
+</script>
+
 <style>
-  /* The first video is four times the size of the rest, with the heading beside it. */
-  .videos {
+  .top {
+    --side: var(--gutter);
+    position: relative;
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 36px 24px;
-    width: var(--page);
-    margin: clamp(96px, 13vw, 180px) auto 0;
+    min-height: 100svh;
+    padding: var(--nav-height) var(--side) clamp(28px, 5vw, 64px);
+    overflow: hidden;
   }
 
-  .videos-text {
-    grid-column: 3 / span 2;
+  /* The cube and its ring, bigger than the corner it sits in. */
+  .logo {
+    position: absolute;
+    top: 4%;
+    right: -9%;
+    width: min(58vw, 880px);
+    rotate: 6deg;
+    animation: arrive 1.4s var(--ease-out) backwards;
+  }
+
+  @keyframes arrive {
+    from {
+      opacity: 0;
+      rotate: -14deg;
+      scale: 0.86;
+    }
+  }
+
+  .pitch {
+    position: relative;
     display: grid;
-    gap: 16px;
-    align-self: center;
-    max-width: 30ch;
-    padding-left: clamp(0px, 2vw, 28px);
+    gap: clamp(16px, 2vw, 26px);
+    align-self: end;
   }
 
-  .featured {
-    grid-area: 1 / 1 / span 2 / span 2;
+  .pitch h1 {
+    max-width: 9.5em;
+    /* Over the cube the letters turn black, and over the ring they take its opposite colors. */
+    mix-blend-mode: difference;
+    font-size: clamp(2.3rem, 10.4vw, 10rem);
+    line-height: 0.86;
+    letter-spacing: -0.045em;
   }
 
-  .video-grid,
-  .video-grid li {
-    display: contents;
+  .pitch h1 span {
+    white-space: nowrap;
   }
 
-  .video {
-    display: grid;
-    gap: 4px;
-    align-content: start;
-    color: var(--ink);
-    text-decoration: none;
+  .pitch p {
+    max-width: 30em;
+    color: var(--haze);
+    font-size: clamp(1.05rem, 1.5vw, 1.3rem);
   }
 
-  .thumb {
-    width: 100%;
-    aspect-ratio: 16 / 9;
-    object-fit: cover;
-    margin-bottom: 10px;
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    transition:
-      transform 0.35s var(--ease-out),
-      border-color 0.2s;
+  .pitch :global(.download) {
+    font-size: 1rem;
   }
 
-  .video-title {
-    font-weight: 650;
-    line-height: 1.35;
-  }
-
-  .featured .video-title {
-    font-size: 1.3rem;
-    font-stretch: 112%;
-  }
-
-  .video .dim {
-    font-size: 0.9rem;
-  }
-
-  .video:hover {
-    color: var(--accent);
-  }
-
-  .video:hover .thumb {
-    border-color: var(--line-strong);
-    transform: translateY(-3px);
-  }
-
-  .closing {
-    display: grid;
-    justify-items: center;
-    gap: 18px;
-    width: var(--page);
-    margin: clamp(120px, 16vw, 220px) auto 0;
-    text-align: center;
-  }
-
-  .closing h2 {
-    font-size: clamp(2.2rem, 6vw, 5.4rem);
-    font-weight: 860;
-    line-height: 0.94;
-    letter-spacing: -0.04em;
-  }
-
-  .closing-logo {
-    width: min(460px, 78vw);
-    margin-bottom: 12px;
-  }
-
-  .closing :global(.download) {
-    justify-content: center;
-    margin-top: 10px;
-  }
-
-  /* The version and size go on their own line, under both buttons. */
-  .closing :global(.download > .dim) {
+  /* The version and size go on their own line, under the button. */
+  .pitch :global(.download > .dim) {
     flex-basis: 100%;
   }
 
-  .closing .button svg {
-    width: 20px;
-    height: 20px;
-    margin-right: 10px;
+  /* Each band stays at the top of the window while the next slides over it. The space under it is scrolling that
+     leaves the band as it is, so there is time to read it before the next one arrives. */
+  .band {
+    margin-bottom: 70svh;
+    --side: var(--gutter);
+    position: sticky;
+    top: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 28px clamp(28px, 5vw, 80px);
+    min-height: 100svh;
+    padding: clamp(18px, 2.4vw, 32px) var(--side) clamp(32px, 4.4vw, 60px);
+    border-radius: 35px 35px 0 0;
+    color: #000;
+    background: var(--color);
   }
 
-  @media (max-width: 900px) {
-    .videos {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+  .band a {
+    color: inherit;
+  }
+
+  .band:last-child {
+    margin-bottom: 0;
+  }
+
+  .red {
+    --color: var(--red);
+  }
+
+  .orange {
+    --color: var(--orange);
+  }
+
+  .yellow {
+    --color: var(--yellow);
+  }
+
+  .green {
+    --color: var(--green);
+  }
+
+  .cyan {
+    --color: var(--cyan);
+  }
+
+  .blue {
+    --color: var(--blue);
+  }
+
+  .violet {
+    --color: var(--violet);
+  }
+
+  .band h2 {
+    font-size: clamp(2.7rem, 7.4vw, 7.4rem);
+    line-height: 0.88;
+    letter-spacing: -0.045em;
+  }
+
+  .band p {
+    max-width: 24em;
+    padding-bottom: 0.5em;
+    font-size: clamp(1.1rem, 1.6vw, 1.4rem);
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  /* The game, as wide as the band. */
+  .shot.photo {
+    grid-column: 1 / -1;
+    align-self: center;
+    width: 100%;
+    height: min(58svh, 680px);
+    border-radius: 28px;
+    box-shadow: 0 30px 70px rgb(0 0 0 / 0.35);
+    object-fit: cover;
+  }
+
+  /* The menu sits at the bottom of the game, so that is the part to keep. */
+  .shot.photo.low {
+    object-position: 50% 100%;
+  }
+
+  /* A piece of the app over the game, as the menu is. The piece keeps the size it has on screen, so its words stay
+     sharp, and the game behind it fills the band. */
+  .stage {
+    position: relative;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    background: #000;
+  }
+
+  .stage .back {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .stage .back.dim {
+    filter: brightness(0.55) blur(6px);
+    scale: 1.04;
+  }
+
+  .stage .front {
+    position: relative;
+    width: auto;
+    max-width: calc(100% - 32px);
+    height: auto;
+    max-height: calc(min(58svh, 680px) - 48px);
+    margin: 24px 16px;
+    border-radius: 35px;
+    box-shadow: 0 24px 60px rgb(0 0 0 / 0.55);
+  }
+
+  /* Without effects on the left, with them on the right. */
+  .split {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .split img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .split img:last-child {
+    clip-path: inset(0 0 0 50%);
+  }
+
+  .split::after {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 50%;
+    width: 3px;
+    margin-left: -1.5px;
+    background: #fff;
+  }
+
+  .violet ul {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .violet li a {
+    display: grid;
+    gap: 2px;
+    padding: 16px 20px;
+    border-radius: 18px;
+    color: #fff;
+    background: #000;
+    text-decoration: none;
+    transition: translate 0.4s var(--spring);
+  }
+
+  .violet li a:hover {
+    translate: 6px 0;
+  }
+
+  .violet strong {
+    font-weight: 800;
+    font-size: 1.25rem;
+  }
+
+  .violet span {
+    color: var(--haze);
+  }
+
+  /* One dot for each band. The one that shows is longer, and fills as the scrolling goes through it. */
+  .rail {
+    position: fixed;
+    z-index: 5;
+    top: 50%;
+    right: clamp(6px, 1.7vw, 26px);
+    display: grid;
+    gap: 9px;
+    opacity: 0;
+    pointer-events: none;
+    translate: 0 -50%;
+    transition: opacity 0.3s;
+  }
+
+  .rail.shown {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .rail a {
+    position: relative;
+    display: block;
+    width: 10px;
+    height: 10px;
+    border-radius: 5px;
+    background: rgb(0 0 0 / 0.26);
+    transition: height 0.5s var(--spring);
+  }
+
+  /* Easier to hit than the dot. */
+  .rail a::before {
+    content: '';
+    position: absolute;
+    inset: -5px -10px;
+  }
+
+  .rail a[aria-current] {
+    height: 52px;
+  }
+
+  .rail i {
+    display: block;
+    height: var(--through, 0%);
+    border-radius: 5px;
+    background: #000;
+  }
+
+  @media (max-width: 800px), (max-height: 620px) {
+    .rail {
+      display: none;
     }
 
-    .videos-text,
-    .featured {
-      grid-area: auto / 1 / auto / -1;
+    .logo {
+      top: 70px;
+      right: -22%;
+      width: 96vw;
+      opacity: 0.55;
     }
 
-    .videos-text {
-      padding-left: 0;
+    /* Too little room to stack: the bands follow each other. */
+    .band {
+      position: relative;
+      margin-bottom: 0;
+      grid-template-columns: minmax(0, 1fr);
+      min-height: 78svh;
+    }
+
+    .shot.photo {
+      height: auto;
+      min-height: 0;
+      margin-top: 56px;
+      aspect-ratio: 16 / 9;
+      border-radius: 18px;
+    }
+
+    .stage {
+      aspect-ratio: auto;
+    }
+
+    .stage .front {
+      max-height: none;
+      margin: 16px 12px;
+      border-radius: 20px;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .thumb {
-      transition: none;
+    .logo {
+      animation: none;
     }
 
-    .video:hover .thumb {
-      transform: none;
+    .violet li a,
+    .rail,
+    .rail a {
+      transition: none;
     }
   }
 </style>

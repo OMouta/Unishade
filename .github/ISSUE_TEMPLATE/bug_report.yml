@@ -30,22 +30,18 @@ body:
     attributes:
       label: How did you install it?
       options:
-        - Installer (Unishade-Setup.exe)
-        - Manual (Unishade.exe and the ReShade installer)
+        - Setup on Windows (Unishade-Setup.exe)
+        - Unishade.exe on Windows, without Setup
+        - The macOS app (Unishade-macOS.zip)
+        - The Linux build (Unishade-linux-x64.tar.gz)
         - Built from source
     validations:
       required: true
   - type: input
-    id: reshade
+    id: system
     attributes:
-      label: ReShade version
-      description: Listed in the Unishade window. Say whether it is the full add-on support build.
-      placeholder: 6.5.1 with full add-on support
-  - type: input
-    id: windows
-    attributes:
-      label: Windows version
-      description: Run `winver`.
+      label: System and version
+      description: On Windows, run `winver`. On macOS, see About This Mac. On Linux, name the distribution and say whether the desktop runs on X11 or Wayland.
       placeholder: Windows 11 24H2
     validations:
       required: true
@@ -57,5 +53,5 @@ body:
     id: console
     attributes:
       label: Log
-      description: Paste `Unishade.log` from the host's folder. For installer problems, paste `%TEMP%\Unishade-Setup.log`.
+      description: Paste `Unishade.log`, which **Settings > About > Open log** opens. For problems with Setup on Windows, paste `%TEMP%\Unishade-Setup.log`.
       render: text

@@ -1,7 +1,7 @@
-// Tests for installing effect packages, shared by Setup on Windows and the macOS and Linux host: what a package's
-// zip may hold and where its files may go.
+// Tests for installing effect packages, which Unishade does on every system and whose path checks Setup on Windows
+// uses: what a package's zip may hold and where its files may go.
 
-#include "../src/package_files.h"
+#include "setup/package_files.h"
 
 #include <cstdint>
 #include <cstdio>

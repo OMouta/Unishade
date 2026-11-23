@@ -1,4 +1,4 @@
-#include "../src/ini_text.h"
+#include "base/ini_text.h"
 #include <cstdio>
 
 namespace

@@ -1,0 +1,286 @@
+// Tests for the host's parts that need no window, built on macOS and Linux: shortcuts, presets, the saved game list,
+// file names, notices, the checksum presets are verified with and the rules for macOS windows.
+
+#include "app/config.h"
+#include "app/hotkeys.h"
+#include "app/log.h"
+#include "effects/preset_ini.h"
+#include "games/game_list.h"
+#include "games/games.h"
+#include "platform/macos/macho.h"
+#include "platform/macos/window_rules.h"
+#include "setup/setup.h"
+
+#include <unistd.h>
+
+#include <cstdio>
+#include <stdexcept>
+#include <string>
+
+namespace
+{
+bool Check(bool condition, const char* what)
+{
+    if (!condition)
+        std::printf("Failed: %s\n", what);
+    return condition;
+}
+
+void Put(std::vector<uint8_t>& bytes, size_t at, uint32_t value, bool big)
+{
+    if (bytes.size() < at + 4)
+        bytes.resize(at + 4);
+    for (int i = 0; i < 4; ++i)
+        bytes[at + i] = uint8_t(value >> (big ? 24 - 8 * i : 8 * i));
+}
+
+// A 64-bit Mach-O header with one load command: LC_BUILD_VERSION, or LC_VERSION_MIN_MACOSX when old is set.
+void PutSlice(std::vector<uint8_t>& bytes, size_t at, uint32_t cpu, uint32_t sdk, bool old = false)
+{
+    const uint32_t size = old ? 16 : 24;
+    Put(bytes, at, 0xFEEDFACF, false);
+    Put(bytes, at + 4, cpu, false);
+    Put(bytes, at + 16, 1, false);
+    Put(bytes, at + 20, size, false);
+    Put(bytes, at + 32, old ? 0x24 : 0x32, false);
+    Put(bytes, at + 36, size, false);
+    Put(bytes, at + (old ? 44 : 48), sdk, false);
+    Put(bytes, at + 32 + size - 4, old ? sdk : 0, false);
+}
+} // namespace
+
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
+{
+    bool ok = true;
+
+    const fs::path directory = fs::temp_directory_path() / ("unishade-write-test-" + std::to_string(getpid()));
+    if (!fs::create_directory(directory))
+        return 1;
+    const fs::path file = directory / "preset.ini";
+    ok &= Check(WriteFile(file, "value=1\n") && ReadFile(file) == "value=1\n", "writes a new file");
+    ok &= Check(WriteFile(file, "value=2\n") && ReadFile(file) == "value=2\n", "replaces an existing file");
+    const fs::path blocked = directory / "blocked";
+    fs::create_directory(blocked);
+    ok &= Check(!WriteFile(blocked, "contents"), "a failed rename is reported even when cleanup succeeds");
+    ok &= Check(fs::is_directory(blocked) && !fs::exists(blocked.string() + ".tmp"), "failed write keeps the destination and removes the temporary file");
+    fs::remove_all(directory);
+
+    // Shortcuts are written as on Windows and read back the same.
+    Hotkey hotkey;
+    ok &= Check(ParseHotkey("Ctrl+F8", hotkey) && hotkey.modifiers == kCtrl && hotkey.key == ImGuiKey_F8, "reads Ctrl+F8");
+    ok &= Check(ParseHotkey("ctrl + shift + pagedown", hotkey) && hotkey.modifiers == (kCtrl | kShift) && hotkey.key == ImGuiKey_PageDown,
+                "reads names without case and with spaces");
+    ok &= Check(ParseHotkey("Cmd+Shift+U", hotkey) && hotkey.modifiers == (kSuper | kShift) && hotkey.key == ImGuiKey_U, "Cmd is the Super key");
+    ok &= Check(ParseHotkey("Win+1", hotkey) && hotkey.modifiers == kSuper && hotkey.key == ImGuiKey_1, "Win is the Super key too");
+    ok &= Check(ParseHotkey("Option+Left", hotkey) && hotkey.modifiers == kAlt && hotkey.key == ImGuiKey_LeftArrow, "Option is Alt");
+    ok &= Check(!ParseHotkey("Ctrl", hotkey), "a modifier alone is no shortcut");
+    ok &= Check(!ParseHotkey("Ctrl+Ctrl+A", hotkey), "a modifier counts once");
+    ok &= Check(!ParseHotkey("A+B", hotkey), "one key per shortcut");
+    ok &= Check(!ParseHotkey("F25", hotkey) && !ParseHotkey("Ctrl+", hotkey) && !ParseHotkey("", hotkey), "rejects what is not a key");
+    for (const Shortcut& shortcut : kShortcuts)
+    {
+        Hotkey parsed, again;
+        ok &= Check(ParseHotkey(shortcut.fallback, parsed) && ParseHotkey(FormatHotkey(parsed), again) && again == parsed,
+                    "every default shortcut survives writing and reading");
+    }
+
+    // Number pad keys have the same names as on Windows.
+    ok &= Check(ParseHotkey("Numpad0", hotkey) && hotkey.modifiers == 0 && hotkey.key == ImGuiKey_Keypad0, "reads Numpad0");
+    ok &= Check(ParseHotkey("ctrl+numpad9", hotkey) && hotkey.modifiers == kCtrl && hotkey.key == ImGuiKey_Keypad9, "reads number pad names without case");
+    const std::pair<const char*, ImGuiKey> numpad[] = { { "NumpadMultiply", ImGuiKey_KeypadMultiply }, { "NumpadAdd", ImGuiKey_KeypadAdd },
+                                                        { "NumpadSubtract", ImGuiKey_KeypadSubtract }, { "NumpadDecimal", ImGuiKey_KeypadDecimal },
+                                                        { "NumpadDivide", ImGuiKey_KeypadDivide }, { "Numpad5", ImGuiKey_Keypad5 } };
+    for (const auto& [name, key] : numpad)
+        ok &= Check(ParseHotkey(std::string("Shift+") + name, hotkey) && hotkey.key == key && FormatHotkey(hotkey) == std::string("Shift+") + name &&
+                        IsShortcutKey(key),
+                    "reads and writes every number pad key, which can be recorded");
+    ok &= Check(!ParseHotkey("Numpad10", hotkey) && !ParseHotkey("Numpad", hotkey) && !ParseHotkey("NumpadEnter", hotkey),
+                "rejects number pad keys Windows does not name");
+#ifdef __APPLE__
+    ok &= Check(IsShortcutKey(ImGuiKey_F20) && !IsShortcutKey(ImGuiKey_F21), "macOS records function keys up to F20");
+#else
+    ok &= Check(IsShortcutKey(ImGuiKey_F24), "records function keys up to F24");
+#endif
+
+    // Presets keep keys before the first section and the order of everything else.
+    const std::string text = "PreprocessorDefinitions=A=1,B\r\nTechniques=Curves@Curves.fx,LumaSharpen@LumaSharpen.fx\r\n\r\n"
+                             "[Curves.fx]\r\nContrast=0.650000\r\n\r\n[LumaSharpen.fx]\r\nsharp_strength=0.800000\r\n";
+    PresetIni preset(text);
+    std::string value;
+    ok &= Check(preset.Get("", "Techniques", value) && PresetIni::Split(value).size() == 2, "reads the technique list");
+    ok &= Check(preset.Get("Curves.fx", "Contrast", value) && value == "0.650000", "reads an effect's value");
+    ok &= Check(!preset.Get("", "Contrast", value), "values belong to their section");
+    ok &= Check(preset.SectionNames() == std::vector<std::string>{ "Curves.fx", "LumaSharpen.fx" }, "lists sections in order");
+    preset.Set("Curves.fx", "Contrast", "0.500000");
+    preset.Set("Vibrance.fx", "Vibrance", "0.150000");
+    preset.Set("", "TechniqueSorting", "LumaSharpen@LumaSharpen.fx,Curves@Curves.fx");
+    ok &= Check(preset.Text() ==
+                    "PreprocessorDefinitions=A=1,B\nTechniques=Curves@Curves.fx,LumaSharpen@LumaSharpen.fx\n"
+                    "TechniqueSorting=LumaSharpen@LumaSharpen.fx,Curves@Curves.fx\n\n[Curves.fx]\nContrast=0.500000\n\n"
+                    "[LumaSharpen.fx]\nsharp_strength=0.800000\n\n[Vibrance.fx]\nVibrance=0.150000\n",
+                "writes changes in place and new keys at the end of their section");
+    ok &= Check(PresetIni(PresetIni("\xEF\xBB\xBFTechniques=A@A.fx\n").Text()).Get("", "Techniques", value) && value == "A@A.fx",
+                "reads presets with a byte order mark");
+
+    ok &= Check(preset.Get("curves.FX", "contrast", value) && value == "0.500000", "section and key names ignore case, as on Windows");
+    ok &= Check(PresetEffectFiles(PresetIni("Techniques=A@A.fx,B@b.fx,C@A.FX,Loose\n")) == std::vector<std::string>{ "A.fx", "b.fx" },
+                "lists each effect file a preset uses once");
+
+    // games.ini is the same file on every platform.
+    const std::vector<GameListEntry> games = { { "RobloxPlayerBeta.exe", "Roblox", true }, { "/usr/games/Café Game", "Café", false } };
+    const std::vector<GameListEntry> read = ParseGameList(FormatGameList(games));
+    ok &= Check(read.size() == 2 && read[1].executable == games[1].executable && read[1].name == games[1].name && !read[1].enabled,
+                "writes and reads the game list, UTF-8 included");
+    bool rejected = false;
+    try
+    {
+        ParseGameList("[Games]\nCount=1\n");
+    }
+    catch (const std::runtime_error&)
+    {
+        rejected = true;
+    }
+    ok &= Check(rejected, "rejects a damaged game list");
+
+    // A damaged games.ini is kept beside it, since the next save replaces it.
+    const fs::path gamesDirectory = fs::temp_directory_path() / ("unishade-games-test-" + std::to_string(getpid()));
+    fs::create_directory(gamesDirectory);
+    const fs::path gamesFile = gamesDirectory / "games.ini";
+    const std::string damaged = "; my games\n[Games]\nCount=1\n";
+    std::string loadError;
+    if (WriteFile(gamesFile, damaged))
+        try
+        {
+            LoadAutoGames(gamesFile);
+        }
+        catch (const std::runtime_error& e)
+        {
+            loadError = e.what();
+        }
+    ok &= Check(ReadFile(gamesFile.string() + ".damaged") == damaged && loadError.find("games.ini.damaged") != std::string::npos,
+                "keeps a damaged game list as games.ini.damaged and says so");
+    ok &= Check(LoadAutoGames(gamesDirectory / "missing.ini").size() == DefaultAutoGames().size() &&
+                    !fs::exists(gamesDirectory / "missing.ini.damaged"),
+                "a missing game list is no damaged one");
+    fs::remove_all(gamesDirectory);
+
+    const auto definitions = ParseDefinitions("A=1,B,,C=x=y");
+    ok &= Check(definitions.size() == 3 && definitions[0] == std::pair<std::string, std::string>{ "A", "1" } && definitions[1].second.empty() &&
+                    definitions[2].second == "x=y",
+                "reads preprocessor definitions");
+    ok &= Check(FormatDefinitions(definitions) == "A=1,B,C=x=y", "writes preprocessor definitions back");
+
+    // Saved games match by filename anywhere, by full path exactly, and Wine games by the .exe they run.
+    const AutoGame roblox{ "RobloxPlayer", "Roblox" };
+    ok &= Check(MatchesProcess(roblox, "/Applications/Roblox.app/Contents/MacOS/RobloxPlayer", ""), "matches a filename in any folder");
+    ok &= Check(MatchesProcess(roblox, "/opt/robloxplayer", ""), "compares filenames without case");
+    ok &= Check(!MatchesProcess(roblox, "/usr/bin/RobloxPlayerBeta", ""), "a filename must match whole");
+    const AutoGame wine{ "RobloxPlayerBeta.exe", "Roblox" };
+    ok &= Check(MatchesProcess(wine, "/usr/bin/wine64-preloader", "C:\\Program Files\\Roblox\\RobloxPlayerBeta.exe"),
+                "matches the Windows executable a Wine process runs");
+    const AutoGame path{ "/usr/games/game", "Game" };
+    ok &= Check(MatchesProcess(path, "/usr/games/game", "") && !MatchesProcess(path, "/opt/game", "game"), "a saved path must match exactly");
+
+    // A game's presets folder is named after it, with a name Windows also accepts.
+    ok &= Check(FolderName("Roblox") == "Roblox", "keeps a plain name");
+    ok &= Check(FolderName("Half-Life: Alyx") == "Half-Life  Alyx" && FolderName("a/b\\c") == "a b c", "replaces what Windows does not allow");
+    ok &= Check(FolderName("Pok\xC3\xA9mon \xE2\x98\x85") == "Pok\xC3\xA9mon \xE2\x98\x85", "keeps UTF-8 letters");
+    ok &= Check(FolderName("  Game... ") == "Game" && FolderName("\t?*") == "", "trims the ends Windows drops");
+
+    // Screenshots are named after the window's title, which can hold anything.
+    ok &= Check(SafeFileName("Roblox") == "Roblox", "keeps a plain title");
+    ok &= Check(SafeFileName("../../etc/passwd") == "etc passwd", "a title cannot name another folder");
+    ok &= Check(SafeFileName(std::string("a\0b\nc/d\x7f", 8)) == "a b c d", "replaces control characters and slashes");
+    ok &= Check(SafeFileName(".hidden") == "hidden" && SafeFileName(" . ") == "Unishade" && SafeFileName("") == "Unishade",
+                "no dots in front, and a name when nothing is left");
+    const std::string longTitle = std::string(79, 'a') + "\xC3\xA9" + std::string(20, 'b');
+    ok &= Check(SafeFileName(longTitle) == std::string(79, 'a'), "shortens long titles without cutting a character in half");
+
+    // The pictures folder from user-dirs.dirs.
+    const std::string userDirs = "# written by xdg-user-dirs-update\nXDG_DESKTOP_DIR=\"$HOME/Desktop\"\nXDG_PICTURES_DIR=\"$HOME/Bilder\"\n";
+    ok &= Check(UserDirectory(userDirs, "XDG_PICTURES_DIR", "/home/a") == "/home/a/Bilder", "reads a folder in the home folder");
+    ok &= Check(UserDirectory("XDG_PICTURES_DIR=\"/data/My \\\"Pictures\\\"\"\n", "XDG_PICTURES_DIR", "/home/a") == "/data/My \"Pictures\"",
+                "reads an absolute folder with escaped quotes");
+    ok &= Check(UserDirectory("XDG_PICTURES_DIR=\"$HOME/\"\n", "XDG_PICTURES_DIR", "/home/a").empty() &&
+                    UserDirectory(userDirs, "XDG_MUSIC_DIR", "/home/a").empty() && UserDirectory("XDG_PICTURES_DIR=\"Pictures\"", "XDG_PICTURES_DIR", "/home/a").empty(),
+                "no folder when it is turned off, missing or not a path");
+
+    // Notices keep the last 40, each message once.
+    for (int i = 0; i < 50; ++i)
+        Report(LogLevel::Info, "Notice %d", i);
+    Report(LogLevel::Warning, "Notice %d", 49);
+    const std::vector<Notice> notices = Notices();
+    ok &= Check(notices.size() == 40 && notices.front().text == "Notice 10" && notices.back().text == "Notice 49", "keeps the last 40 notices once each");
+
+    // SHA-256, from the standard's own examples.
+    ok &= Check(Sha256("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "hashes nothing");
+    ok &= Check(Sha256("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "hashes abc");
+    ok &= Check(Sha256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") ==
+                    "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+                "hashes across two blocks");
+    ok &= Check(Sha256(std::string(1000, 'a')).size() == 64, "hashes long input");
+
+    // Game windows above the normal layer, as Wine puts full-screen games, without the system's own windows.
+    using namespace window_rules;
+    constexpr int kShielding = 2147483628;
+    ok &= Check(GameLayer(0, false, kShielding) && GameLayer(0, true, kShielding), "the normal layer always counts");
+    ok &= Check(GameLayer(26, true, kShielding) && GameLayer(3, true, kShielding) && GameLayer(21, true, kShielding) &&
+                    GameLayer(kShielding + 1, true, kShielding),
+                "Wine's full-screen, topmost and captured-display layers count for a regular program");
+    ok &= Check(!GameLayer(20, false, kShielding) && !GameLayer(24, false, kShielding) && !GameLayer(25, false, kShielding),
+                "the Dock, the menu bar and status items do not");
+    ok &= Check(!GameLayer(101, true, kShielding) && !GameLayer(1000, true, kShielding) && !GameLayer(-20, true, kShielding),
+                "menus, the screen saver and layers below the desktop do not");
+
+    // Covering a screen, with and without a camera housing.
+    const Box screen{ 0, 0, 1470, 956 };
+    ok &= Check(CoversScreen({ 0, 0, 1470, 956 }, screen, 32, 33) && CoversScreen({ 0, 32, 1470, 924 }, screen, 32, 33), "full screen, below the camera too");
+    ok &= Check(!CoversScreen({ 0, 33, 1470, 923 }, screen, 32, 33), "a zoomed window below the menu bar does not cover the screen");
+    ok &= Check(CoversScreen({ 0, 33, 1470, 923 }, screen, 32, 33, false), "the same window in a full-screen Space, which has no Dock, does");
+    ok &= Check(!CoversScreen({ 0, 34, 1470, 922 }, screen, 32, 33, false) && !CoversScreen({ 0, 33, 1470, 848 }, screen, 32, 33, false),
+                "without a Dock a window still has to reach from the menu bar to the bottom");
+    ok &= Check(!CoversScreen({ 0, 32, 1470, 924 }, screen, 32, 32) && !CoversScreen({ 0, 24, 1470, 932 }, screen, 32, 24),
+                "nor where the menu bar is no taller than the camera housing");
+    ok &= Check(CoversScreen({ 0, 32, 1470, 924 }, screen, 32, 0), "with the menu bar hidden, the camera housing still counts");
+    ok &= Check(!CoversScreen({ 0, 33, 1470, 848 }, screen, 0, 25) && !CoversScreen({ 10, 0, 1460, 956 }, screen, 0, 25), "nor does a smaller window");
+    ok &= Check(CoversScreen({ 1470, -200, 1920, 1080 }, { 1470, -200, 1920, 1080 }, 0, 25), "on a second screen");
+
+    // The window's part of a frame never takes pixels from outside it.
+    Crop crop = ContentCrop(2000, 1000, { 0, 0, 1000, 500 }, 2, 0);
+    ok &= Check(crop.x == 0 && crop.y == 0 && crop.width == 2000 && crop.height == 1000, "a whole frame stays whole");
+    crop = ContentCrop(2000, 1000, { 0.3, 0.3, 500, 400 }, 2, 0);
+    ok &= Check(crop.x == 1 && crop.y == 1 && crop.width == 999 && crop.height == 799, "edges round inward");
+    crop = ContentCrop(1000, 600, { 0, 0, 999.9, 599.9 }, 1.5, 0);
+    ok &= Check(crop.width == 1000 && crop.height == 600, "and stay inside the frame");
+    crop = ContentCrop(2000, 1000, { 0, 0, 1000, 500 }, 2, TitleRows(32, 2));
+    ok &= Check(crop.y == 64 && crop.height == 936 && crop.width == 2000, "the title bar's rows are dropped");
+    ok &= Check(TitleRows(28, 1.5) == 42 && TitleRows(28, 0.999) == 28 && TitleRows(0, 2) == 0, "title bar rows round up");
+    crop = ContentCrop(100, 40, { 0, 0, 100, 40 }, 1, 64);
+    ok &= Check(crop.y == 0 && crop.height == 40, "a frame no taller than the title bar keeps its rows");
+
+    // The SDK a program was built with, which decides its windows' look on macOS 26.
+    std::vector<uint8_t> fat;
+    Put(fat, 0, 0xCAFEBABE, true);
+    Put(fat, 4, 2, true);
+    Put(fat, 8, 0x01000007, true); // x86_64 at 64
+    Put(fat, 16, 64, true);
+    Put(fat, 28, 0x0100000C, true); // arm64 at 256
+    Put(fat, 36, 256, true);
+    PutSlice(fat, 64, 0x01000007, 0x000E0000);
+    PutSlice(fat, 256, 0x0100000C, 0x001A0100);
+    ok &= Check(macho::SdkMajor(fat) == 26, "a fat file is read for its arm64 slice");
+    Put(fat, 28, 0x00000012, true);
+    ok &= Check(macho::SdkMajor(fat) == 14, "or its x86_64 slice without one");
+    std::vector<uint8_t> thin;
+    PutSlice(thin, 0, 0x0100000C, 0x000A0E00, true);
+    ok &= Check(macho::SdkMajor(thin) == 10, "an old program says its SDK in LC_VERSION_MIN_MACOSX");
+    ok &= Check(macho::SdkMajor(std::vector<uint8_t>(fat.begin(), fat.begin() + 40)) == 0 && macho::SdkMajor({ 0x7F, 'E', 'L', 'F', 2, 1, 1, 0 }) == 0 &&
+                    macho::SdkMajorOfFile("/nonexistent/program") == 0,
+                "a cut, foreign or missing file has no SDK");
+#ifdef __APPLE__
+    ok &= Check(macho::SdkMajorOfFile(argv[0]) >= 13, "reads this test's own SDK");
+#endif
+
+    std::printf(ok ? "All tests passed.\n" : "Some tests failed.\n");
+    return ok ? 0 : 1;
+}

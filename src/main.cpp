@@ -1,624 +1,494 @@
-// Unishade redraws the target game window in its own D3D11 swapchain, so ReShade can be
-// installed on this exe. The game is only observed from outside, through window
-// enumeration, executable metadata and Windows.Graphics.Capture. No game memory is read or code injected.
+// Unishade redraws the game's window with ReShade effects in a window of its own over the game, the same on
+// Windows, macOS and Linux. The game is only observed from outside, through its window and Windows.Graphics.Capture,
+// ScreenCaptureKit or XComposite. No game memory is read and no code is injected.
 
-#include "addon.h"
-#include "capture.h"
-#include "config.h"
-#include "depth/depth.h"
-#include "discord.h"
-#include "frame_limit.h"
-#include "launcher.h"
-#include "log.h"
-#include "menu.h"
-#include "names.h"
-#include "overlay.h"
-#include "reshade_config.h"
-#include "game_integration.h"
-#include "setup_check.h"
-#include "state.h"
-#include "update.h"
+#include "app/app.h"
+#include "app/log.h"
+#include "effects/uimask.h"
+#include "setup/setup.h"
+
+// Before GLFW's header, which otherwise defines APIENTRY itself.
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
+#include <GLFW/glfw3.h>
+#include <stb_image.h>
+#include <stb_image_write.h>
 
 #include <algorithm>
-#include <psapi.h>
-#include <map>
+#include <cerrno>
+#include <chrono>
+#include <csignal>
+#include <cstdio>
+#include <cstring>
+#include <mutex>
 #include <optional>
 #include <thread>
-#include <utility>
-#include <vector>
-
-State g;
 
 namespace
 {
-// While nothing is attached, every window is looked at this often. While a game is attached, only the window in front.
-constexpr ULONGLONG kSearchInterval = 1000;
-// A capture that fails to start is tried again after this, doubling each time up to kMaxCaptureRetry.
-constexpr ULONGLONG kFirstCaptureRetry = 2000;
-constexpr ULONGLONG kMaxCaptureRetry = 30000;
-// The same frame is shown again this often, so toasts and hints still change over a paused game.
-constexpr ULONGLONG kRepeatInterval = 100;
-// After a shortcut, frames are shown on every wake-up for this long, so what it changed shows right away.
-constexpr ULONGLONG kShortcutResponse = 1000;
-constexpr ULONGLONG kRefreshReadInterval = 1000;
-// Recovery from a lost graphics device gives up after this many losses within kLossWindow, well before Windows stops
-// resetting a GPU that keeps hanging, or after failing to make a new device for kDeviceRetryLimit. A new device is
-// made kDeviceRetryInterval after a loss or a failed attempt, since a GPU reset can take a moment.
-constexpr size_t kMaxLosses = 3;
-constexpr ULONGLONG kLossWindow = 60000;
-constexpr ULONGLONG kDeviceRetryLimit = 30000;
-constexpr ULONGLONG kDeviceRetryInterval = 1000;
-
-struct CaptureRetry
+// Settings, effects and the log need a home folder.
+bool HaveDataDirectory()
 {
-    ULONGLONG at = 0;
-    ULONGLONG delay = 0;
-    unsigned failures = 0;
-};
-
-struct Loop
-{
-    ULONGLONG nextSearch = 0;
-    HWND lastForeground = nullptr;
-    HWND lastTarget = nullptr;
-    std::map<HWND, CaptureRetry> captureRetries;
-
-    ULONGLONG nextRepeat = 0;
-    ULONGLONG fastUntil = 0;
-    FrameLimit frameLimit;
-    // Holds presents that no new frame caused to the refresh rate of the overlay's monitor, read again every
-    // kRefreshReadInterval or when the overlay moves to another monitor.
-    FrameLimit refreshLimit;
-    HMONITOR refreshMonitor = nullptr;
-    ULONGLONG nextRefreshRead = 0;
-    int64_t refreshInterval = 1'000'000'000 / 60;
-    bool presentPending = false;
-    bool wasInteractive = false;
-    bool wasVisible = false;
-
-    // The game to attach to again once a new device is made.
-    std::optional<GameWindow> reattach;
-    std::vector<ULONGLONG> losses;
-    ULONGLONG deviceRetryAt = 0;
-    ULONGLONG deviceFailingSince = 0;
-};
-Loop loop;
-
-void LogState()
-{
-    LogReShadeDiagnostics();
-    PROCESS_MEMORY_COUNTERS memory{ sizeof(memory) };
-    GetProcessMemoryInfo(GetCurrentProcess(), &memory, sizeof(memory));
-    const HWND foreground = GetForegroundWindow();
-    DWORD foregroundPid = 0;
-    GetWindowThreadProcessId(foreground, &foregroundPid);
-    const auto& fps = g.frameStatistics;
-    Log(LogLevel::Info, L"State: target=%p, selected=%p, foreground=%p, foreground_pid=%lu, capture=%d, visible=%d, menu=%d, frame=%d, pool=%dx%d, captured=%llu, "
-                       L"capture_fps=%.1f, submitted_fps=%.1f, fresh_submitted_fps=%.1f, cpu_ms=%.2f, cpu_peak_ms=%.2f, "
-                       L"effects_loading=%d, effects_compiling=%d, depth=%d, fps_limit=%d, effect_resolution=%d%%, "
-                       L"working_set=%zu MB, peak_working_set=%zu MB.",
-        g.target, g.selectedGame ? g.selectedGame->window : nullptr, foreground, foregroundPid,
-        g.captureEnabled, g.overlayVisible, g.editMode, static_cast<bool>(g.latestFrame), g.poolSize.Width, g.poolSize.Height,
-        g.capturedFrames.load(std::memory_order_relaxed), fps.captureFps, fps.programFps, fps.freshFps, fps.processingMs, fps.peakProcessingMs,
-        ReShadeLoadingEffects(), ReShadeCompilingEffects(), DepthEnabled(), FrameRateLimit(), EffectResolution(),
-        memory.WorkingSetSize / (1024 * 1024), memory.PeakWorkingSetSize / (1024 * 1024));
-    LogFrameTimings();
-    LogGraphicsMemory();
-    LogDepthDiagnostics();
-}
-
-void ShowError(const std::wstring& message)
-{
-    MessageBoxW(g.launcher, (message + L"\n\nMore details are in " + LogPath() + L".").c_str(), L"Unishade", MB_ICONERROR);
-}
-
-// A damaged list is kept beside it, since the next change to the list replaces the file.
-void LoadGames()
-{
-    const std::wstring path = ExeDirectory() + L"games.ini";
-    try
-    {
-        g.autoGames = LoadAutoGames(path);
-    }
-    catch (const std::exception& e)
-    {
-        g.autoGames = DefaultAutoGames();
-        if (CopyFileW(path.c_str(), (path + L".damaged").c_str(), FALSE))
-            Report(LogLevel::Warning, L"Your saved games could not be loaded (%hs), so Unishade is using the default list. The old list "
-                                      L"was kept as games.ini.damaged.",
-                   e.what());
-        else
-            Report(LogLevel::Warning, L"Your saved games could not be loaded (%hs), so Unishade is using the default list. Changing "
-                                      L"the list replaces games.ini.",
-                   e.what());
-    }
-    for (const AutoGame& game : g.autoGames)
-        Log(LogLevel::Info, L"Saved game: %ls, executable=%ls, enabled=%d.", game.name.c_str(), game.executable.c_str(), game.enabled);
-}
-
-void GiveUpOnDevice(const wchar_t* reason)
-{
-    g.captureEnabled = false;
-    loop.reattach.reset();
-    loop.losses.clear();
-    loop.deviceRetryAt = 0;
-    loop.deviceFailingSince = 0;
-    const std::wstring retry = g.overlayHotkey.empty() ? L"restart Unishade" : L"press " + g.overlayHotkey + L" or restart Unishade";
-    Report(LogLevel::Error, L"%ls, so Unishade turned the overlay off. Update the graphics driver, then %ls.", reason, retry.c_str());
-}
-
-// After a driver update, a GPU reset or a switch to another GPU, everything made on the device is released and capture
-// starts again on a new device with the same game.
-void OnDeviceLost(HRESULT error)
-{
-    const HRESULT reason = g.device ? g.device->GetDeviceRemovedReason() : S_OK;
-    Log(LogLevel::Warning, L"Lost the graphics device (0x%08X, reason 0x%08X). Starting again on a new one.", static_cast<unsigned>(error),
-        static_cast<unsigned>(reason));
-    LogState();
-    const HWND game = g.target;
-    const bool editing = g.editMode;
-    loop.reattach = g.activeGame;
-    ReleaseDevice();
-    // The menu closed with the swapchain, so input goes back to the game.
-    if (editing && game)
-        SetForegroundWindow(game);
-
-    const ULONGLONG now = GetTickCount64();
-    std::erase_if(loop.losses, [now](ULONGLONG at) { return now - at >= kLossWindow; });
-    loop.losses.push_back(now);
-    loop.deviceRetryAt = now + kDeviceRetryInterval;
-    if (loop.losses.size() >= kMaxLosses)
-        GiveUpOnDevice(L"The graphics device was lost several times in a minute");
-}
-
-// Makes a new device once the previous one was lost. Returns whether there is a device.
-bool EnsureDevice()
-{
-    if (g.device)
+    if (!DataDirectory().empty())
         return true;
-    const ULONGLONG now = GetTickCount64();
-    if (now < loop.deviceRetryAt)
+    fprintf(stderr, "Unishade cannot find your home folder. Set HOME and try again.\n");
+    return false;
+}
+
+// Ctrl-C, kill and logging out end Unishade the same way closing the launcher does, so App::Shutdown still saves
+// the preset and the pipeline cache and stops a download.
+volatile sig_atomic_t stopSignal = 0;
+
+// The launcher a stop signal closes. Never destroyed, since the thread that uses it may still wait while the
+// process exits.
+struct QuitRequest
+{
+    std::mutex mutex;
+    GLFWwindow* window = nullptr;
+    bool requested = false;
+};
+QuitRequest& quitRequest = *new QuitRequest;
+
+void RequestQuit()
+{
+    std::lock_guard lock(quitRequest.mutex);
+    quitRequest.requested = true;
+    if (quitRequest.window)
+    {
+        glfwSetWindowShouldClose(quitRequest.window, GLFW_TRUE);
+        glfwPostEmptyEvent();
+    }
+}
+
+#ifdef _WIN32
+// Windows tells a console program of Ctrl-C and of its console closing on a thread of its own, which may call GLFW.
+BOOL WINAPI OnConsoleControl(DWORD)
+{
+    stopSignal = SIGINT;
+    RequestQuit();
+    return TRUE;
+}
+
+void CatchStopSignals()
+{
+    SetConsoleCtrlHandler(OnConsoleControl, TRUE);
+}
+
+bool WatchStopSignals()
+{
+    CatchStopSignals();
+    return true;
+}
+#else
+constexpr int kStopSignals[] = { SIGINT, SIGTERM, SIGHUP };
+int signalPipe[2] = { -1, -1 };
+
+void OnStopSignal(int signal)
+{
+    const int savedErrno = errno;
+    // A second signal ends Unishade at once, in case quitting is stuck.
+    struct sigaction fallback{};
+    fallback.sa_handler = SIG_DFL;
+    sigemptyset(&fallback.sa_mask);
+    for (int stop : kStopSignals)
+        sigaction(stop, &fallback, nullptr);
+    stopSignal = signal;
+    if (signalPipe[1] >= 0)
+    {
+        const unsigned char byte = static_cast<unsigned char>(signal);
+        [[maybe_unused]] const ssize_t written = write(signalPipe[1], &byte, 1);
+    }
+    errno = savedErrno;
+}
+
+// A signal the shell set to be ignored, such as SIGHUP under nohup, stays ignored. A handler, unlike a blocked
+// signal, is not passed on to the programs Unishade starts.
+void CatchStopSignals()
+{
+    struct sigaction action{};
+    action.sa_handler = OnStopSignal;
+    action.sa_flags = SA_RESTART;
+    sigemptyset(&action.sa_mask);
+    for (int stop : kStopSignals)
+    {
+        struct sigaction previous{};
+        if (sigaction(stop, nullptr, &previous) == 0 && previous.sa_handler != SIG_IGN)
+            sigaction(stop, &action, nullptr);
+    }
+}
+
+// Turns a stop signal into a request to close the launcher, from a thread of its own, since a signal handler may
+// not call GLFW. The thread is detached and only waits, so it does not keep the process alive.
+bool WatchStopSignals()
+{
+    if (pipe(signalPipe) != 0)
         return false;
-    try
-    {
-        CreateDevice();
-        loop.deviceFailingSince = 0;
-        Log(LogLevel::Info, L"Made a new graphics device.");
-        return true;
-    }
-    catch (const winrt::hresult_error& e)
-    {
-        Log(LogLevel::Info, L"Device recovery failed: %ls (0x%08X), failing_for=%llu ms.", e.message().c_str(),
-            static_cast<unsigned>(e.code()), loop.deviceFailingSince ? now - loop.deviceFailingSince : 0);
-        if (!loop.deviceFailingSince)
-        {
-            loop.deviceFailingSince = now;
-            Log(LogLevel::Warning, L"Could not make a new graphics device: %ls (0x%08X). Trying again.", e.message().c_str(),
-                static_cast<unsigned>(e.code()));
-        }
-        else if (now - loop.deviceFailingSince >= kDeviceRetryLimit)
-        {
-            GiveUpOnDevice(L"The graphics device could not be made again after it was lost");
-            return false;
-        }
-        loop.deviceRetryAt = now + kDeviceRetryInterval;
-        return false;
-    }
+    for (int fd : signalPipe)
+        fcntl(fd, F_SETFD, FD_CLOEXEC);
+    // The handler must never block on a full pipe. One byte is enough anyway.
+    fcntl(signalPipe[1], F_SETFL, fcntl(signalPipe[1], F_GETFL) | O_NONBLOCK);
+    std::thread([] {
+        unsigned char byte = 0;
+        ssize_t count;
+        while ((count = read(signalPipe[0], &byte, 1)) < 0 && errno == EINTR) {}
+        if (count == 1)
+            RequestQuit();
+    }).detach();
+    CatchStopSignals();
+    return true;
+}
+#endif
+
+// The launcher a stop signal closes, or none once it is about to be destroyed. A signal that came before there was
+// a launcher closes it at once.
+void SetQuitWindow(GLFWwindow* window)
+{
+    std::lock_guard lock(quitRequest.mutex);
+    quitRequest.window = window;
+    if (window && quitRequest.requested)
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
 }
 
-// The saved game a window belongs to, by its presets folder's name, or empty for a window picked for this session only.
-std::wstring SavedGame(const GameWindow& game)
+// --install-effects. A stop signal cancels the download, which also removes its temporary folder.
+int InstallEffects()
 {
-    try
+    CatchStopSignals();
+    EffectSetup setup;
+    setup.Start();
+    std::string last;
+    for (EffectSetup::State state = setup.Read(); state.running && !stopSignal; state = setup.Read())
     {
-        const std::filesystem::path executable = ProcessExecutable(game.processId);
-        for (const AutoGame& saved : g.autoGames)
-            if (MatchesExecutable(saved, executable))
-                return FolderName(saved.name);
-    }
-    catch (const std::system_error&)
-    {
-    }
-    return {};
-}
-
-// A window whose capture fails to start is tried again less and less often, and the failure is logged once.
-void Attach(const GameWindow& game)
-{
-    const ULONGLONG now = GetTickCount64();
-    if (const auto retry = loop.captureRetries.find(game.window); retry != loop.captureRetries.end() && now < retry->second.at)
-        return;
-    if (g.target)
-        StopCapture();
-    g.activeGame = game;
-    Log(LogLevel::Info, L"Attaching: %ls, hwnd=%p, pid=%lu, manual=%d.", game.name.c_str(), game.window, game.processId, g.selectedGame.has_value());
-    try
-    {
-        Log(LogLevel::Info, L"Target executable: %ls.", ProcessExecutable(game.processId).c_str());
-    }
-    catch (const std::system_error& e)
-    {
-        Log(LogLevel::Info, L"Could not query target executable: %hs.", e.what());
-    }
-    try
-    {
-        StartCapture(game.window);
-        SetPerformanceGame(SavedGame(game));
-        loop.captureRetries.erase(game.window);
-    }
-    catch (const winrt::hresult_error& e)
-    {
-        if (DeviceLost(e.code()))
+        const std::string line = state.status + (state.detail.empty() ? "" : " - " + state.detail);
+        // Setup reads these through a pipe as they come.
+        if (line != last)
         {
-            OnDeviceLost(e.code());
-            return;
+            printf("%3d%%  %s\n", int(state.fraction * 100), line.c_str());
+            fflush(stdout);
         }
-        StopCapture();
-        CaptureRetry& retry = loop.captureRetries[game.window];
-        retry.delay = retry.delay ? std::min(retry.delay * 2, kMaxCaptureRetry) : kFirstCaptureRetry;
-        retry.at = now + retry.delay;
-        Log(LogLevel::Info, L"Capture attempt failed: hwnd=%p, attempt=%u, retry_in=%llu ms, error=0x%08X, %ls.", game.window,
-            retry.failures + 1, retry.delay, static_cast<unsigned>(e.code()), e.message().c_str());
-        if (++retry.failures == 1)
-            Log(LogLevel::Error, L"Could not capture %ls: %ls (0x%08X)", game.name.c_str(), e.message().c_str(), static_cast<unsigned>(e.code()));
-        else if (retry.failures == 2)
-            Log(LogLevel::Info, L"Still could not capture %ls. Trying again less often, up to every %llu seconds.", game.name.c_str(),
-                kMaxCaptureRetry / 1000);
+        last = line;
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
-}
-
-// Looks at every window only while nothing is attached. An attached game in front needs no search, and another saved
-// game coming to the front takes over, so only the window in front is checked then.
-void SearchForGame()
-{
-    // A game that was let go of may be followed by another right away.
-    if (!g.target && loop.lastTarget)
-        loop.nextSearch = 0;
-    loop.lastTarget = g.target;
-    const HWND foreground = GetForegroundWindow();
-    const bool foregroundChanged = foreground != loop.lastForeground;
-    loop.lastForeground = foreground;
-    if (g.target && (g.selectedGame || g.editMode))
-        return;
-
-    const ULONGLONG now = GetTickCount64();
-    std::optional<GameWindow> game;
-    if (!g.target && g.selectedGame)
-        game = FindGameTarget(g.selectedGame, g.autoGames);
-    else if (!g.target)
+    // Waits for the setup thread, and stops it first after a signal.
+    setup.Cancel();
+    const EffectSetup::State state = setup.Read();
+    if (stopSignal)
     {
-        if (foregroundChanged)
-            game = MatchGameWindow(foreground, g.autoGames);
-        if (!game && now >= loop.nextSearch)
-        {
-            loop.nextSearch = now + kSearchInterval;
-            std::erase_if(loop.captureRetries, [](const auto& retry) { return !IsWindow(retry.first); });
-            game = FindGameTarget(std::nullopt, g.autoGames, foreground);
-        }
+        Log(LogLevel::Info, "Signal %d received. The install was cancelled.", int(stopSignal));
+        fprintf(stderr, "Cancelled.\n");
+        return 128 + stopSignal;
     }
-    else if (foreground != g.target && (foregroundChanged || now >= loop.nextSearch))
+    for (const std::string& note : state.notes)
+        printf("Skipped %s\n", note.c_str());
+    if (!state.error.empty())
     {
-        loop.nextSearch = now + kSearchInterval;
-        game = MatchGameWindow(foreground, g.autoGames);
-    }
-    if (game && game->window != g.target)
-        Attach(*game);
-}
-
-// The time between refreshes of the overlay's monitor in nanoseconds, or of 60 Hz when Windows does not say.
-int64_t RefreshInterval(ULONGLONG now)
-{
-    const HMONITOR monitor = MonitorFromWindow(g.overlay, MONITOR_DEFAULTTONEAREST);
-    if (monitor == loop.refreshMonitor && now < loop.nextRefreshRead)
-        return loop.refreshInterval;
-    loop.refreshMonitor = monitor;
-    loop.nextRefreshRead = now + kRefreshReadInterval;
-    MONITORINFOEXW info{};
-    info.cbSize = sizeof(info);
-    DEVMODEW mode{};
-    mode.dmSize = sizeof(mode);
-    // 0 and 1 stand for the hardware's default rate.
-    DWORD hertz = 60;
-    if (GetMonitorInfoW(monitor, &info) && EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1)
-        hertz = mode.dmDisplayFrequency;
-    loop.refreshInterval = 1'000'000'000 / static_cast<int64_t>(hertz);
-    return loop.refreshInterval;
-}
-
-// Effects run on every present, so the same picture is not shown over and over: a new frame is shown when it arrives,
-// and frames are shown on every wake-up only while the menu takes input, ReShade makes effects or a shortcut was just
-// used, though no faster than the monitor refreshes. Otherwise the last frame is shown again every kRepeatInterval.
-void ShowFrames()
-{
-    UpdateHdr();
-
-    // Only the newest frame matters. The capture worker keeps it, and the one shown before goes back to the pool.
-    bool fresh = false;
-    {
-        const std::lock_guard lock(g.frameMutex);
-        if (g.arrivedFrame)
-        {
-            g.latestFrame = std::move(g.arrivedFrame);
-            fresh = true;
-        }
-    }
-
-    if (g.latestFrame)
-    {
-        SizeInt32 size = g.latestFrame.ContentSize();
-        if ((size.Width != g.poolSize.Width || size.Height != g.poolSize.Height) && size.Width > 0 && size.Height > 0)
-        {
-            g.latestFrame = nullptr;
-            {
-                const std::lock_guard lock(g.frameMutex);
-                g.arrivedFrame = nullptr;
-            }
-            g.poolSize = size;
-            g.pool.Recreate(g.captureDevice, g.hdrWhiteLevel ? kHdrPixelFormat : kPixelFormat, kFrameBuffers, size);
-            Log(LogLevel::Info, L"%ls resized to %dx%d", g.activeGame->name.c_str(), size.Width, size.Height);
-        }
-    }
-
-    // Opening or closing a menu and showing the overlay change the picture without a new frame.
-    const bool interactive = g.editMode || ReShadeMenuOpen();
-    if (fresh || interactive != loop.wasInteractive || (g.overlayVisible && !loop.wasVisible))
-        loop.presentPending = true;
-    loop.wasInteractive = interactive;
-    loop.wasVisible = g.overlayVisible;
-    if (!g.overlayVisible || !g.latestFrame)
-        return;
-
-    const ULONGLONG now = GetTickCount64();
-    const bool due = fresh || loop.presentPending || now >= loop.nextRepeat;
-    if (due || interactive || ReShadeLoadingEffects() || now < loop.fastUntil)
-    {
-        // Only advance the FPS schedule after submission. GPU capacity may hold this frame back too.
-        const int limit = FrameRateLimit();
-        const int64_t time = std::chrono::duration_cast<std::chrono::nanoseconds>(FrameStatistics::Clock::now().time_since_epoch()).count();
-        const int64_t interval = limit ? 1'000'000'000 / limit : 0;
-        // Mouse messages wake the loop all the time while the menu is open, which would run the effects as fast as the
-        // GPU allows. Up to half a refresh early counts as on time, so a held present is ready again by the next
-        // wake-up, at most 16 ms later, and while nothing else wakes the loop, presents keep that pace as before.
-        const int64_t refresh = RefreshInterval(now);
-        if (!due && !loop.refreshLimit.Ready(time, refresh))
-            return;
-        if (limit && !loop.frameLimit.Ready(time, interval))
-            return;
-        if (!PresentLatestFrame())
-            return;
-        if (limit)
-            loop.frameLimit.Allow(time, interval);
-        // A new frame shown early still counts, so the next present without one waits for the refresh after it.
-        loop.refreshLimit.Allow(time, refresh);
-        loop.presentPending = false;
-        loop.nextRepeat = now + kRepeatInterval;
-    }
-}
-
-int Run()
-{
-    Log(LogLevel::Info, L"Checking Windows Graphics Capture support.");
-    if (!GraphicsCaptureSession::IsSupported())
-    {
-        const wchar_t* message = L"Windows Graphics Capture is not available, and Unishade needs it to copy the game's picture. "
-                                 L"Update Windows and your graphics driver.";
-        Log(LogLevel::Error, L"%ls", message);
-        ShowError(message);
+        fprintf(stderr, "%s\n", state.error.c_str());
         return 1;
     }
-    RequestBorderlessCapture();
+    printf("%s\n", state.status.c_str());
+    return 0;
+}
 
-    LoadInputHotkeys();
-    LoadGames();
-    if (ReShadeLoaded())
-        PrepareReShadeConfig();
-    CreateOverlayWindow();
-    InitAddon();
-    InitMenu();
-    g.frameEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-    winrt::check_bool(g.frameEvent != nullptr);
-    CreateDevice();
-    const std::jthread frameMonitor(MonitorFrames);
-    CheckSetup();
-    InitDepth();
-    RegisterHotkeys();
-    CheckForUpdate();
-    CreateLauncher();
-    Log(LogLevel::Info, L"Waiting for a supported game...");
+void Usage()
+{
+    printf("Unishade %s\n\n"
+           "  unishade                      Starts the launcher.\n"
+           "  unishade --install-effects    Downloads effects and presets into %s.\n"
+           "  unishade --render IN.png PRESET.ini OUT.png [--gpu-source] [--mask X,Y,WIDTH,HEIGHT]...\n"
+           "                                Applies a preset to an image without a window, to check effects.\n"
+           "                                --gpu-source hands the image over on the graphics card, as zero-copy\n"
+           "                                capture does. --mask keeps a part of the image out of effects, as the\n"
+           "                                game's interface, in fractions of its size.\n",
+           UNISHADE_VERSION, DataDirectory().string().c_str());
+}
 
-    ULONGLONG nextStateLog = GetTickCount64();
-
-    for (;;)
+// Applies a preset to an image with the same code the overlay uses, without any window. gpuSource hands the
+// picture over the way zero-copy capture does: from an image on the graphics card, at an offset inside it.
+int Render(const char* input, const char* preset, const char* output, bool gpuSource, const std::vector<uimask::Rect>& mask)
+{
+    uimask::Set(mask);
+    std::string error;
+    if (!gpu.Init(true, error))
     {
-        MSG msg;
-        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
+        fprintf(stderr, "%s\n", error.c_str());
+        return 1;
+    }
+    int width = 0, height = 0, channels = 0;
+    stbi_uc* rgba = stbi_load(input, &width, &height, &channels, 4);
+    if (!rgba)
+    {
+        fprintf(stderr, "Could not read %s.\n", input);
+        return 1;
+    }
+    std::vector<uint32_t> pixels(size_t(width) * height);
+    for (size_t i = 0; i < pixels.size(); ++i)
+        pixels[i] = 0xFF000000u | uint32_t(rgba[i * 4]) << 16 | uint32_t(rgba[i * 4 + 1]) << 8 | rgba[i * 4 + 2];
+    stbi_image_free(rgba);
+
+    fx::Runtime runtime;
+    if (!runtime.Init(LoadSettings()))
+        return 1;
+    runtime.LoadPreset(fs::absolute(preset));
+    runtime.SetSize(width, height);
+    while (runtime.Loading())
+    {
+        runtime.Update();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    runtime.Update();
+    int failed = 0;
+    for (const std::string& missing : runtime.MissingTechniques())
+    {
+        fprintf(stderr, "Missing: %s\n", missing.c_str());
+        ++failed;
+    }
+    fx::Runtime::Source source{ pixels.data() };
+    GpuImage sourceImage;
+    GpuBuffer upload;
+    if (gpuSource)
+    {
+        constexpr uint32_t kX = 7, kY = 3;
+        if (!gpu.CreateImage(sourceImage, width + 16, height + 8, 1, VK_FORMAT_B8G8R8A8_UNORM,
+                             VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) ||
+            !gpu.CreateBuffer(upload, pixels.size() * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true))
+            return 1;
+        std::memcpy(upload.mapped, pixels.data(), pixels.size() * 4);
+        VkCommandBuffer commands = gpu.BeginCommands();
+        if (!commands)
         {
-            if (msg.message == WM_QUIT)
-            {
-                Log(LogLevel::Info, L"Shutdown requested. Saving presets and stopping depth and the launcher.");
-                FlushPresets();
-                ShutdownDepth();
-                ShutdownAddon();
-                DestroyLauncher();
-                return 0;
-            }
-            if (msg.message == WM_HOTKEY)
-                loop.fastUntil = GetTickCount64() + kShortcutResponse;
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+            fprintf(stderr, "The graphics card is out of memory.\n");
+            return 1;
         }
-
-        if (!g.captureEnabled && g.target)
-            StopCapture();
-
-        if (g.target && !GameWindowExists(*g.activeGame))
+        InitLayout(commands, sourceImage);
+        // Something else around the picture, which must not end up in it.
+        VkClearColorValue magenta{};
+        magenta.float32[0] = magenta.float32[2] = magenta.float32[3] = 1.0f;
+        const VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        vkCmdClearColorImage(commands, sourceImage.image, VK_IMAGE_LAYOUT_GENERAL, &magenta, 1, &range);
+        FullBarrier(commands);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        copy.imageOffset = { int32_t(kX), int32_t(kY), 0 };
+        copy.imageExtent = { uint32_t(width), uint32_t(height), 1 };
+        vkCmdCopyBufferToImage(commands, upload.buffer, sourceImage.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+        if (!gpu.SubmitAndWait(commands))
         {
-            Log(LogLevel::Info, L"%ls closed.", g.activeGame->name.c_str());
-            StopCapture();
+            fprintf(stderr, "Could not hand %s to the graphics card.\n", input);
+            return 1;
         }
-
-        if (g.captureEnabled && EnsureDevice())
+        source = { nullptr, sourceImage.image, kX, kY, false };
+    }
+    // A few frames, so effects that build on earlier frames settle.
+    for (int frame = 0; frame < 3; ++frame)
+    {
+        VkCommandBuffer commands = gpu.BeginCommands();
+        if (!commands)
         {
-            if (loop.reattach)
-            {
-                const GameWindow game = *loop.reattach;
-                loop.reattach.reset();
-                if (!g.target && GameWindowExists(game) && (!g.selectedGame || g.selectedGame->window == game.window))
-                    Attach(game);
-            }
-            SearchForGame();
+            fprintf(stderr, "The graphics card is out of memory.\n");
+            return 1;
         }
-
-        UpdateOverlay();
-        if (!g.overlayVisible)
+        runtime.Render(commands, source, true);
+        if (!gpu.SubmitAndWait(commands))
         {
-            g.frameStatistics.Reset(FrameStatistics::Clock::now(), g.capturedFrames.load(std::memory_order_relaxed));
-            // ReShade writes preset changes from its present, which stops while the overlay is hidden.
-            FlushPresets();
-        }
-        UpdateInputHotkey();
-        UpdateHeldCompare();
-        UpdateDiscord();
-        UpdateLauncher();
-
-        if (const ULONGLONG now = GetTickCount64(); now >= nextStateLog)
-        {
-            LogState();
-            nextStateLog = now + 30000;
-        }
-
-        if (g.target)
-        {
-            try
-            {
-                SetCaptureIdle(!g.overlayVisible);
-                ShowFrames();
-            }
-            catch (const winrt::hresult_error& e)
-            {
-                if (!DeviceLost(e.code()))
-                    throw;
-                OnDeviceLost(e.code());
-            }
-        }
-
-        const HANDLE capacity = g.overlayVisible ? FrameLatencyEvent() : nullptr;
-        const HANDLE events[] = { g.frameEvent, capacity };
-        const DWORD wait = MsgWaitForMultipleObjects(capacity ? 2 : 1, events, FALSE, g.overlayVisible ? 16 : 250, QS_ALLINPUT);
-        if (capacity && wait == WAIT_OBJECT_0 + 1)
-            NotifyFrameReady();
-        if (wait == WAIT_FAILED)
-        {
-            const DWORD error = GetLastError();
-            Log(LogLevel::Error, L"Frame/message wait failed (Windows error %lu).", error);
-            winrt::throw_hresult(HRESULT_FROM_WIN32(error));
+            fprintf(stderr, "The graphics card could not apply %s.\n", preset);
+            return 1;
         }
     }
+    if (gpuSource)
+    {
+        // The picture read back from the source image must be the input, exactly.
+        const std::vector<uint8_t> original = runtime.ReadSource(source);
+        for (size_t i = 0; i < pixels.size(); ++i)
+            if (original[i * 4] != ((pixels[i] >> 16) & 0xFF) || original[i * 4 + 1] != ((pixels[i] >> 8) & 0xFF) ||
+                original[i * 4 + 2] != (pixels[i] & 0xFF))
+            {
+                fprintf(stderr, "The picture read from the source image differs from the input.\n");
+                ++failed;
+                break;
+            }
+    }
+    // Some effects turn a technique on by themselves. The preset did not ask for those, so one that fails is said
+    // without counting against the preset.
+    const std::vector<std::string> chosen = PresetIni::Split(runtime.PresetValue("", "Techniques"));
+    for (const fx::Technique& technique : runtime.Techniques())
+        if (technique.enabled && (!runtime.Effects()[technique.effect].gpu || runtime.Effects()[technique.effect].gpuFailed))
+        {
+            const std::string key = fx::TechniqueKey(technique, runtime.Effects()[technique.effect]);
+            const bool preset = std::any_of(chosen.begin(), chosen.end(), [&](const std::string& entry) {
+                return PresetIni::Same(entry, key) || PresetIni::Same(entry, technique.name);
+            });
+            fprintf(stderr, preset ? "Failed: %s\n" : "Failed, and not in the preset: %s\n", key.c_str());
+            failed += preset ? 1 : 0;
+        }
+    const std::vector<uint8_t> result = runtime.ReadOutput();
+    const bool written = stbi_write_png(output, width, height, 4, result.data(), width * 4);
+    gpu.DestroyImage(sourceImage);
+    gpu.DestroyBuffer(upload);
+    runtime.Shutdown();
+    gpu.Shutdown();
+    if (!written)
+    {
+        fprintf(stderr, "Could not write %s.\n", output);
+        return 1;
+    }
+    return failed ? 1 : 0;
 }
 } // namespace
 
-void PumpFrames() noexcept
+int main(int argc, char** argv)
 {
-    // A present can run ReShade's menu, and anything there that opens a modal loop would call this again.
-    static bool pumping = false;
-    static bool errorLogged = false;
-    if (pumping)
-        return;
-    pumping = true;
-    try
+#ifdef _WIN32
+    // Unishade has no console of its own, so it writes to the one it was started from, unless its output already goes
+    // somewhere.
+    if (GetFileType(GetStdHandle(STD_ERROR_HANDLE)) == FILE_TYPE_UNKNOWN && AttachConsole(ATTACH_PARENT_PROCESS))
     {
-        // A game closed during the modal loop would otherwise stay covered by its last frame until the loop ends.
-        if (g.target && (!g.captureEnabled || !GameWindowExists(*g.activeGame)))
+        freopen("CONOUT$", "w", stdout);
+        freopen("CONOUT$", "w", stderr);
+    }
+#endif
+    bool relaunched = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        // Started by platform::Relaunch, while the Unishade that asked for it quits.
+        if (!strcmp(argv[i], "--relaunch"))
+            relaunched = true;
+        // How Windows starts it at sign-in.
+        else if (!strcmp(argv[i], "--minimized"))
+            app.startMinimized = true;
+        else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h"))
         {
-            if (g.captureEnabled)
-                Log(LogLevel::Info, L"%ls closed.", g.activeGame->name.c_str());
-            StopCapture();
+            Usage();
+            return 0;
         }
-        UpdateOverlay();
-        if (g.target && g.device)
+        if (!strcmp(argv[i], "--version"))
         {
-            try
+            printf("%s\n", UNISHADE_VERSION);
+            return 0;
+        }
+        // Tests replace the download locations, as with Setup on Windows.
+        if (!strcmp(argv[i], "--effects-url") && i + 1 < argc)
+        {
+            setupSources.effects = argv[++i];
+            setupSources.fromCommandLine = true;
+        }
+        else if (!strcmp(argv[i], "--presets-url") && i + 1 < argc)
+        {
+            setupSources.presets = argv[++i];
+            setupSources.fromCommandLine = true;
+        }
+        else if (!strcmp(argv[i], "--install-effects"))
+        {
+            if (!HaveDataDirectory())
+                return 1;
+            // Setup takes a lock of its own, so this cannot mix with an install the launcher runs. The single-instance
+            // lock is the launcher's alone, so the launcher can start while this runs.
+            InitTerminalLog();
+            const int result = InstallEffects();
+            Log(LogLevel::Info, "Session ended: exit_code=%d.", result);
+            FlushLog();
+            return result;
+        }
+        else if (!strcmp(argv[i], "--render"))
+        {
+            if (i + 3 >= argc)
             {
-                SetCaptureIdle(!g.overlayVisible);
-                ShowFrames();
+                Usage();
+                return 2;
             }
-            catch (const winrt::hresult_error& e)
+            if (!HaveDataDirectory())
+                return 1;
+            InitTerminalLog();
+            bool gpuSource = false;
+            std::vector<uimask::Rect> mask;
+            for (int option = i + 4; option < argc; ++option)
             {
-                if (!DeviceLost(e.code()))
-                    throw;
-                OnDeviceLost(e.code());
+                uimask::Rect rect{};
+                if (!strcmp(argv[option], "--gpu-source"))
+                    gpuSource = true;
+                else if (!strcmp(argv[option], "--mask") && option + 1 < argc &&
+                         sscanf(argv[++option], "%f,%f,%f,%f", &rect[0], &rect[1], &rect[2], &rect[3]) == 4)
+                    mask.push_back(rect);
+                else
+                {
+                    Usage();
+                    return 2;
+                }
             }
+            const int result = Render(argv[i + 1], argv[i + 2], argv[i + 3], gpuSource, mask);
+            Log(LogLevel::Info, "Session ended: exit_code=%d.", result);
+            FlushLog();
+            return result;
         }
     }
-    catch (const winrt::hresult_error& e)
+    if (!HaveDataDirectory())
     {
-        if (!std::exchange(errorLogged, true))
-            Log(LogLevel::Error, L"Could not show frames during a modal loop: %ls (0x%08X).", e.message().c_str(), static_cast<unsigned>(e.code()));
+        platform::ShowStartupError("Unishade cannot find your home folder.");
+        return 1;
     }
-    catch (const std::exception& e)
-    {
-        if (!std::exchange(errorLogged, true))
-            Log(LogLevel::Error, L"Could not show frames during a modal loop: %hs", e.what());
-    }
-    catch (...)
-    {
-        if (!std::exchange(errorLogged, true))
-            Log(LogLevel::Error, L"Could not show frames during a modal loop because of an unknown exception.");
-    }
-    pumping = false;
-}
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
-{
-    // Keep the original mutex name so old and new hosts cannot run together.
-    const HANDLE instance = CreateMutexW(nullptr, TRUE, L"Local\\RobloxShadeHost");
-    if (GetLastError() == ERROR_ALREADY_EXISTS)
+    // One host at a time, like the mutex on Windows. A restarted one waits a few seconds for the one before it to quit.
+    const fs::path lockPath = DataDirectory() / "unishade.lock";
+    std::optional<FileLock> instance;
+    instance.emplace(lockPath);
+    for (int wait = 0; relaunched && instance->Busy() && wait < 100; ++wait)
     {
-        // From the taskbar, or from the notification area, where it waits as it was, maximized or not.
-        if (const HWND other = FindWindowW(kLauncherClass, nullptr))
-        {
-            ShowWindow(other, IsIconic(other) ? SW_RESTORE : SW_SHOW);
-            SetForegroundWindow(other);
-        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        instance.emplace(lockPath);
+    }
+    if (instance->Busy())
+    {
+        fprintf(stderr, "Unishade is already running.\n");
+        platform::ShowAlreadyRunning();
         return 0;
     }
 
     InitLog();
-    int result = 1;
-    try
+    // Where locks do not work, such as on some network file systems, a second Unishade cannot be told apart.
+    if (!instance->Locked())
+        Log(LogLevel::Warning, "Could not lock %s: %s.", lockPath.string().c_str(), instance->Error().c_str());
+    glfwSetErrorCallback([](int code, const char* description) { Log(LogLevel::Warning, "GLFW error %d: %s", code, description); });
+#if !defined(__APPLE__) && !defined(_WIN32)
+    // Only X11 lets the overlay sit over another program's window.
+    glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+#endif
+    // MoltenVK on macOS is linked directly, without a loader for GLFW to find.
+    glfwInitVulkanLoader(vkGetInstanceProcAddr);
+    if (!glfwInit())
     {
-        if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
-            Log(LogLevel::Info, L"Could not set per-monitor DPI awareness (Windows error %lu).", GetLastError());
-        winrt::init_apartment(winrt::apartment_type::multi_threaded);
-        result = Run();
+        Log(LogLevel::Error, "Could not initialize GLFW. The host needs a supported display.");
+        fprintf(stderr, "Unishade could not open a window. It needs an X11 or XWayland display on Linux.\n");
+        platform::ShowStartupError("Unishade could not open a window.");
+        return 1;
     }
-    catch (const winrt::hresult_error& e)
+
+    if (!WatchStopSignals())
+        Log(LogLevel::Warning, "Could not watch for signals to quit: %s.", strerror(errno));
+
+    std::string error;
+    int result = 0;
+    if (app.Init(error))
     {
-        Log(LogLevel::Error, L"Unishade stopped: %ls (0x%08X)", e.message().c_str(), static_cast<unsigned>(e.code()));
-        LogState();
-        LogStackTrace();
-        ShowError(L"Unishade stopped because of an error: " + std::wstring(e.message()));
+        SetQuitWindow(app.launcher.window);
+        app.Run();
     }
-    catch (const std::exception& e)
+    else
     {
-        Log(LogLevel::Error, L"Unishade stopped: %hs", e.what());
-        LogState();
-        LogStackTrace();
-        ShowError(L"Unishade stopped because of an error.");
+        Log(LogLevel::Error, "%s", error.c_str());
+        fprintf(stderr, "Unishade cannot start: %s\n", error.c_str());
+        platform::ShowStartupError(error);
+        result = 1;
     }
-    catch (...)
-    {
-        Log(LogLevel::Error, L"Unishade stopped because of an unknown exception.");
-        LogStackTrace();
-        ShowError(L"Unishade stopped because of an error.");
-    }
-    // Removes the tray icon after an error. After a normal exit the launcher is already gone.
-    DestroyLauncher();
-    CloseHandle(instance);
-    Log(LogLevel::Info, L"Session ended: exit_code=%d.", result);
+    // The launcher is destroyed next, so the signal thread must leave it alone from here.
+    SetQuitWindow(nullptr);
+    if (stopSignal)
+        Log(LogLevel::Info, "Signal %d received. Quitting.", int(stopSignal));
+    app.Shutdown();
+    glfwTerminate();
+    Log(LogLevel::Info, "Session ended: exit_code=%d.", result);
     FlushLog();
-    // Releasing the swapchain makes ReShade wait for the effects it is still compiling, which can take minutes
-    // right after installing. ReShade writes settings and presets a second after they change, so the host exits
-    // without that wait.
-    ExitProcess(static_cast<UINT>(result));
+    return result;
 }

@@ -1,8 +1,6 @@
 param(
     [string]$Setup = (Get-ChildItem "$PSScriptRoot/../build/installer/Unishade-Setup-*.exe" |
         Sort-Object LastWriteTime | Select-Object -Last 1).FullName,
-    [switch]$DownloadDLSS,
-    [switch]$DownloadDepth,
     [string]$PresetsBaseUrl
 )
 
@@ -16,21 +14,33 @@ $repo = Split-Path $PSScriptRoot -Parent
 $testRoot = Join-Path $repo ('build/installer-tests/' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
 
-# --portable keeps the tests out of the Start menu and Windows' app list.
+# Runs Setup and returns its exit code. Start-Process -Wait would also wait for every program Setup starts, which with
+# --launch is Unishade, so this waits for Setup alone. A Setup that does not end fails the test instead of the whole run.
 function Invoke-Setup([string]$Name, [string[]]$Arguments) {
     $arguments = @('--silent', '--log', "`"$testRoot/$Name.log`"") + $Arguments
     if ($PresetsBaseUrl) { $arguments += @('--presets-url', $PresetsBaseUrl) }
-    return (Start-Process $Setup -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru).ExitCode
+    $start = [Diagnostics.ProcessStartInfo]::new($Setup, ($arguments -join ' '))
+    $start.UseShellExecute = $true
+    $start.WindowStyle = 'Hidden'
+    $process = [Diagnostics.Process]::Start($start)
+    try {
+        if (-not $process.WaitForExit(20 * 60 * 1000)) {
+            $process.Kill()
+            throw "$Name did not end within 20 minutes. See $testRoot/$Name.log"
+        }
+        return $process.ExitCode
+    } finally {
+        $process.Dispose()
+    }
 }
 
-# Exit code 2 means Setup installed, but left out an effect package, a preset or the add-on.
+# --portable keeps the tests out of the Start menu and Windows' app list. Exit code 2 means Setup installed Unishade,
+# but effects or presets were left out.
 function Invoke-TestInstaller(
-    [string]$Name, [string]$Components, [bool]$AcceptLicense = $true,
-    [bool]$ExpectSuccess = $AcceptLicense, [string[]]$Extra = @(), [int]$ExpectExitCode = 0
+    [string]$Name, [string]$Components, [bool]$ExpectSuccess = $true, [string[]]$Extra = @(), [int]$ExpectExitCode = 0
 ) {
     $destination = Join-Path $testRoot $Name
     $arguments = @('--portable', '--components', $Components, '--dir', "`"$destination`"") + $Extra
-    if ($AcceptLicense) { $arguments += '--accept-reshade-license' }
     $exitCode = Invoke-Setup $Name $arguments
     if ($ExpectSuccess -and $exitCode -ne $ExpectExitCode) {
         throw "$Name ended with exit code $exitCode instead of $ExpectExitCode. See $testRoot/$Name.log"
@@ -49,7 +59,6 @@ function Assert-File([string]$Directory, [string]$Name, [bool]$Expected = $true)
 
 $hostOnly = Invoke-TestInstaller 'host-only' 'host'
 Assert-File $hostOnly 'Unishade.exe'
-Assert-File $hostOnly 'UnishadeUi.dll'
 Assert-File $hostOnly 'CREDITS.txt'
 Assert-File $hostOnly 'dxgi.dll' $false
 Assert-File $hostOnly 'nvngx_dlssnr.dll' $false
@@ -169,195 +178,108 @@ Assert-File $legacy 'Unishade.exe' $false
 Assert-File $legacy 'legacy-component.txt' $false
 foreach ($file in $userFiles) { Assert-File $legacy $file }
 
-$null = Invoke-TestInstaller 'no-license' 'reshade' $false
-$reshade = Invoke-TestInstaller 'reshade' 'reshade,presets'
-Assert-File $reshade 'dxgi.dll'
-Assert-File $reshade 'ReShade-LICENSE.txt'
-Assert-File $reshade 'renodx-dlss.addon64' $false
-Assert-File $reshade 'onnxruntime.dll' $false
-# ReShade's installer leaves these next to the exe; only its DLL and settings are installed.
-Assert-File $reshade 'ReShadePreset.ini' $false
-Assert-File $reshade 'ReShade.log' $false
-Assert-File $reshade 'reshade-shaders/Shaders/ReShade.fxh'
-Assert-File $reshade 'reshade-shaders/Shaders/FXShaders/AdaptiveTonemapper.fx'
-Assert-File $reshade 'reshade-shaders/Shaders/qUINT/qUINT_common.fxh'
-if (-not (Get-ChildItem "$reshade/reshade-shaders/Textures" -Filter *.png -Recurse | Select-Object -First 1)) {
+# Every package on ReShade's list, downloaded by the installed Unishade, and the presets of the repository.
+$effects = Invoke-TestInstaller 'effects' 'host,effects'
+Assert-File $effects 'dxgi.dll' $false
+Assert-File $effects 'reshade-shaders/Shaders/ReShade.fxh'
+Assert-File $effects 'reshade-shaders/Shaders/FXShaders/AdaptiveTonemapper.fx'
+Assert-File $effects 'reshade-shaders/Shaders/qUINT/qUINT_common.fxh'
+if (-not (Get-ChildItem "$effects/reshade-shaders/Textures" -Filter *.png -Recurse | Select-Object -First 1)) {
     throw 'No textures were installed.'
 }
-function Assert-SearchPaths([string]$Ini) {
-    if ($Ini -notmatch '(?m)^EffectSearchPaths=\.\\reshade-shaders\\Shaders\\\*\*\r?$' -or
-        $Ini -notmatch '(?m)^TextureSearchPaths=\.\\reshade-shaders\\Textures\\\*\*\r?$') {
-        throw 'ReShade.ini does not have the expected effect search paths.'
-    }
-}
-
-$reshadeIni = Get-Content "$reshade/ReShade.ini" -Raw
-Assert-SearchPaths $reshadeIni
-if ($reshadeIni -notmatch '(?m)^PresetPath=\.\\presets\\ReShadePreset\.ini\r?$') {
-    throw 'The initial preset browser path is not in the presets folder.'
-}
-$iniBytes = [IO.File]::ReadAllBytes("$reshade/ReShade.ini")
-if ($iniBytes.Length -lt 3 -or $iniBytes[0] -ne 0xEF -or $iniBytes[1] -ne 0xBB -or $iniBytes[2] -ne 0xBF) {
-    throw 'ReShade.ini lost its byte order mark.'
-}
-if (([regex]::Matches($reshadeIni, '(?m)^\[GENERAL\]')).Count -ne 1) {
-    throw 'ReShade.ini has a duplicated GENERAL section.'
-}
 foreach ($preset in Get-ChildItem "$repo/presets/*.ini" -Exclude downloads.ini) {
-    if ((Get-FileHash "$reshade/presets/$($preset.Name)").Hash -ne (Get-FileHash $preset.FullName).Hash) {
+    if ((Get-FileHash "$effects/presets/$($preset.Name)").Hash -ne (Get-FileHash $preset.FullName).Hash) {
         throw "Installed preset $($preset.Name) does not match the repository."
     }
 }
-if ((Get-Content "$reshade/CREDITS.txt" -Raw) -notmatch 'tiago@mouta.me') {
+if ((Get-Content "$effects/CREDITS.txt" -Raw) -notmatch 'tiago@mouta.me') {
     throw 'Removal contact is missing from installed credits.'
 }
-
-Add-Content "$reshade/ReShade.ini" "`n[InstallerTest]`nPreserve=1"
-$originalHash = (Get-FileHash "$reshade/ReShade.ini").Hash
-Set-Content "$reshade/presets/GenericPreset1.ini" 'Techniques=Edited@Edited.fx'
-Set-Content "$reshade/ReShadePreset.ini" 'Techniques=Mine@Mine.fx'
-$null = Invoke-TestInstaller 'reshade' 'reshade,presets'
-if ((Get-FileHash "$reshade/ReShade.ini").Hash -ne $originalHash) {
-    throw 'Reinstall changed the existing ReShade configuration.'
-}
-if ((Get-Content "$reshade/ReShadePreset.ini" -Raw) -notmatch 'Mine') {
-    throw "Reinstall overwrote the user's ReShadePreset.ini."
+if ((Get-Content "$effects/RobloxShadeHost-Setup.files") -notcontains 'reshade-shaders\Shaders\ReShade.fxh') {
+    throw 'The effects Unishade installed are not in the file list.'
 }
 
-# An install from an earlier installer kept ReShade's doubled search paths. Reinstalling repairs
-# those lines and nothing else.
-$brokenIni = $reshadeIni -replace '(?m)^((?:Effect|Texture)SearchPaths=.*\\\*\*)(?=\r?$)', '$1\**'
-$brokenIni += "`n[InstallerTest]`nPreserve=1`n"
-[IO.File]::WriteAllText("$reshade/ReShade.ini", $brokenIni.TrimStart([char]0xFEFF), [Text.UTF8Encoding]::new($true))
-$null = Invoke-TestInstaller 'reshade' 'reshade,presets'
-$repairedIni = Get-Content "$reshade/ReShade.ini" -Raw
-Assert-SearchPaths $repairedIni
-if ($repairedIni -notmatch '(?m)^Preserve=1' -or ([regex]::Matches($repairedIni, '(?m)^\[GENERAL\]')).Count -ne 1) {
-    throw 'Repairing the search paths did not preserve the rest of ReShade.ini.'
-}
-if ((Get-Content "$reshade/presets/GenericPreset1.ini" -Raw) -notmatch 'Edited') {
+# Installing again keeps a preset the user changed.
+Set-Content "$effects/presets/GenericPreset1.ini" 'Techniques=Edited@Edited.fx'
+$null = Invoke-TestInstaller 'effects' 'host,effects'
+if ((Get-Content "$effects/presets/GenericPreset1.ini" -Raw) -notmatch 'Edited') {
     throw 'Reinstall overwrote an edited preset.'
 }
 
-$missingManifests = @(
-    '--dlss5-manifest', 'https://github.com/OMouta/Unishade/releases/download/dlss5-assets/not-present.ini',
-    '--depth-manifest', 'https://github.com/OMouta/Unishade/releases/download/depth-assets/not-present.ini')
-# Both add-ons can be picked. One that is skipped keeps the files it had.
-New-Item -ItemType Directory -Path "$testRoot/missing-addons" -Force | Out-Null
-Set-Content "$testRoot/missing-addons/depth-anything-v2-small.onnx" 'kept'
-$missing = Invoke-TestInstaller 'missing-addons' 'reshade,dlss5,depth' -Extra $missingManifests -ExpectExitCode 2
-Assert-File $missing 'Unishade.exe'
-Assert-File $missing 'dxgi.dll'
-Assert-File $missing 'nvngx_dlssnr.dll' $false
-Assert-File $missing 'renodx-dlss.addon64' $false
-Assert-File $missing 'onnxruntime.dll' $false
-Assert-File $missing 'DirectML.dll' $false
-Assert-File $missing 'depth-anything-v2-small.onnx'
-$missingLog = Get-Content "$testRoot/missing-addons.log" -Raw
-if ($missingLog -notmatch 'DLSS5 skipped:' -or $missingLog -notmatch 'Depth estimation skipped:') {
-    throw 'Missing add-on downloads were not reported.'
-}
-
-# Each add-on file must match the SHA-256 in the download list. This list points nvngx_dlssnr.dll at a small file of
-# the depth model's repository, which does not match, so DLSS5 is skipped without downloading its real files. A local
-# effect list with only the standard effects keeps this quick.
+# A local list with only the standard effects reaches Unishade as a file:/// address.
 $standardEffects = Join-Path $testRoot 'standard-effects.ini'
 Set-Content $standardEffects -Encoding Ascii -Value @(
     '[00]', 'Required=1', 'PackageName=Standard effects', 'InstallPath=.\reshade-shaders\Shaders',
     'TextureInstallPath=.\reshade-shaders\Textures', 'DownloadUrl=https://github.com/crosire/reshade-shaders/archive/slim.zip')
-$otherFile = 'https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/4472b7362082ad9968fee890ca0f1e5aca36b93d/config.json'
-$dlss5List = Get-Content "$repo/vendor/dlss5/downloads.ini" -Raw
-$wrongDlss5List = $dlss5List -replace '(?m)^url=.*/nvngx_dlssnr\.dll(?=\r?$)', "url=$otherFile"
-if ($wrongDlss5List -eq $dlss5List) { throw 'Could not change the address in the DLSS5 download list.' }
-Set-Content "$testRoot/wrong-dlss5.ini" -Encoding Ascii -Value $wrongDlss5List
-$mismatched = Invoke-TestInstaller 'mismatched-dlss5' 'reshade,dlss5' -ExpectExitCode 2 -Extra @(
-    '--effects-url', "`"$standardEffects`"", '--dlss5-manifest', "`"$testRoot/wrong-dlss5.ini`"")
-Assert-File $mismatched 'dxgi.dll'
-Assert-File $mismatched 'reshade-shaders/Shaders/ReShade.fxh'
-Assert-File $mismatched 'nvngx_dlssnr.dll' $false
-Assert-File $mismatched 'renodx-dlss.addon64' $false
-if ((Get-Content "$testRoot/mismatched-dlss5.log" -Raw) -notmatch 'DLSS5 skipped:.*does not match its checksum') {
-    throw 'DLSS5 was not skipped although a download does not match the SHA-256 in its download list.'
+$standard = Invoke-TestInstaller 'standard' 'host,effects' -Extra @('--effects-url', "`"$standardEffects`"")
+Assert-File $standard 'reshade-shaders/Shaders/ReShade.fxh'
+Assert-File $standard 'reshade-shaders/Shaders/qUINT/qUINT_common.fxh' $false
+
+# Updating an installation of Unishade 0.6.3 removes what Setup installed for ReShade and the add-ons, which would
+# otherwise load into Unishade.exe or sit unused, and keeps the user's files.
+$old = Join-Path $testRoot 'old'
+New-Item -ItemType Directory -Path "$old/presets" -Force | Out-Null
+$leftovers = @('UnishadeUi.dll', 'dxgi.dll', 'ReShade-LICENSE.txt', 'EffectPackages.ini', 'onnxruntime.dll', 'DirectML.dll',
+    'depth-anything-v2-small.onnx', 'nvngx_dlssnr.dll', 'renodx-dlss.addon64')
+foreach ($file in @('Unishade.exe') + $leftovers) { Set-Content "$old/$file" 'installed by Setup 0.6.3' }
+Set-Content "$old/RobloxShadeHost-Setup.files" ((@('Unishade.exe') + $leftovers) -join "`r`n")
+Set-Content "$old/RobloxShadeHost.ini" "[Input]`nToggleKey=F8"
+Set-Content "$old/ReShade.ini" "[GENERAL]`nPresetPath=.\presets\Custom.ini"
+Set-Content "$old/ReShadePreset.ini" 'Techniques='
+Set-Content "$old/games.ini" "[Games]`nCount=0"
+Set-Content "$old/presets/Custom.ini" 'Techniques=Custom@Custom.fx'
+$null = Invoke-TestInstaller 'old' 'host'
+foreach ($file in $leftovers) { Assert-File $old $file $false }
+foreach ($file in @('Unishade.exe', 'RobloxShadeHost.ini', 'ReShade.ini', 'ReShadePreset.ini', 'games.ini', 'presets/Custom.ini')) {
+    Assert-File $old $file
+}
+if (Compare-Object (Get-Content "$old/RobloxShadeHost-Setup.files") $leftovers -IncludeEqual -ExcludeDifferent) {
+    throw 'The file list still names what the update removed.'
 }
 
-if ($DownloadDLSS) {
-    # Installing DLSS5 without depth estimation removes the depth files.
-    New-Item -ItemType Directory -Path "$testRoot/full" -Force | Out-Null
-    Set-Content "$testRoot/full/depth-anything-v2-small.onnx" 'stale'
-    $full = Invoke-TestInstaller 'full' 'reshade,dlss5'
-    Assert-File $full 'depth-anything-v2-small.onnx' $false
-    Assert-File $full 'nvngx_dlssnr.dll'
-    Assert-File $full 'renodx-dlss.addon64'
-    $manifest = Get-Content "$repo/vendor/dlss5/downloads.ini" -Raw
-    foreach ($file in @('nvngx_dlssnr.dll', 'renodx-dlss.addon64')) {
-        $pattern = '(?ms)^\[' + [regex]::Escape($file) + '\]\r?\n.*?^sha256=([a-f0-9]{64})'
-        $expectedHash = [regex]::Match($manifest, $pattern).Groups[1].Value
-        if ((Get-FileHash "$full/$file").Hash -ne $expectedHash) {
-            throw "$file does not match the repository manifest."
-        }
-    }
+# Uninstalling removes what Unishade made for itself and keeps the settings, presets, add-ons and effects the user
+# added, unless asked to delete those too.
+New-Item -ItemType Directory -Path "$effects/cache/effects", "$effects/Addons/Mine" -Force | Out-Null
+foreach ($file in @('Unishade.ini', 'Unishade.log', 'Unishade.old.log', 'unishade.lock', 'cache/pipelines.bin', 'cache/effects/a.spv',
+        'Addons/Mine.dll', 'Addons/Mine/data.bin', 'reshade-shaders/Shaders/Mine.fx', 'Screenshot.png')) {
+    Set-Content "$effects/$file" 'made after Setup'
 }
-
-if ($DownloadDepth) {
-    # A download that does not match its hash also skips the add-on. This one points onnxruntime.dll at another
-    # file of the model's repository.
-    $depthList = Get-Content "$repo/vendor/depth/downloads.ini" -Raw
-    $tamperedList = $depthList -replace '(?m)^url=.*/onnxruntime\.dll(?=\r?$)', "url=$otherFile"
-    if ($tamperedList -eq $depthList) { throw 'Could not change the address in the depth download list.' }
-    Set-Content "$testRoot/tampered-depth.ini" -Encoding Ascii -Value $tamperedList
-    $tampered = Invoke-TestInstaller 'tampered-depth' 'reshade,depth' -ExpectExitCode 2 -Extra @(
-        '--effects-url', "`"$standardEffects`"", '--depth-manifest', "`"$testRoot/tampered-depth.ini`"")
-    Assert-File $tampered 'onnxruntime.dll' $false
-    if ((Get-Content "$testRoot/tampered-depth.log" -Raw) -notmatch 'Depth estimation skipped:.*does not match its checksum') {
-        throw 'Depth estimation was not skipped although a download does not match its hash.'
-    }
-
-    # Installing depth estimation without DLSS5 removes the DLSS5 files.
-    New-Item -ItemType Directory -Path "$testRoot/depth" -Force | Out-Null
-    Set-Content "$testRoot/depth/renodx-dlss.addon64" 'stale'
-    $depth = Invoke-TestInstaller 'depth' 'reshade,depth'
-    Assert-File $depth 'renodx-dlss.addon64' $false
-    $manifest = Get-Content "$repo/vendor/depth/downloads.ini" -Raw
-    foreach ($file in @('onnxruntime.dll', 'DirectML.dll', 'depth-anything-v2-small.onnx')) {
-        Assert-File $depth $file
-        $pattern = '(?ms)^\[' + [regex]::Escape($file) + '\]\r?\n.*?^sha256=([a-f0-9]{64})'
-        $expectedHash = [regex]::Match($manifest, $pattern).Groups[1].Value
-        if ((Get-FileHash "$depth/$file").Hash -ne $expectedHash) {
-            throw "$file does not match the repository manifest."
-        }
-    }
-}
-
-# Uninstalling keeps ReShade settings and presets unless asked to delete them too.
-if ((Invoke-Setup 'uninstall' @('--uninstall', '--dir', "`"$reshade`"")) -ne 0) {
+$effectsAll = Join-Path $testRoot 'effects-all'
+Copy-Item $effects $effectsAll -Recurse
+if ((Invoke-Setup 'uninstall' @('--uninstall', '--dir', "`"$effects`"")) -ne 0) {
     throw "Uninstall failed. See $testRoot/uninstall.log"
 }
-foreach ($file in @('Unishade.exe', 'dxgi.dll', 'CREDITS.txt', 'reshade-shaders')) { Assert-File $reshade $file $false }
-Assert-File $reshade 'ReShade.ini'
-Assert-File $reshade 'presets/GenericPreset1.ini'
+foreach ($file in @('Unishade.exe', 'CREDITS.txt', 'reshade-shaders/Shaders/ReShade.fxh', 'Unishade.log', 'Unishade.old.log', 'unishade.lock',
+        'setup.lock', 'cache', 'RobloxShadeHost-Setup.files')) {
+    Assert-File $effects $file $false
+}
+foreach ($file in @('Unishade.ini', 'presets/GenericPreset1.ini', 'reshade-shaders/Shaders/Mine.fx', 'Addons/Mine.dll', 'Screenshot.png')) {
+    Assert-File $effects $file
+}
 # What is left is no longer an installation, so Setup does not delete it.
-if ((Invoke-Setup 'uninstall-again' @('--uninstall', '--delete-user-files', '--dir', "`"$reshade`"")) -ne 1) {
+if ((Invoke-Setup 'uninstall-again' @('--uninstall', '--delete-user-files', '--dir', "`"$effects`"")) -ne 1) {
     throw 'Setup uninstalled from a folder it had already uninstalled from.'
 }
-Assert-File $reshade 'ReShade.ini'
+Assert-File $effects 'Unishade.ini'
 
-# Deleting the user's files too removes the settings, logs, presets and reshade-shaders, and leaves other files.
-New-Item -ItemType Directory -Path "$missing/presets/Game" -Force | Out-Null
-Set-Content "$missing/presets/Game/Mine.ini" 'Techniques=Mine@Mine.fx'
-Set-Content "$missing/reshade-shaders/Shaders/Mine.fx" '// added by the user'
-Set-Content "$missing/ReShadePreset.ini" 'Techniques='
-Set-Content "$missing/RobloxShadeHost.ini" "[Input]`nToggleKey=F8"
-Set-Content "$missing/games.ini" "[Games]`nCount=0"
-Set-Content "$missing/ReShade.log" 'log'
-Set-Content "$missing/Unishade.log" 'log'
-Set-Content "$missing/Screenshot.png" 'not created by Setup'
-if ((Invoke-Setup 'uninstall-all' @('--uninstall', '--delete-user-files', '--dir', "`"$missing`"")) -ne 0) {
+if ((Invoke-Setup 'uninstall-all' @('--uninstall', '--delete-user-files', '--dir', "`"$effectsAll`"")) -ne 0) {
     throw "Uninstall failed. See $testRoot/uninstall-all.log"
 }
-foreach ($file in @('Unishade.exe', 'dxgi.dll', 'ReShade.ini', 'ReShadePreset.ini', 'RobloxShadeHost.ini', 'games.ini', 'ReShade.log',
-        'Unishade.log', 'presets', 'reshade-shaders', 'RobloxShadeHost-Setup.files')) {
-    Assert-File $missing $file $false
+foreach ($file in @('Unishade.exe', 'Unishade.ini', 'games.ini', 'presets', 'reshade-shaders', 'Addons', 'cache', 'RobloxShadeHost-Setup.files')) {
+    Assert-File $effectsAll $file $false
 }
-Assert-File $missing 'Screenshot.png'
+Assert-File $effectsAll 'Screenshot.png'
+
+# --launch starts the installed Unishade when a silent run is done, which an update that Unishade installs itself
+# relies on. Its log shows that it started, however long it runs on a machine without a graphics card.
+$launched = Invoke-TestInstaller 'launch' 'host' $true @('--launch')
+$started = $false
+for ($i = 0; $i -lt 300 -and -not $started; $i++) {
+    $started = Test-Path (Join-Path $launched 'Unishade.log')
+    if (-not $started) { Start-Sleep -Milliseconds 100 }
+}
+$launchedExe = [IO.Path]::GetFullPath((Join-Path $launched 'Unishade.exe'))
+Get-Process Unishade -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $launchedExe } | Stop-Process -Force
+if (-not $started) { throw "--launch did not start Unishade. See $testRoot/launch.log" }
 
 Write-Output "Installer checks passed. Test files and logs: $testRoot"

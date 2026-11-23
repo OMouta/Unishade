@@ -1,42 +1,49 @@
 ---
 title: Games
-description: Add your games, turn them off, or use a window just this once.
+description: Add games, switch one off, and set a frame rate limit for each.
 order: 2
 ---
 
-Run your games in windowed or borderless mode. Once a game is saved, Unishade starts on it whenever it opens.
+Your games sit on the shelf at the top of the Unishade window. Once a game is there, Unishade starts on it whenever it opens. A green dot marks the one that's running.
 
-![The Unishade window with three saved games](./images/launcher.png)
+![The shelf, with Roblox running](./images/shelf.png)
 
 ## Add a game
 
-1. Open the game.
-2. Click **Add game** in the Unishade window.
+1. Open the game, in windowed or borderless mode.
+2. Click **+** on the shelf.
 3. Pick the game's window.
 
-That's it. If the game isn't in the list, make sure its window isn't minimized and try again.
-
-If you move a game to another folder, add it again.
+If the game isn't listed, check that its window isn't minimized. If you move a game to another folder, add it again.
 
 ## A game's page
 
-Click a game in the sidebar to open its page.
+Click a game on the shelf to see its presets. While the game runs, its page also shows the preset's effects, the same as [the menu](/docs/menu/) in the game.
 
-![Roblox's page in the Unishade window](./images/launcher-game.png)
+Under **For this game**:
 
-The switch at the top turns the game off, and the × removes it. Roblox is on the list from the start, so turn it off if you don't play it.
+- **Use Unishade** switches the game off without removing it.
+- **Rename** changes the name on the shelf.
+- **Remove** takes it off the shelf. **Undo** puts it back.
 
-Click a preset to use it. If the game isn't running, it starts with that preset next time.
+![For this game](./images/this-game.png)
 
-On Windows, **Performance** limits the frame rate and lowers the effect resolution and depth detail for this game. **Settings > Performance** sets them for games without their own.
+## Performance
 
-## Playing more than one
+The sliders button next to the power button opens the menu's **Game** tab.
 
-If several saved games are open, Unishade follows the one you're playing.
+![Frame rate and effect resolution](./images/performance.png)
 
-## Use a window just this once
+- **Frame rate** limits how many frames Unishade shows. A lower limit leaves more of the GPU to the game.
+- **Effect resolution** runs effects on a smaller picture and upscales it. Lower is faster and softer.
 
-**Pick a window** uses any open window without saving it. Unishade sticks to that window until you click **Detect automatically**.
+These are for the game whose page is open. **Settings > Performance** sets them for every game without its own.
+
+**Show debug info** puts the frame rates at the top of the game: how many frames the game draws, how many Unishade shows, and how long it works on each.
+
+## Use a window just once
+
+While Unishade is waiting for a game, **Pick a window** uses any open window without saving it. **Detect automatically** goes back to your saved games.
 
 ## Games that don't work
 

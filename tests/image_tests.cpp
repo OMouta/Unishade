@@ -1,4 +1,4 @@
-#include "../src/posix/image.h"
+#include "base/image.h"
 
 #include <chrono>
 #include <cstdint>

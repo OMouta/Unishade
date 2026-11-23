@@ -1,6 +1,6 @@
 // Tests for what goes through Discord's Rich Presence connection, and for finding a game's icon in Discord's list.
 
-#include "../src/discord_rpc.h"
+#include "discord/discord_rpc.h"
 
 #include <cstdio>
 #include <stdexcept>

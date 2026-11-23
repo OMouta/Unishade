@@ -1,0 +1,134 @@
+#pragma once
+
+#include "app/hotkeys.h"
+
+#include <array>
+#include <filesystem>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace fs = std::filesystem;
+
+// Where settings, presets, effects and the log live: ~/Library/Application Support/Unishade on macOS,
+// $XDG_DATA_HOME/unishade (~/.local/share/unishade) on Linux, the folder of Unishade.exe on Windows. Created on first
+// use. Empty when there is no home folder to put it in, which the host refuses to start without.
+const fs::path& DataDirectory();
+fs::path PresetsDirectory();
+fs::path EffectsDirectory(); // reshade-shaders, laid out like ReShade's: Shaders and Textures
+// Unishade in the pictures folder: ~/Pictures on macOS, and on Linux XDG_PICTURES_DIR from the environment or
+// user-dirs.dirs, which names it in the desktop's language, or ~/Pictures without one. Windows says where it is.
+fs::path ScreenshotDirectory();
+// A folder such as XDG_PICTURES_DIR from the text of user-dirs.dirs, whose lines look like
+// XDG_PICTURES_DIR="$HOME/Pictures". Empty when the text does not name it, or names the home folder, which turns it
+// off.
+fs::path UserDirectory(const std::string& userDirs, const std::string& name, const fs::path& home);
+// A window title made into one file name: without slashes, control characters, what Windows does not allow or dots
+// in front, and at most 80 bytes. "Unishade" when nothing is left.
+std::string SafeFileName(std::string name);
+
+// An exclusive lock on a file, such as the one that keeps a second Unishade from starting. Held until the object
+// goes away or the process ends.
+class FileLock
+{
+public:
+    explicit FileLock(const fs::path& path);
+    ~FileLock();
+    FileLock(const FileLock&) = delete;
+    FileLock& operator=(const FileLock&) = delete;
+
+    bool Locked() const { return fd >= 0; }
+    // Another process holds it.
+    bool Busy() const { return busy; }
+    // Why the lock could not be taken, when it is not busy.
+    const std::string& Error() const { return error; }
+
+private:
+    int fd = -1;
+    bool busy = false;
+    std::string error;
+};
+
+constexpr float kSmallestMenuScale = 0.75f;
+constexpr float kLargestMenuScale = 2;
+
+struct Settings
+{
+    InputHotkeys hotkeys;
+    bool autoSavePresets = true;
+    // macOS only: effects leave out the title bar of a game in a window. platform.h says how it is told apart.
+    bool skipTitleBar = true;
+    // Windows only: Discord shows the game Unishade runs on. discord.h says what it shows.
+    bool discordPresence = true;
+    // Windows only: GitHub is asked for a newer Unishade when it starts.
+    bool updateChecks = true;
+    // Frame rates and frame times show at the top of the game.
+    bool debugInfo = false;
+    // Effects stay over the game while another window is in front of it, where platform::OverlayCanStayBehind.
+    bool keepEffectsVisible = true;
+    // The menu's size on top of the one that follows the game's window, to the percent.
+    float menuScale = 1;
+    // Where the menu was moved over the game, as launcher::Settings::menuX and menuY, or -1 before it was.
+    float menuX = -1;
+    float menuY = -1;
+    // As launcher::Settings::menuOpacity and smallTiles.
+    float menuOpacity = 0.6f;
+    bool smallTiles = false;
+    // As launcher::Settings' three.
+    bool shotEffects = true;
+    bool shotOriginal = false;
+    bool shotTwoFiles = false;
+    bool menuHints = true;
+    bool darkMenu = true;
+    fs::path preset;
+    // Searched recursively, like ReShade's paths ending in \**.
+    std::vector<fs::path> effectPaths;
+    std::vector<fs::path> texturePaths;
+    std::vector<std::pair<std::string, std::string>> definitions; // global preprocessor definitions
+};
+
+// Reads Unishade.ini from the data folder, creating it on first run. Invalid shortcuts are reported and
+// replaced by the defaults.
+Settings LoadSettings();
+// Returns false when the file cannot be written.
+bool SaveSettings(const Settings& settings);
+
+// The most frames a second the overlay shows, for a saved game by its presets folder's name, or with an empty name for
+// every game without its own, from [PERFORMANCE] in Unishade.ini. 0 shows every frame the game draws. A limit is kept
+// between 30 and 500.
+int FrameRateLimit(const std::string& game);
+void SetFrameRateLimit(const std::string& game, int fps);
+// The percentage of the game's picture effects run at, kept as on the ReShade host: in [PERFORMANCE.<game>] of
+// Unishade.ini for a saved game with its own, otherwise in [PERFORMANCE], which an empty game reads and sets.
+int EffectResolution(const std::string& game);
+void SetEffectResolution(const std::string& game, int percent);
+// Whether an HDR game's picture stays HDR for effects and the overlay, where the display shows HDR, rather than turned
+// into SDR. Off unless set, since most effects are made for SDR. Kept as HdrOutput beside EffectResolution.
+bool HdrOutput(const std::string& game);
+void SetHdrOutput(const std::string& game, bool on);
+// The parts of a game's picture marked as its own interface, which effects leave as the game drew them, or as scene that
+// detection must leave out: the left, top, width and height of each, in fractions of the picture's, then 1 for scene.
+// Kept as UiMask beside the game's performance settings, and for every game without its own with an empty name.
+std::vector<std::array<float, 5>> UiMask(const std::string& game);
+void SetUiMask(const std::string& game, const std::vector<std::array<float, 5>>& areas);
+// Whether a game's interface is also found by itself, kept as DetectUi beside UiMask. Off unless set.
+bool DetectUi(const std::string& game);
+void SetDetectUi(const std::string& game, bool on);
+// Moves a game's own performance settings to its new name, leaving the old one without.
+void RenamePerformance(const std::string& from, const std::string& to);
+// Forgets a removed game's own performance settings.
+void RemovePerformance(const std::string& game);
+
+// The preset last used in a saved game, from Unishade.ini. Empty when the game has none yet.
+fs::path GamePreset(const std::string& game);
+void SetGamePreset(const std::string& game, const fs::path& preset);
+
+// "A=1,B" as ReShade writes preprocessor definitions, and back.
+std::vector<std::pair<std::string, std::string>> ParseDefinitions(const std::string& text);
+std::string FormatDefinitions(const std::vector<std::pair<std::string, std::string>>& definitions);
+
+std::string ReadFile(const fs::path& path);
+// Writes through a temporary file, so a failed write leaves the old file. Returns false on failure.
+bool WriteFile(const fs::path& path, const std::string& contents);
+
+std::string Lowercase(std::string text);

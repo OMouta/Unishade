@@ -1,0 +1,395 @@
+---
+import { Image } from 'astro:assets';
+import Base from '../layouts/Base.astro';
+import logo from '../../../assets/UnishadeSmall.png';
+import logoFile from '../../../assets/UnishadeSmall.png?url';
+import icon from '../../../assets/Unishade.png';
+import iconFile from '../../../assets/Unishade.png?url';
+import lockup from '../../../assets/brand/unishade-lockup.png';
+import lockupFile from '../../../assets/brand/unishade-lockup.png?url';
+import white from '../../../assets/brand/unishade-wordmark-white.png';
+import whiteFile from '../../../assets/brand/unishade-wordmark-white.png?url';
+import black from '../../../assets/brand/unishade-wordmark-black.png';
+import blackFile from '../../../assets/brand/unishade-wordmark-black.png?url';
+import spectrum from '../../../assets/brand/unishade-wordmark-spectrum.png';
+import spectrumFile from '../../../assets/brand/unishade-wordmark-spectrum.png?url';
+import banner from '../../../assets/brand/unishade-banner.png';
+import bannerFile from '../../../assets/brand/unishade-banner.png?url';
+import bands from '../../../assets/brand/unishade-banner-bands.png';
+import bandsFile from '../../../assets/brand/unishade-banner-bands.png?url';
+import social from '../../../assets/brand/unishade-social.png';
+import socialFile from '../../../assets/brand/unishade-social.png?url';
+
+// The pictures on the page are resized copies. Each download is the file as it is in assets, under the name given here.
+const marks = [
+  { name: 'Logo', image: logo, file: logoFile, saveAs: 'unishade-logo.png' },
+  { name: 'App icon', image: icon, file: iconFile, saveAs: 'unishade-icon.png' },
+  { name: 'Logo and name', image: lockup, file: lockupFile, saveAs: 'unishade-logo-and-name.png' },
+  { name: 'Name in white', image: white, file: whiteFile, saveAs: 'unishade-name-white.png' },
+  { name: 'Name in black', image: black, file: blackFile, saveAs: 'unishade-name-black.png', light: true },
+  { name: "Name in the ring's colors", image: spectrum, file: spectrumFile, saveAs: 'unishade-name-colors.png' },
+];
+
+const banners = [
+  { name: 'Banner', image: banner, file: bannerFile, saveAs: 'unishade-banner.png' },
+  { name: 'Banner in bands', image: bands, file: bandsFile, saveAs: 'unishade-banner-bands.png' },
+  { name: 'Link preview', image: social, file: socialFile, saveAs: 'unishade-link-preview.png' },
+];
+
+// The same values as global.css.
+const colors = [
+  { name: 'Red', hex: '#ff4860' },
+  { name: 'Orange', hex: '#ff9e36' },
+  { name: 'Yellow', hex: '#f8e44c' },
+  { name: 'Green', hex: '#54de7a' },
+  { name: 'Cyan', hex: '#3ec6ff' },
+  { name: 'Blue', hex: '#546eff' },
+  { name: 'Violet', hex: '#ba5cff' },
+  { name: 'Black', hex: '#000000' },
+  { name: 'White', hex: '#f2f2fb' },
+];
+
+const size = (image: ImageMetadata) => `PNG, ${image.width} × ${image.height}`;
+---
+
+<Base title="Branding | Unishade" description="The Unishade logo, name, banners, colors and typeface.">
+  <main class="branding">
+    <header>
+      <h1>Branding</h1>
+      <p class="lede">The Unishade logo, name, banners, colors and typeface.</p>
+    </header>
+
+    <section>
+      <h2>Logo and name</h2>
+      <p class="dim">The cube is white, so the logo goes on dark backgrounds.</p>
+      <ul class="files">
+        {
+          marks.map(({ name, image, file, saveAs, light }) => (
+            <li>
+              <div class:list={['stage', { light }]}>
+                <Image src={image} widths={[360, 720]} sizes="(max-width: 700px) 80vw, 300px" alt="" />
+              </div>
+              <div class="about">
+                <p>
+                  <strong>{name}</strong>
+                  <span class="dim">{size(image)}</span>
+                </p>
+                <a class="button button-secondary" href={file} download={saveAs} aria-label={`Download ${name}`}>
+                  Download
+                </a>
+              </div>
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+
+    <section>
+      <h2>Banners</h2>
+      <ul class="files wide">
+        {
+          banners.map(({ name, image, file, saveAs }) => (
+            <li>
+              <Image src={image} widths={[600, 1200, image.width]} sizes="(max-width: 860px) 92vw, 580px" alt="" class="banner" />
+              <div class="about">
+                <p>
+                  <strong>{name}</strong>
+                  <span class="dim">{size(image)}</span>
+                </p>
+                <a class="button button-secondary" href={file} download={saveAs} aria-label={`Download ${name}`}>
+                  Download
+                </a>
+              </div>
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+
+    <section>
+      <h2>Colors</h2>
+      <p class="dim">The seven colors of the ring, on black. Click one to copy it.</p>
+      <ul class="colors">
+        {
+          colors.map(({ name, hex }) => (
+            <li>
+              <button type="button" class={name.toLowerCase()} data-hex={hex}>
+                <strong>{name}</strong>
+                <span>{hex}</span>
+              </button>
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+
+    <section>
+      <h2>Typeface</h2>
+      <p class="specimen" aria-hidden="true">Bricolage Grotesque</p>
+      <p>
+        Unishade is set in <a href="https://fonts.google.com/specimen/Bricolage+Grotesque">Bricolage Grotesque</a>, which is free under the SIL
+        Open Font License.
+      </p>
+      <ul class="weights">
+        <li class="regular">Regular 400</li>
+        <li class="semibold">SemiBold 600</li>
+        <li class="extrabold">ExtraBold 800</li>
+      </ul>
+    </section>
+  </main>
+</Base>
+
+<script>
+  // A color's button copies its value, and says so for a moment.
+  for (const button of document.querySelectorAll<HTMLButtonElement>('.colors button')) {
+    const label = button.querySelector('span')!;
+    const hex = button.dataset.hex!;
+    button.addEventListener('click', async () => {
+      await navigator.clipboard.writeText(hex);
+      label.textContent = 'Copied';
+      setTimeout(() => (label.textContent = hex), 1200);
+    });
+  }
+</script>
+
+<style>
+  .branding {
+    display: grid;
+    gap: clamp(56px, 8vw, 96px);
+    width: var(--page);
+    margin: clamp(40px, 7vw, 88px) auto 0;
+  }
+
+  header,
+  section {
+    display: grid;
+    gap: 18px;
+  }
+
+  .lede {
+    color: var(--haze);
+    font-size: 1.25rem;
+  }
+
+  section h2 {
+    font-size: clamp(1.6rem, 3vw, 2.2rem);
+  }
+
+  .files,
+  .colors,
+  .weights {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .files {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 28px 12px;
+    margin-top: 6px;
+  }
+
+  .files.wide {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .files li {
+    display: grid;
+    gap: 14px;
+  }
+
+  /* Each file on the background it is made for. */
+  .stage {
+    --pad: clamp(24px, 4vw, 48px);
+    position: relative;
+    aspect-ratio: 3 / 2;
+    border-radius: var(--block);
+    background: var(--night-raised);
+  }
+
+  .stage.light {
+    background: var(--ink);
+  }
+
+  .stage img {
+    position: absolute;
+    inset: var(--pad);
+    width: calc(100% - 2 * var(--pad));
+    height: calc(100% - 2 * var(--pad));
+    object-fit: contain;
+  }
+
+  .banner {
+    width: 100%;
+    border-radius: 24px;
+    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.12);
+  }
+
+  .about {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0 6px;
+  }
+
+  .about p {
+    display: grid;
+    line-height: 1.35;
+  }
+
+  .about strong {
+    font-weight: 600;
+  }
+
+  .about span {
+    font-size: 0.92rem;
+  }
+
+  .about .button {
+    min-height: 40px;
+    padding: 0 18px;
+  }
+
+  /* A tile for each color, as the effects are in the menu. */
+  .colors {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  .colors button {
+    display: grid;
+    align-content: end;
+    justify-items: start;
+    gap: 2px;
+    width: 100%;
+    min-height: 150px;
+    padding: 16px;
+    border: 0;
+    border-radius: 24px;
+    color: #000;
+    font: inherit;
+    line-height: 1.3;
+    text-align: left;
+    cursor: pointer;
+    transition: translate 0.4s var(--spring);
+  }
+
+  .colors button:hover {
+    translate: 0 -6px;
+  }
+
+  .colors strong {
+    font-size: 1.15rem;
+    font-weight: 800;
+  }
+
+  .colors span {
+    font-weight: 600;
+  }
+
+  /* Black and white share the row under the ring's seven. */
+  .colors li:nth-child(n + 8) {
+    grid-column: span 2;
+  }
+
+  .colors li:nth-child(n + 8) button {
+    min-height: 96px;
+  }
+
+  .red {
+    background: var(--red);
+  }
+
+  .orange {
+    background: var(--orange);
+  }
+
+  .yellow {
+    background: var(--yellow);
+  }
+
+  .green {
+    background: var(--green);
+  }
+
+  .cyan {
+    background: var(--cyan);
+  }
+
+  .blue {
+    background: var(--blue);
+  }
+
+  .violet {
+    background: var(--violet);
+  }
+
+  .colors .black {
+    color: var(--ink);
+    background: #000;
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+  }
+
+  .white {
+    background: var(--ink);
+  }
+
+  .specimen {
+    margin-bottom: 6px;
+    font-size: clamp(2.6rem, 9.6vw, 8.4rem);
+    font-weight: 800;
+    line-height: 0.9;
+    letter-spacing: -0.045em;
+  }
+
+  .weights {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 32px;
+    color: var(--haze);
+    font-size: 1.25rem;
+  }
+
+  .regular {
+    font-weight: 400;
+  }
+
+  .semibold {
+    font-weight: 600;
+  }
+
+  .extrabold {
+    font-weight: 800;
+  }
+
+  @media (max-width: 860px) {
+    .files,
+    .files.wide {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .colors {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .colors li:nth-child(n + 8) {
+      grid-column: auto;
+    }
+
+    .colors button,
+    .colors li:nth-child(n + 8) button {
+      min-height: 96px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .colors button {
+      transition: none;
+    }
+  }
+</style>

@@ -1,0 +1,27 @@
+---
+import { getCollection, type CollectionEntry } from 'astro:content';
+import Guide from '../../layouts/Guide.astro';
+
+export async function getStaticPaths() {
+  const pages = (await getCollection('developers')).sort((a, b) => a.data.order - b.data.order);
+  return pages.map((entry) => ({ params: { slug: entry.id === 'overview' ? undefined : entry.id }, props: { entry, pages } }));
+}
+
+interface Props {
+  entry: CollectionEntry<'developers'>;
+  pages: CollectionEntry<'developers'>[];
+}
+
+const { entry, pages } = Astro.props;
+---
+
+<Guide
+  entry={entry}
+  pages={pages}
+  root="/developers/"
+  home="overview"
+  label="Developer docs"
+  kicker="Unishade for developers"
+  markdown={`/developers/${entry.id}.md`}
+  code
+/>

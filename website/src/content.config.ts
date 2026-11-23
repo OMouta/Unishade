@@ -12,4 +12,14 @@ const docs = defineCollection({
   }),
 });
 
-export const collections = { docs };
+// The same for people who write add-ons, under /developers/. overview.md is /developers/ itself.
+const developers = defineCollection({
+  loader: glob({ pattern: '*.md', base: './src/content/developers' }),
+  schema: z.object({
+    title: z.string(),
+    description: z.string(),
+    order: z.number(),
+  }),
+});
+
+export const collections = { docs, developers };

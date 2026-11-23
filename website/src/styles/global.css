@@ -1,28 +1,40 @@
 :root {
+  /* The launcher's window: black, with near-black blocks and rows in them. */
   --night: #000;
-  --night-raised: #0d0d16;
-  --night-high: #181926;
-  --line: #22233a;
+  --night-raised: #16161c;
+  --night-high: #232329;
+  --line: #2a2a33;
   /* Borders of buttons and other controls, at least 3:1 against the page. */
-  --line-strong: #5f6396;
+  --line-strong: #6b6b7a;
   --ink: #f2f2fb;
-  --haze: #a2a5c8;
-  --accent: #8f96ff;
-  /* The line under the title bar in Unishade's windows. */
-  --spectrum: #ff4860, #ff9e36, #f8e44c, #55de7a, #3ec6ff, #546eff, #ba5cff;
+  --haze: #b8b8c6;
+  --accent: #9aa2ff;
+
+  /* The ring in the logo, which every effect's tile takes a color of. */
+  --red: #ff4860;
+  --orange: #ff9e36;
+  --yellow: #f8e44c;
+  --green: #54de7a;
+  --cyan: #3ec6ff;
+  --blue: #546eff;
+  --violet: #ba5cff;
+  --spectrum: var(--red), var(--orange), var(--yellow), var(--green), var(--cyan), var(--blue), var(--violet);
 
   --page: min(1200px, 100% - 2 * var(--gutter));
-  --gutter: clamp(20px, 4vw, 48px);
-  --radius: 14px;
-  --nav-height: 72px;
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --gutter: clamp(18px, 4.5vw, 64px);
+  /* A row, and the block rows sit in. */
+  --radius: 18px;
+  --block: 35px;
+  --nav-height: 80px;
+  --ease-out: cubic-bezier(0.2, 0.9, 0.2, 1);
+  --spring: linear(0, 0.36 8%, 0.86 20%, 1.06 30%, 1.09 38%, 1.04 50%, 1 64%, 0.995 80%, 1);
 
   color-scheme: dark;
   /* Links to a heading stop below the navigation. */
   scroll-padding-top: calc(var(--nav-height) + 24px);
-  font-family: var(--font-archivo);
+  font-family: var(--font-bricolage);
   font-size: 106.25%;
-  line-height: 1.6;
+  line-height: 1.55;
   color: var(--ink);
   background: var(--night);
   -webkit-font-smoothing: antialiased;
@@ -59,29 +71,25 @@ h1,
 h2,
 h3 {
   margin: 0;
-  font-stretch: 125%;
-  line-height: 1.04;
+  font-weight: 800;
+  line-height: 1;
   text-wrap: balance;
 }
 
 h1 {
-  font-size: clamp(2.5rem, 5.6vw, 4.75rem);
-  font-weight: 800;
-  letter-spacing: -0.025em;
+  font-size: clamp(2.6rem, 6vw, 5rem);
+  letter-spacing: -0.035em;
 }
 
 h2 {
   font-size: clamp(1.9rem, 3.6vw, 3rem);
-  font-weight: 760;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
 }
 
 h3 {
   font-size: 1.3rem;
-  font-weight: 700;
-  font-stretch: 115%;
   line-height: 1.2;
-  letter-spacing: -0.005em;
+  letter-spacing: -0.01em;
 }
 
 p {
@@ -107,19 +115,18 @@ a:hover {
 
 ::selection {
   color: var(--night);
-  background: var(--accent);
+  background: var(--yellow);
 }
 
+/* A pill, as the app's buttons are. */
 .button {
-  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 50px;
-  padding: 0 24px;
-  border-radius: 12px;
-  font-weight: 680;
-  font-stretch: 112%;
+  min-height: 46px;
+  padding: 0 22px;
+  border-radius: 999px;
+  font-weight: 600;
   text-decoration: none;
   white-space: nowrap;
   transition:
@@ -132,23 +139,9 @@ a:hover {
   transform: translateY(1px);
 }
 
-/* White, like the cube. On hover the spectrum glows under it. */
 .button-primary {
-  isolation: isolate;
   color: var(--night);
   background: var(--ink);
-}
-
-.button-primary::before {
-  content: '';
-  position: absolute;
-  z-index: -1;
-  inset: 6px 10px -2px;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--spectrum));
-  filter: blur(14px);
-  opacity: 0;
-  transition: opacity 0.3s;
 }
 
 .button-primary:hover {
@@ -156,39 +149,31 @@ a:hover {
   background: #fff;
 }
 
-.button-primary:hover::before {
-  opacity: 0.75;
-}
-
 .button-secondary {
   color: var(--ink);
-  border: 1px solid var(--line-strong);
+  background: var(--night-high);
 }
 
 .button-secondary:hover {
   color: var(--ink);
-  border-color: var(--haze);
-  background: var(--night-raised);
+  background: #2f2f37;
 }
 
 .dim {
   color: var(--haze);
 }
 
-/* A key on the keyboard. */
+/* A key on the keyboard, as the app shows one. */
 kbd {
   display: inline-block;
   min-width: 1.9em;
-  padding: 0.05em 0.5em 0.1em;
-  border: 1px solid var(--line-strong);
-  border-bottom-width: 3px;
-  border-radius: 7px;
-  color: var(--ink);
-  background: var(--night-high);
+  padding: 0.05em 0.55em 0.12em;
+  border-radius: 0.5em;
+  color: var(--night);
+  background: var(--ink);
   font-family: inherit;
   font-size: 0.86em;
-  font-weight: 650;
-  font-stretch: 100%;
+  font-weight: 600;
   line-height: 1.5;
   text-align: center;
   white-space: nowrap;
@@ -197,7 +182,7 @@ kbd {
 /* Pages written in Markdown: the docs and the legal pages. */
 .prose > h2 {
   margin: 64px 0 18px;
-  font-size: clamp(1.55rem, 2.6vw, 2.05rem);
+  font-size: clamp(1.6rem, 2.8vw, 2.2rem);
 }
 
 .prose > h3 {
@@ -227,8 +212,8 @@ kbd {
 }
 
 .prose li::marker {
-  color: var(--accent);
-  font-weight: 700;
+  color: var(--haze);
+  font-weight: 600;
 }
 
 .prose li > ul,
@@ -237,22 +222,21 @@ kbd {
 }
 
 .prose strong {
-  font-weight: 680;
+  font-weight: 600;
 }
 
+/* Screenshots are pieces of the app, shown no larger than they are on screen so their words stay sharp. */
 .prose img {
-  margin: 28px 0 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: 0 24px 60px -24px rgb(0 0 0 / 0.7);
+  margin: 28px 0 14px;
+  border-radius: 24px;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.12);
 }
 
 .prose code {
   padding: 2px 7px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 7px;
   font-size: 0.9em;
-  background: var(--night-raised);
+  background: var(--night-high);
   overflow-wrap: anywhere;
 }
 
@@ -261,15 +245,18 @@ kbd {
   margin: 0 0 18px;
   padding: 16px 20px;
   overflow-x: auto;
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--night-raised);
 }
 
 .prose pre code {
   padding: 0;
-  border: 0;
   background: none;
+}
+
+/* Pages for developers are mostly code, which takes the width of the column. */
+.prose.reference pre {
+  max-width: none;
 }
 
 .prose table {
@@ -291,6 +278,5 @@ kbd {
 }
 
 .prose td:first-child {
-  white-space: nowrap;
-  font-weight: 650;
+  font-weight: 600;
 }

@@ -5,7 +5,8 @@ on:
     branches: ['**']
   pull_request:
   # Manual runs are signed by SignPath. With release on, they're signed with the release certificate and published as
-  # the version in CMakeLists.txt. Otherwise they're signed with the test certificate, to try the signing.
+  # the version in CMakeLists.txt. When UNISHADE_BETA there makes it a beta, release publishes it as a prerelease
+  # instead, which is not signed. Without release, they're signed with the test certificate, to try the signing.
   workflow_dispatch:
     inputs:
       release:
@@ -32,8 +33,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      # project(Unishade VERSION x.y.z) sets the version the files report and names the release. A release is checked
-      # here, so a mistake fails before anyone is asked to approve the signing.
+      # project(Unishade VERSION x.y.z) and set(UNISHADE_BETA n) set the version the files report and name the release:
+      # x.y.z, or x.y.z-beta.n when n is not 0. A release is checked here, so a mistake fails before anyone is asked to
+      # approve the signing. The steps that sign run when sign is true: on every manual run but the release of a beta.
       - name: Read the version
         id: version
         if: github.event_name == 'workflow_dispatch'
@@ -42,16 +44,32 @@ jobs:
           RELEASE: ${{ inputs.release }}
         run: |
           version=$(sed -nE 's/.*project\(Unishade VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt | sort -u)
+          beta=$(sed -nE 's/^set\(UNISHADE_BETA (0|[1-9][0-9]*)\).*/\1/p' CMakeLists.txt)
+          # A line this can't read must not release a beta as the version itself.
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$beta" =~ ^[0-9]+$ ]]; then
+            echo "::error::Could not read project(Unishade VERSION x.y.z) and set(UNISHADE_BETA n) from CMakeLists.txt."
+            exit 1
+          fi
+          raise="project(Unishade VERSION $version)"
+          if [ "$beta" != 0 ]; then
+            version="$version-beta.$beta"
+            raise="set(UNISHADE_BETA $beta)"
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if [ "$RELEASE" != true ]; then
+            echo "sign=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ "$GITHUB_REF" != refs/heads/main ]; then
+          if [ "$beta" = 0 ]; then
+            echo "sign=true" >> "$GITHUB_OUTPUT"
+          fi
+          # A beta can come from the branch its version is made on.
+          if [ "$beta" = 0 ] && [ "$GITHUB_REF" != refs/heads/main ]; then
             echo "::error::Releases are made from main, not $GITHUB_REF."
             exit 1
           fi
           if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
-            echo "::error::v$version is already released. Raise project(Unishade VERSION $version) in CMakeLists.txt."
+            echo "::error::v$version is already released. Raise $raise in CMakeLists.txt."
             exit 1
           fi
       - name: Configure
@@ -60,19 +78,46 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
-      # Setup embeds Unishade.exe and UnishadeUi.dll, so they're signed before Setup is built, and Setup after.
+      # Unishade.exe holds the SHA-256 of the add-ons built with it, which its Add-ons page checks the downloads from the
+      # release against, and Setup embeds Unishade.exe. So the add-ons are signed first, then Unishade.exe is built again
+      # with their new SHA-256 and signed, and Setup is built and signed last.
+      - name: Upload the add-ons for signing
+        id: unsigned-addons
+        if: steps.version.outputs.sign == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unsigned-addons
+          path: |
+            build/Release/Depth.dll
+            build/Release/Unishade_nvngx.dll
+          if-no-files-found: error
+      - name: Sign the add-ons
+        if: steps.version.outputs.sign == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT }}
+          signing-policy-slug: ${{ inputs.release && 'release-signing' || 'test-signing' }}
+          artifact-configuration-slug: addons
+          github-artifact-id: ${{ steps.unsigned-addons.outputs.artifact-id }}
+          parameters: |
+            version: ${{ toJSON(steps.version.outputs.version) }}
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: build/Release
+      - name: Build the program with the signed add-ons
+        if: steps.version.outputs.sign == 'true'
+        run: cmake --build build --config Release --target Unishade
       - name: Upload the program for signing
         id: unsigned-program
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.version.outputs.sign == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: unsigned-program
-          path: |
-            build/Release/Unishade.exe
-            build/Release/UnishadeUi.dll
+          path: build/Release/Unishade.exe
           if-no-files-found: error
       - name: Sign the program
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.version.outputs.sign == 'true'
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -88,24 +133,25 @@ jobs:
           output-artifact-directory: build/Release
       - name: Build installer
         run: cmake --build build --config Release --target installer
-      # Building Setup must not have relinked them, or Setup would embed unsigned copies.
+      # Building the program and Setup must not have relinked the signed files, or the release would have unsigned
+      # copies.
       - name: Check Setup embedded the signed program
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.version.outputs.sign == 'true'
         shell: pwsh
         run: |
-          foreach ($file in 'build/Release/Unishade.exe', 'build/Release/UnishadeUi.dll') {
+          foreach ($file in 'build/Release/Unishade.exe', 'build/Release/Depth.dll', 'build/Release/Unishade_nvngx.dll') {
             if (-not (Get-AuthenticodeSignature $file).SignerCertificate) { throw "$file isn't signed anymore." }
           }
       - name: Upload Setup for signing
         id: unsigned-setup
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.version.outputs.sign == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: unsigned-setup
           path: build/installer/Unishade-Setup-*.exe
           if-no-files-found: error
       - name: Sign Setup
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.version.outputs.sign == 'true'
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -119,8 +165,8 @@ jobs:
           wait-for-completion-timeout-in-seconds: 3600
           output-artifact-directory: build/installer
       # Installs into fresh folders under build/installer-tests with --portable, so nothing is registered on the runner.
-      # It downloads ReShade and every effect package, and the presets from this commit, so a pull request that changes
-      # a preset is tested with it.
+      # Unishade downloads every effect package, and the presets from this commit, so a pull request that changes a
+      # preset is tested with it.
       - name: Test installer
         timeout-minutes: 40
         shell: pwsh
@@ -139,7 +185,8 @@ jobs:
           name: Unishade-windows-x64
           path: |
             build/Release/Unishade.exe
-            build/Release/UnishadeUi.dll
+            build/Release/Depth.dll
+            build/Release/Unishade_nvngx.dll
             build/installer/Unishade-Setup-*.exe
             LICENSE
           if-no-files-found: error
@@ -201,7 +248,7 @@ jobs:
       - name: Package
         run: |
           mkdir -p package/Unishade
-          cp build/unishade LICENSE src/posix/CREDITS.txt package/Unishade/
+          cp build/unishade LICENSE CREDITS.txt package/Unishade/
           tar -czf Unishade-linux-x64.tar.gz -C package Unishade
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -233,7 +280,7 @@ jobs:
       # The app promises macOS 13, which the runner's own version or a newer MoltenVK from Homebrew would quietly break.
       - name: Check the oldest macOS the app runs on
         run: |
-          for binary in build/Unishade.app/Contents/MacOS/Unishade build/Unishade.app/Contents/Frameworks/libMoltenVK.dylib; do
+          for binary in build/Unishade.app/Contents/MacOS/Unishade build/Unishade.app/Contents/Frameworks/libMoltenVK.dylib build/Depth.dylib; do
             vtool -show-build "$binary"
             vtool -show-build "$binary" | awk -v file="$binary" '
               $1 == "minos" { found = 1; split($2, v, "."); if (v[1] + 0 > 13 || (v[1] + 0 == 13 && v[2] + 0 > 0)) high = 1 }
@@ -241,14 +288,16 @@ jobs:
           done
       - name: Package
         run: |
-          cp LICENSE src/posix/CREDITS.txt build/
+          cp LICENSE CREDITS.txt build/
           cd build
           ditto -c -k --keepParent Unishade.app Unishade-macOS.zip
           zip -j Unishade-macOS.zip LICENSE CREDITS.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Unishade-macOS
-          path: build/Unishade-macOS.zip
+          path: |
+            build/Unishade-macOS.zip
+            build/Depth.dylib
           if-no-files-found: error
 
   release:
@@ -281,31 +330,59 @@ jobs:
           RELEASE_TAG: v${{ needs.build.outputs.version }}
         run: |
           mkdir upload
-          cp release/build/Release/Unishade.exe release/build/Release/UnishadeUi.dll "release/build/installer/Unishade-Setup-${RELEASE_TAG#v}.exe" release/LICENSE \
-            release/Unishade-linux-x64.tar.gz release/Unishade-macOS.zip upload/
+          # Depth.dll, Depth.dylib and Unishade_nvngx.dll are where addons/official.ini points the Add-ons page.
+          cp release/build/Release/Unishade.exe release/build/Release/Depth.dll release/build/Release/Unishade_nvngx.dll \
+            "release/build/installer/Unishade-Setup-${RELEASE_TAG#v}.exe" release/LICENSE release/Unishade-linux-x64.tar.gz release/Unishade-macOS.zip \
+            release/Depth.dylib upload/
           # The SHA-256 of every file, in the format sha256sum -c reads.
           (cd upload && sha256sum -- * > ../SHA256SUMS.txt)
           mv SHA256SUMS.txt upload/
 
-          # The release creates its tag, so the newest tag here is the previous release's.
-          previous_tag=$(git describe --tags --match 'v*' --abbrev=0 HEAD 2>/dev/null || true)
+          # The release creates its tag, so the newest tag here is the previous release's. A beta lists what changed
+          # since the release before it, beta or not. A version lists what changed since the version before it, which
+          # includes what its betas had.
+          : > release-notes.md
+          prerelease=()
+          exclude=()
+          if [[ "$RELEASE_TAG" == *-beta.* ]]; then
+            prerelease=(--prerelease)
+            version=${RELEASE_TAG#v}
+            version=${version%%-beta.*}
+            printf '%s\n\n' "This is a beta of Unishade $version, for testing. Setup installs it over the Unishade you have. On Windows, the beta offers to install newer betas, and $version once it's released. On macOS and Linux it says when one is out. Betas aren't code-signed, so Windows may say **Windows protected your PC** before Setup runs. Click **More info**, then **Run anyway**." > release-notes.md
+          else
+            exclude=(--exclude 'v*-beta.*')
+          fi
+          previous_tag=$(git describe --tags --match 'v*' "${exclude[@]}" --abbrev=0 HEAD 2>/dev/null || true)
           range=HEAD
+          since=
           if [ -n "$previous_tag" ]; then
             range="$previous_tag..HEAD"
+            since=" since $previous_tag"
           fi
-          git log --format='- %s (%h)' "$range" > release-notes.md
+          # Only the commits that change what the release's files are made from: not the website, the bot, the
+          # workflows, the tests, the scripts or the Markdown pages. A long list is folded, so the page still starts
+          # with what to know before downloading.
+          git log --no-merges --format='- %s (%h)' "$range" -- . ':!website' ':!bot' ':!.github' ':!tests' ':!scripts' ':(exclude,glob)**/*.md' > changes.md
+          count=$(wc -l < changes.md | tr -d ' ')
+          if [ "$count" -gt 30 ]; then
+            printf '<details>\n<summary>%s changes%s</summary>\n\n' "$count" "$since" >> release-notes.md
+            cat changes.md >> release-notes.md
+            printf '\n</details>\n' >> release-notes.md
+          else
+            cat changes.md >> release-notes.md
+          fi
           cat >> release-notes.md <<'NOTES'
 
-          The macOS and Linux builds are experimental.
-
           SHA256SUMS.txt lists the SHA-256 of each file. To check a download, run `sha256sum -c SHA256SUMS.txt --ignore-missing` in the folder you downloaded to, or compare the output of `Get-FileHash <file>` in PowerShell, or `shasum -a 256 <file>` on a Mac.
-
-          Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). [Code signing policy](https://unishade.me/code-signing/)
           NOTES
-          gh release create "$RELEASE_TAG" upload/* --target "$GITHUB_SHA" --title "$RELEASE_TAG" --notes-file release-notes.md
+          if [ ${#prerelease[@]} -eq 0 ]; then
+            printf '\n%s\n' 'Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). [Code signing policy](https://unishade.me/code-signing/)' >> release-notes.md
+          fi
+          gh release create "$RELEASE_TAG" upload/* --target "$GITHUB_SHA" --title "$RELEASE_TAG" --notes-file release-notes.md "${prerelease[@]}"
       # Cloudflare builds the site from main, and a release changes nothing there. A release made with the workflow's token
       # doesn't start other workflows either, so the website workflow's release trigger doesn't fire. The deploy hook
-      # asks Cloudflare to build the site again, to point its download buttons at the new files.
+      # asks Cloudflare to build the site again, to point its download buttons at the new files, or its banner at the
+      # new beta.
       - name: Update the website
         env:
           DEPLOY_HOOK: ${{ secrets.CLOUDFLARE_DEPLOY_HOOK }}

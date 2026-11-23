@@ -8,7 +8,7 @@ on:
     paths:
       - 'website/**'
       - 'assets/**'
-      # The download page compares the newest release with the version in CMakeLists.txt.
+      # The docs compare the newest release with the version in CMakeLists.txt.
       - 'CMakeLists.txt'
       - '.github/workflows/website.yml'
   # A release that build.yml publishes with the workflow's token doesn't start other workflows, so build.yml calls the

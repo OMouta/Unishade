@@ -1,0 +1,603 @@
+---
+// A set of guide pages with a sidebar: the docs for people who use Unishade, and the ones for developers. Each page is
+// an entry of a content collection, listed in the sidebar by order.
+import { render, type CollectionEntry } from 'astro:content';
+import { links } from '../links';
+import { release } from '../release';
+import Base from './Base.astro';
+
+type Entry = CollectionEntry<'docs'> | CollectionEntry<'developers'>;
+
+interface Props {
+  entry: Entry;
+  pages: Entry[];
+  // Where the pages are, such as /docs/, and the entry that is that address itself.
+  root: string;
+  home: string;
+  // What the set is called, for the sidebar. A set with a kicker shows it above each page's name.
+  label: string;
+  kicker?: string;
+  // The pages are mostly code, which then gets the width of the column.
+  code?: boolean;
+  // Where the page is as Markdown, when it is. The page then offers to copy it, for pasting into a chat with an agent.
+  markdown?: string;
+  // The folder these pages are in, in the repository, when the newest release has them there too.
+  source?: string;
+}
+
+const { entry, pages, root, home, label, kicker, code, markdown, source } = Astro.props;
+// The pages describe the version in CMakeLists.txt. Until it is released they say so, and where the pages of the
+// newest release are, which is its tag on GitHub.
+const upcoming = release.upcoming;
+const inBeta = upcoming && release.beta?.version.startsWith(`${upcoming}-beta.`);
+const released = source && `${links.github}/tree/v${release.version}/${source}`;
+// A chat with an assistant that starts by reading the page's Markdown.
+const ask = `Read ${new URL(markdown ?? '/', Astro.site)} so I can ask questions about making a Unishade add-on.`;
+const chats = [
+  { name: 'ChatGPT', url: `https://chatgpt.com/?hints=search&q=${encodeURIComponent(ask)}` },
+  { name: 'Claude', url: `https://claude.ai/new?q=${encodeURIComponent(ask)}` },
+];
+const { Content, headings } = await render(entry);
+const sections = headings.filter((heading) => heading.depth === 2);
+const href = (id: string) => (id === home ? root : `${root}${id}/`);
+const index = pages.indexOf(entry);
+const previous = pages[index - 1];
+const next = pages[index + 1];
+// Each page takes a color of the ring, in the sidebar's order, as each effect's tile does in the menu.
+const tones = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'violet'];
+const tone = (page: Entry) => tones[pages.indexOf(page) % tones.length];
+---
+
+<Base title={`${entry.data.title} | Unishade`} description={entry.data.description} markdown={markdown}>
+  <div class="docs">
+    <header class="cover" data-tone={tone(entry)}>
+      <div>
+        {kicker && <span class="kicker">{kicker}</span>}
+        <h1>{entry.data.title}</h1>
+      </div>
+      <p>{entry.data.description}</p>
+      {
+        markdown && (
+          <div class="markdown">
+            <button type="button" class="copy" data-markdown={markdown}>
+              Copy as Markdown
+            </button>
+            <button type="button" class="more" aria-label="More ways to read this page" aria-expanded="false" aria-controls="markdown-menu">
+              <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+                <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <ul id="markdown-menu" hidden>
+              <li>
+                <a href={markdown}>View as Markdown</a>
+              </li>
+              {chats.map((chat) => (
+                <li>
+                  <a href={chat.url} target="_blank" rel="noopener">
+                    Open in {chat.name}
+                  </a>
+                </li>
+              ))}
+              <li>
+                <a href="/llms.txt">llms.txt</a>
+              </li>
+            </ul>
+          </div>
+        )
+      }
+    </header>
+
+    <nav class="sidebar" aria-label={label}>
+      <ul>
+        {
+          pages.map((page) => (
+            <li data-tone={tone(page)}>
+              <a href={href(page.id)} aria-current={page === entry ? 'page' : undefined}>
+                {page.data.title}
+              </a>
+              {page === entry && sections.length > 0 && (
+                <ul class="sections">
+                  {sections.map((section) => (
+                    <li>
+                      <a href={`#${section.slug}`}>{section.text}</a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ))
+        }
+      </ul>
+    </nav>
+
+    <main class="guide">
+      {
+        upcoming && (
+          <p class="upcoming">
+            These pages describe Unishade {upcoming}, which {inBeta ? 'is in beta' : "isn't out yet"}.{' '}
+            {inBeta && <a href="/download/">Get the beta</a>}
+            {inBeta && (released ? ', or read ' : '.')}
+            {!inBeta && released && 'Read '}
+            {released && <a href={released}>the docs for {release.version}</a>}
+            {released && '.'}
+          </p>
+        )
+      }
+      <div class:list={['prose', { reference: code }]}>
+        <Content />
+      </div>
+      {
+        (previous || next) && (
+          <nav class="pager" aria-label="Previous and next page">
+            {previous && (
+              <a class="previous" href={href(previous.id)}>
+                <span>Previous</span>
+                {previous.data.title}
+              </a>
+            )}
+            {next && (
+              <a class="next" href={href(next.id)} data-tone={tone(next)}>
+                <span>Next</span>
+                {next.data.title}
+              </a>
+            )}
+          </nav>
+        )
+      }
+    </main>
+  </div>
+</Base>
+
+<script>
+  // Copies the page as Markdown. The text is fetched after the click, which Safari only allows a ClipboardItem to wait
+  // for, so that is tried first.
+  const copy = document.querySelector<HTMLButtonElement>('button[data-markdown]');
+  if (copy) {
+    const label = copy.textContent;
+    copy.addEventListener('click', async () => {
+      const text = fetch(copy.dataset.markdown!).then((response) => {
+        if (!response.ok) throw new Error(response.statusText);
+        return response.text();
+      });
+      try {
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ 'text/plain': text.then((body) => new Blob([body], { type: 'text/plain' })) })]);
+        } catch {
+          await navigator.clipboard.writeText(await text);
+        }
+        copy.textContent = 'Copied';
+      } catch {
+        copy.textContent = "Couldn't copy";
+      }
+      setTimeout(() => (copy.textContent = label), 2000);
+    });
+  }
+
+  // The arrow beside it opens the other ways to read the page, until one is picked, Escape is pressed or something
+  // else is clicked.
+  const more = document.querySelector<HTMLButtonElement>('.markdown .more');
+  const menu = document.getElementById('markdown-menu');
+  if (more && menu) {
+    const open = (value: boolean) => {
+      menu.hidden = !value;
+      more.setAttribute('aria-expanded', String(value));
+    };
+    more.addEventListener('click', () => open(menu.hidden));
+    menu.addEventListener('click', () => open(false));
+    document.addEventListener('click', (event) => {
+      if (!more.parentElement!.contains(event.target as Node)) open(false);
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || menu.hidden) return;
+      open(false);
+      more.focus();
+    });
+  }
+</script>
+
+<script>
+  // Marks the section being read in the sidebar.
+  const links = new Map(
+    [...document.querySelectorAll<HTMLAnchorElement>('.sections a')].map((link) => [decodeURIComponent(link.hash.slice(1)), link]),
+  );
+  const headings = [...document.querySelectorAll<HTMLElement>('.prose h2[id]')].filter((heading) => links.has(heading.id));
+
+  // The last section whose heading has passed the upper third of the window.
+  const update = () => {
+    const current = headings.findLast((heading) => heading.getBoundingClientRect().top < innerHeight / 3);
+    for (const [id, link] of links) link.toggleAttribute('data-current', id === current?.id);
+  };
+  addEventListener('scroll', update, { passive: true });
+  update();
+</script>
+
+<style>
+  .docs {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: clamp(36px, 5vw, 64px) clamp(32px, 6vw, 96px);
+    width: var(--page);
+    margin: 8px auto 0;
+  }
+
+  [data-tone='red'] {
+    --tone: var(--red);
+  }
+
+  [data-tone='orange'] {
+    --tone: var(--orange);
+  }
+
+  [data-tone='yellow'] {
+    --tone: var(--yellow);
+  }
+
+  [data-tone='green'] {
+    --tone: var(--green);
+  }
+
+  [data-tone='cyan'] {
+    --tone: var(--cyan);
+  }
+
+  [data-tone='blue'] {
+    --tone: var(--blue);
+  }
+
+  [data-tone='violet'] {
+    --tone: var(--violet);
+  }
+
+  /* The page's name on its color, as the home page's bands are. It stays put between pages while its color changes. */
+  .cover {
+    grid-column: 1 / -1;
+    display: grid;
+    /* The name takes the room it needs, so a long one stays on its line. */
+    grid-template-columns: auto minmax(13em, 1fr);
+    align-items: end;
+    gap: 20px clamp(28px, 5vw, 80px);
+    min-height: clamp(210px, 27vw, 340px);
+    padding: clamp(22px, 3.4vw, 44px);
+    border-radius: var(--block);
+    color: #000;
+    background: var(--tone);
+    view-transition-name: docs-cover;
+    /* For what is placed in its corner, whose menu opens over the page below. */
+    position: relative;
+    z-index: 1;
+  }
+
+  .cover ::selection {
+    color: #fff;
+    background: #000;
+  }
+
+  /* Which set of pages this is, where the site has more than the one everyone reads. */
+  .kicker {
+    display: block;
+    margin-bottom: 0.9em;
+    font-size: clamp(0.95rem, 1.2vw, 1.1rem);
+    font-weight: 800;
+    letter-spacing: 0.02em;
+  }
+
+  .cover h1 {
+    font-size: clamp(2rem, 7vw, 6rem);
+    line-height: 0.88;
+    letter-spacing: -0.045em;
+    overflow-wrap: break-word;
+  }
+
+  .cover p {
+    justify-self: end;
+    max-width: 24em;
+    padding-bottom: 0.3em;
+    font-size: clamp(1.05rem, 1.5vw, 1.3rem);
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .sidebar > ul {
+    position: sticky;
+    top: calc(var(--nav-height) + 24px);
+    display: grid;
+    gap: 2px;
+    max-height: calc(100svh - var(--nav-height) - 48px);
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+    view-transition-name: docs-nav;
+  }
+
+  .sidebar a {
+    position: relative;
+    display: block;
+    border-radius: 12px;
+    color: var(--haze);
+    text-decoration: none;
+  }
+
+  .sidebar a:hover {
+    color: var(--ink);
+  }
+
+  /* A page and the dot of its color, like the dot in the corner of an effect's tile. */
+  .sidebar > ul > li > a {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 14px;
+  }
+
+  .sidebar > ul > li > a::before {
+    content: '';
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--tone);
+  }
+
+  .sidebar > ul > li > a:hover {
+    background: var(--night-raised);
+  }
+
+  .sidebar a[aria-current='page'] {
+    color: var(--ink);
+    font-weight: 600;
+    background: var(--night-raised);
+  }
+
+  /* The page's sections hang from its dot. */
+  .sections {
+    margin: 6px 0 12px 18.5px;
+    padding: 0 0 0 14px;
+    border-left: 1px solid var(--line);
+    list-style: none;
+  }
+
+  .sections a {
+    padding: 5px 8px;
+    font-size: 0.9rem;
+    line-height: 1.4;
+  }
+
+  .sections a[data-current] {
+    color: var(--ink);
+  }
+
+  /* The section being read is marked on the line, in the page's color. */
+  .sections a[data-current]::before {
+    content: '';
+    position: absolute;
+    inset: 4px auto 4px -15.5px;
+    width: 2px;
+    border-radius: 2px;
+    background: var(--tone);
+  }
+
+  .guide {
+    max-width: 760px;
+  }
+
+  /* Says that the pages are ahead of the newest release, until their version is out. */
+  .upcoming {
+    margin-bottom: 32px;
+    padding: 16px 20px;
+    border-radius: var(--radius);
+    color: var(--haze);
+    background: var(--night-raised);
+  }
+
+  /* The page as Markdown: a button that copies it, in the cover's top right corner, and an arrow beside it that opens
+     the other ways to read it. The two are one pill. */
+  .markdown {
+    position: absolute;
+    top: clamp(16px, 2.4vw, 28px);
+    right: clamp(16px, 2.4vw, 28px);
+    display: flex;
+    gap: 1px;
+  }
+
+  .markdown button {
+    display: flex;
+    align-items: center;
+    min-height: 38px;
+    border: 0;
+    color: #fff;
+    font: inherit;
+    font-size: 0.9rem;
+    font-weight: 600;
+    background: #000;
+    cursor: pointer;
+  }
+
+  .markdown button:hover,
+  .markdown .more[aria-expanded='true'] {
+    background: #26262d;
+  }
+
+  .markdown button:focus-visible {
+    outline-color: #000;
+  }
+
+  .markdown .copy {
+    /* As wide as its longest words, so it keeps its size when it says what happened. */
+    min-width: 11.2em;
+    justify-content: center;
+    padding: 0 12px 0 18px;
+    border-radius: 999px 0 0 999px;
+  }
+
+  .markdown .more {
+    padding: 0 14px 0 11px;
+    border-radius: 0 999px 999px 0;
+  }
+
+  .markdown .more svg {
+    transition: rotate 0.2s;
+  }
+
+  .markdown .more[aria-expanded='true'] svg {
+    rotate: 180deg;
+  }
+
+  .markdown ul {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 2;
+    display: grid;
+    min-width: 100%;
+    margin: 0;
+    padding: 6px;
+    border-radius: 18px;
+    list-style: none;
+    background: #000;
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
+  }
+
+  .markdown ul[hidden] {
+    display: none;
+  }
+
+  .markdown a {
+    display: block;
+    padding: 9px 14px;
+    border-radius: 12px;
+    color: #fff;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .markdown a:hover,
+  .markdown a:focus-visible {
+    background: #26262d;
+  }
+
+  .pager {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 80px;
+  }
+
+  .pager a {
+    display: grid;
+    gap: 4px;
+    padding: 20px 24px;
+    border-radius: 24px;
+    font-size: 1.5rem;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    text-decoration: none;
+    transition: translate 0.4s var(--spring);
+  }
+
+  .pager span {
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+
+  .previous {
+    color: var(--ink);
+    background: var(--night-raised);
+  }
+
+  .previous span {
+    color: var(--haze);
+  }
+
+  .previous:hover {
+    translate: -6px 0;
+  }
+
+  /* The next page is a tile of its own color. */
+  .next {
+    grid-column: 2;
+    color: #000;
+    background: var(--tone);
+    text-align: right;
+  }
+
+  .next:hover {
+    color: #000;
+    translate: 6px 0;
+  }
+
+  .next:focus-visible {
+    outline-color: var(--ink);
+  }
+
+  /* The pages become one row that scrolls sideways, above the page's name. */
+  @media (max-width: 900px) {
+    .docs {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 20px;
+      margin-top: 0;
+    }
+
+    .cover {
+      grid-template-columns: minmax(0, 1fr);
+      align-content: end;
+      border-radius: 24px;
+    }
+
+    .cover p {
+      justify-self: start;
+    }
+
+    /* The button in the corner gets a row of its own, above the page's name. */
+    .cover:has(.markdown) {
+      padding-top: 76px;
+    }
+
+    .sidebar {
+      order: -1;
+      margin: 0 calc(-1 * var(--gutter));
+    }
+
+    .sidebar > ul {
+      position: static;
+      display: flex;
+      gap: 4px;
+      max-height: none;
+      padding: 0 var(--gutter);
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .sidebar a {
+      white-space: nowrap;
+    }
+
+    .sections {
+      display: none;
+    }
+
+    .guide {
+      margin-top: 16px;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .pager {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .next {
+      grid-column: 1;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pager a {
+      transition: none;
+    }
+  }
+</style>

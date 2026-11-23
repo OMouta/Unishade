@@ -1,7 +1,7 @@
 // Tests for preset_ini.h: saving a preset changes only what changed, and keeps its comments and blank lines where
 // they were.
 
-#include "../src/preset_ini.h"
+#include "effects/preset_ini.h"
 
 #include <cstdio>
 #include <string>
@@ -108,5 +108,12 @@ int main()
     ok &= Check(spaced.Text() == "; note\nTechniques=A@A.fx\n[A.fx]\n", "writes LF line endings without trailing spaces");
 
     std::printf(ok ? "All tests passed.\n" : "Some tests failed.\n");
+    // The lists a preset keeps of the add-ons that are on and off in it.
+    ok &= Check(PresetIni::Listed("DLSS5,Film", "dlss5") && !PresetIni::Listed("DLSS5,Film", "DLSS"), "a list names what is in it, whatever the case");
+    ok &= Check(PresetIni::With("", "DLSS5") == "DLSS5" && PresetIni::With("Film", "DLSS5") == "Film,DLSS5", "a name joins a list at its end");
+    ok &= Check(PresetIni::With("DLSS5,Film", "dlss5") == "DLSS5,Film", "a name already in a list is not added again");
+    ok &= Check(PresetIni::Without("DLSS5,Film", "DLSS5") == "Film" && PresetIni::Without("Film", "DLSS5") == "Film" && PresetIni::Without("DLSS5", "DLSS5").empty(),
+                "a name leaves a list, and a list without it stays as it is");
+
     return ok ? 0 : 1;
 }

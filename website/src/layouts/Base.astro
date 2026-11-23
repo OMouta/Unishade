@@ -4,7 +4,7 @@ import { Font, Image, getImage } from 'astro:assets';
 import logo from '../../../assets/UnishadeSmall.png';
 import icon from '../../../assets/Unishade.ico?url';
 import appIcon from '../../../assets/Unishade.png';
-import banner from '../../../assets/unishade-banner1.png';
+import banner from '../../../assets/brand/unishade-social.png';
 import { links } from '../links';
 import BookIcon from '../icons/book.svg';
 import DiscordIcon from '../icons/discord.svg';
@@ -15,22 +15,25 @@ import MenuIcon from '../icons/menu.svg';
 interface Props {
   title: string;
   description: string;
-  // The home page lays its navigation over the hero.
+  // The home page lays its navigation over the hero, where it scrolls away with it, and its footer slides over the
+  // last band.
   overlay?: boolean;
   // Keeps the page out of search results, like the 404 page, which Cloudflare shows at any address without a page.
   noindex?: boolean;
+  // Where the page is as Markdown, for agents that read it, when it is.
+  markdown?: string;
 }
 
-const { title, description, overlay = false, noindex = false } = Astro.props;
+const { title, description, overlay = false, noindex = false, markdown } = Astro.props;
 const canonical = new URL(Astro.url.pathname, Astro.site);
 
 // Small icons for browser tabs and home screens. The .ico stays for older browsers.
 const favicon = await getImage({ src: appIcon, width: 32, height: 32, format: 'png', layout: 'none' });
 const touchIcon = await getImage({ src: appIcon, width: 180, height: 180, format: 'png', background: '#000000', layout: 'none' });
-// The picture link previews show, cropped to their 1.91:1. The banner is 600px tall, and images aren't enlarged.
-const preview = await getImage({ src: banner, width: 1146, height: 600, fit: 'cover', format: 'jpg', quality: 80, layout: 'none' });
+// The picture link previews show, which is made at their 1.91:1.
+const preview = await getImage({ src: banner, width: 1200, height: 630, format: 'jpg', quality: 80, layout: 'none' });
 const previewUrl = new URL(preview.src, Astro.site);
-const previewAlt = 'The Unishade logo over six games with effects, and the words Universal post-processing without injection.';
+const previewAlt = 'The Unishade logo and name, and the words Universal post-processing without injection.';
 
 // Discord shows this instead of the Open Graph preview. It drops the whole thing over 3,000 bytes or with a key it
 // doesn't know, and falls back to Open Graph. https://docs.discord.com/developers/link-previews/component-embeds
@@ -62,8 +65,9 @@ const discordEmbed = {
     <title>{title}</title>
     <meta name="description" content={description} />
     {noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={canonical} />}
+    {markdown && <link rel="alternate" type="text/markdown" href={markdown} title="This page as Markdown" />}
     <meta name="theme-color" content="#000000" />
-    <Font cssVariable="--font-archivo" preload />
+    <Font cssVariable="--font-bricolage" preload={[{ weight: 400 }, { weight: 800 }]} />
     <link rel="icon" href={icon} sizes="48x48" />
     <link rel="icon" href={favicon.src} type="image/png" sizes="32x32" />
     <link rel="apple-touch-icon" href={touchIcon.src} />
@@ -125,51 +129,43 @@ const discordEmbed = {
 
     <slot />
 
-    <footer class="footer">
-      <div class="footer-inner">
-        <div class="footer-about">
-          <a class="brand" href="/">
-            <Image src={logo} alt="" width={40} layout="fixed" class="brand-logo" />
-            Unishade
-          </a>
-          <p class="dim">Built for games where traditional ReShade injection isn't available or desirable. Free and open source.</p>
-        </div>
-        <div class="footer-links">
-          <div>
-            <h2>Unishade</h2>
-            <ul>
-              <li><a href="/download/">Download</a></li>
-              <li><a href="/docs/">Docs</a></li>
-              <li><a href="/docs/troubleshooting/">Troubleshooting</a></li>
-              <li><a href={links.releases}>Releases</a></li>
-            </ul>
-          </div>
-          <div>
-            <h2>Community</h2>
-            <ul>
-              <li><a href={links.discord}>Discord</a></li>
-              <li><a href={links.github}>GitHub</a></li>
-              <li><a href={links.kofi}>Ko-fi</a></li>
-            </ul>
-          </div>
-          <div>
-            <h2>Legal</h2>
-            <ul>
-              <li><a href="/terms/">Terms</a></li>
-              <li><a href="/privacy/">Privacy</a></li>
-              <li><a href="/cookies/">Cookies</a></li>
-              <li><a href="/code-signing/">Code signing</a></li>
-              <li><a href={links.license}>MIT license</a></li>
-            </ul>
-          </div>
-        </div>
-        <div class="footer-bottom dim">
-          <p>© {new Date().getFullYear()} Unishade contributors</p>
-          <p>
-            Effects run on <a href={links.reshade}>ReShade</a> by crosire. Unishade isn't affiliated with the games it runs on.
-          </p>
-        </div>
+    <footer class:list={['footer', { overlay }]}>
+      <div class="footer-about">
+        <a class="brand" href="/">
+          <Image src={logo} alt="" width={56} layout="fixed" class="footer-logo" />
+          Unishade
+        </a>
+        <p>Free and open source, under the <a href={links.license}>MIT license</a>.</p>
+        <a class="button button-primary" href="/download/">Download Unishade</a>
       </div>
+      <nav class="footer-links" aria-label="Footer">
+        <div>
+          <h2>Unishade</h2>
+          <a href="/download/">Download</a>
+          <a href="/docs/">Docs</a>
+          <a href="/developers/">Developers</a>
+          <a href={links.releases}>Releases</a>
+          <a href="/branding/">Branding</a>
+        </div>
+        <div>
+          <h2>Community</h2>
+          <a href={links.discord}>Discord</a>
+          <a href={links.github}>GitHub</a>
+          <a href={links.kofi}>Ko-fi</a>
+        </div>
+        <div>
+          <h2>Legal</h2>
+          <a href="/terms/">Terms</a>
+          <a href="/privacy/">Privacy</a>
+          <a href="/cookies/">Cookies</a>
+          <a href="/code-signing/">Code signing</a>
+        </div>
+      </nav>
+      <p class="footer-small">
+        © {new Date().getFullYear()} Unishade contributors. Effects are written for <a href={links.reshade}>ReShade</a> by crosire. Unishade isn't
+        affiliated with the games it runs on.
+      </p>
+      <p class="wordmark" aria-hidden="true">Unishade</p>
     </footer>
   </body>
 </html>
@@ -185,37 +181,23 @@ const discordEmbed = {
     justify-content: space-between;
     gap: 24px;
     height: var(--nav-height);
-    padding: 0 calc((100% - var(--page)) / 2);
+    padding: 0 var(--gutter);
     view-transition-name: nav;
-    transition:
-      background-color 0.25s,
-      box-shadow 0.25s;
-  }
-
-  /* The spectrum along the top of the window, like Unishade's own windows. */
-  .nav::before {
-    content: '';
-    position: absolute;
-    inset: 0 0 auto;
-    height: 2px;
-    background: linear-gradient(90deg, var(--spectrum));
+    transition: background-color 0.25s;
   }
 
   .nav.scrolled {
-    box-shadow: 0 1px 0 var(--line);
-    background-color: rgb(0 0 0 / 0.72);
+    background-color: rgb(0 0 0 / 0.78);
     backdrop-filter: blur(18px) saturate(1.4);
   }
 
   .nav.overlay {
-    position: fixed;
+    position: absolute;
     inset: 0 0 auto;
   }
 
   .nav .button {
-    min-height: 40px;
-    padding: 0 18px;
-    border-radius: 10px;
+    min-height: 44px;
   }
 
   .brand {
@@ -223,9 +205,8 @@ const discordEmbed = {
     align-items: center;
     gap: 10px;
     color: var(--ink);
-    font-size: 1.05rem;
-    font-weight: 780;
-    font-stretch: 125%;
+    font-size: 1.2rem;
+    font-weight: 800;
     letter-spacing: -0.01em;
     text-decoration: none;
   }
@@ -239,39 +220,40 @@ const discordEmbed = {
     height: auto;
   }
 
-  nav,
-  nav ul {
+  .nav nav,
+  .nav ul {
     display: flex;
     align-items: center;
-    gap: 28px;
+    gap: clamp(16px, 2.6vw, 32px);
   }
 
-  nav ul {
+  .nav ul {
     margin: 0;
     padding: 0;
     list-style: none;
   }
 
-  nav li {
+  .nav li {
     display: flex;
   }
 
-  nav a:not(.button) {
+  .nav nav a:not(.button) {
     display: inline-flex;
     align-items: center;
     gap: 8px;
     color: var(--ink);
-    font-weight: 520;
+    font-weight: 600;
     text-decoration: none;
   }
 
-  nav a:not(.button):hover {
-    color: var(--accent);
+  .nav nav a:not(.button):hover {
+    text-decoration: underline;
+    text-underline-offset: 0.25em;
   }
 
-  nav svg {
-    width: 20px;
-    height: 20px;
+  .nav svg {
+    width: 19px;
+    height: 19px;
   }
 
   .kofi svg {
@@ -281,89 +263,113 @@ const discordEmbed = {
   .menu-button {
     display: none;
     place-items: center;
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
     padding: 0;
-    border: 1px solid var(--line-strong);
-    border-radius: 10px;
+    border: 0;
+    border-radius: 50%;
     color: var(--ink);
-    background: none;
+    background: var(--night-high);
     cursor: pointer;
   }
 
-  .menu-button:hover,
-  .menu-open .menu-button {
-    border-color: var(--haze);
-  }
-
+  /* The launcher's black, with the name in the ring's colors as wide as the window and cut off by its bottom edge. */
   .footer {
-    margin-top: clamp(96px, 14vw, 180px);
-    border-top: 1px solid var(--line);
-  }
-
-  .footer-inner {
+    position: relative;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 48px clamp(32px, 6vw, 96px);
-    width: var(--page);
-    margin: 0 auto;
-    padding: 64px 0 40px;
+    margin-top: clamp(96px, 12vw, 160px);
+    padding: clamp(56px, 7vw, 96px) var(--gutter) 0;
+    overflow: hidden;
+    border-top: 1px solid var(--line);
+    color: var(--haze);
+    background: var(--night);
+  }
+
+  /* The last thing to slide over the home page's bands. */
+  .footer.overlay {
+    margin-top: -35px;
+    border-top: 0;
+    border-radius: var(--block) var(--block) 0 0;
   }
 
   .footer-about {
     display: grid;
-    gap: 16px;
+    gap: 18px;
     align-content: start;
     justify-items: start;
-    max-width: 32ch;
+    max-width: 24em;
+    font-size: 1.1rem;
+  }
+
+  .footer .brand {
+    gap: 14px;
+    font-size: 1.6rem;
+  }
+
+  .footer-logo {
+    width: 56px;
+    height: auto;
+  }
+
+  .footer a:not(.button, .brand) {
+    color: inherit;
+  }
+
+  .footer a:not(.button, .brand):hover {
+    color: #fff;
   }
 
   .footer-links {
     display: grid;
     grid-template-columns: repeat(3, auto);
-    gap: 32px clamp(40px, 6vw, 88px);
+    gap: 32px clamp(36px, 6vw, 88px);
+  }
+
+  .footer-links div {
+    display: grid;
+    gap: 10px;
+    align-content: start;
   }
 
   .footer-links h2 {
-    margin-bottom: 14px;
-    color: var(--haze);
-    font-size: 0.9rem;
+    margin-bottom: 4px;
+    color: var(--ink);
+    font-size: 1rem;
     font-weight: 600;
-    font-stretch: 100%;
     letter-spacing: 0;
   }
 
-  .footer-links ul {
-    display: grid;
-    gap: 10px;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
   .footer-links a {
-    color: var(--ink);
     text-decoration: none;
   }
 
-  .footer-links a:hover {
-    color: var(--accent);
+  .footer-small {
+    grid-column: 1 / -1;
+    font-size: 0.92rem;
   }
 
-  .footer-bottom {
+  .wordmark {
     grid-column: 1 / -1;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    gap: 8px 24px;
-    padding-top: 24px;
-    border-top: 1px solid var(--line);
-    font-size: 0.9rem;
+    /* The colors only fill the box, which the line height makes shorter than the dot of the i. The padding makes room
+       for it, and the margin takes that room back. */
+    margin: -0.1em -0.04em -0.17em;
+    padding-top: 0.1em;
+    color: transparent;
+    background: linear-gradient(90deg, var(--spectrum));
+    background-clip: text;
+    font-size: 21.6vw;
+    font-weight: 800;
+    line-height: 0.8;
+    letter-spacing: -0.05em;
+    white-space: nowrap;
+    user-select: none;
   }
 
   @media (max-width: 800px) {
-    nav {
-      gap: 12px;
+    .nav nav {
+      gap: 10px;
     }
 
     .menu-button {
@@ -371,48 +377,55 @@ const discordEmbed = {
     }
 
     /* The links drop down under the bar, at its right edge. */
-    nav ul {
+    .nav ul {
       position: absolute;
       top: calc(var(--nav-height) - 8px);
-      right: calc((100% - var(--page)) / 2);
+      right: var(--gutter);
       display: none;
       flex-direction: column;
       align-items: stretch;
       gap: 2px;
       min-width: 210px;
       padding: 8px;
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
+      border-radius: 24px;
       background: var(--night-raised);
-      box-shadow: 0 20px 50px rgb(0 0 0 / 0.5);
+      box-shadow:
+        0 0 0 1px rgb(255 255 255 / 0.12),
+        0 20px 50px rgb(0 0 0 / 0.5);
     }
 
     .menu-open ul {
       display: flex;
     }
 
-    nav ul a:not(.button) {
+    .nav ul a:not(.button) {
       display: flex;
-      padding: 10px 12px;
-      border-radius: 8px;
+      padding: 10px 14px;
+      border-radius: 16px;
     }
 
-    nav ul a:not(.button):hover {
+    .nav ul a:not(.button):hover {
       background: var(--night-high);
+      text-decoration: none;
     }
 
-    .footer-inner {
+    .footer {
       grid-template-columns: minmax(0, 1fr);
+    }
+
+    .footer.overlay {
+      margin-top: 0;
+    }
+
+    .footer-links {
+      grid-template-columns: repeat(2, auto);
+      justify-content: start;
     }
   }
 
   @media (max-width: 440px) {
     .brand-name {
       display: none;
-    }
-
-    .footer-links {
-      grid-template-columns: repeat(2, auto);
     }
   }
 </style>

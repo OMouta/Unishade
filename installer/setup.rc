@@ -1,9 +1,12 @@
 #include "resource.h"
 
+#ifdef UNISHADE_BETA
+1 ICON "../assets/UnishadeBeta.ico"
+#else
 1 ICON "../assets/Unishade.ico"
+#endif
 // Found through the include path, which CMake points at the host's build folder.
 IDR_HOST RCDATA "Unishade.exe"
-IDR_UI RCDATA "UnishadeUi.dll"
 IDR_LICENSE RCDATA "../LICENSE"
 IDR_CREDITS RCDATA "CREDITS.txt"
 IDR_LOGO RCDATA "../assets/Unishade.png"
@@ -14,7 +17,11 @@ IDR_LOGO RCDATA "../assets/Unishade.png"
  FILEVERSION UNISHADE_VERSION_RESOURCE
  PRODUCTVERSION UNISHADE_VERSION_RESOURCE
  FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+#ifdef UNISHADE_BETA
+ FILEFLAGS VS_FF_PRERELEASE
+#else
  FILEFLAGS 0
+#endif
  FILEOS VOS_NT_WINDOWS32
  FILETYPE VFT_APP
 BEGIN
