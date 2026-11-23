@@ -1,18 +1,18 @@
-# Unishade for macOS and Linux
+# Unishade's source
 
-ReShade is Windows only, so this host runs ReShade effects itself. It copies the game's window, runs effects on the copy and shows the result in a window over the game, with clicks passing through until the menu opens. Windows runs the same host.
+Unishade runs ReShade effects itself, without ReShade and without touching the game. It copies the game's window, runs effects on the copy and shows the result in a window over the game, with clicks passing through until the menu opens. Windows, macOS and Linux build the same sources. What differs between them is in `platform/`.
 
-| | macOS | Linux |
-| --- | --- | --- |
-| Capture | ScreenCaptureKit | XComposite, with XDamage for when the game drew (X11 and XWayland) |
-| Windows and processes | CoreGraphics window list, `NSRunningApplication`, `proc_pidpath` | `_NET_CLIENT_LIST`, XRes, `/proc` |
-| Overlay window | A non-activating `NSPanel`, through a patch to GLFW | A GLFW window of the utility type, kept above |
-| Shortcuts | Carbon hot keys | `XGrabKey` on the root window |
-| Keys and buttons for effects | `CGEventSourceKeyState` | `XQueryKeymap`, `XQueryPointer` |
-| Vulkan | MoltenVK, linked directly and copied into the app | The system's loader and driver |
-| Frames on the graphics card | IOSurfaces as Vulkan images (`VK_EXT_metal_objects`) | DRI3 dma-bufs as Vulkan images (`VK_EXT_image_drm_format_modifier`) |
+| | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Capture | Windows.Graphics.Capture | ScreenCaptureKit | XComposite, with XDamage for when the game drew (X11 and XWayland) |
+| Windows and processes | `EnumWindows`, a Toolhelp snapshot, `QueryFullProcessImageNameW` | CoreGraphics window list, `NSRunningApplication`, `proc_pidpath` | `_NET_CLIENT_LIST`, XRes, `/proc` |
+| Overlay window | A GLFW window made a layered tool window, kept topmost | A non-activating `NSPanel`, through a patch to GLFW | A GLFW window of the utility type, kept above |
+| Shortcuts | `RegisterHotKey` | Carbon hot keys | `XGrabKey` on the root window |
+| Keys and buttons for effects | `GetAsyncKeyState` | `CGEventSourceKeyState` | `XQueryKeymap`, `XQueryPointer` |
+| Vulkan | The loader every graphics driver installs, `vulkan-1.dll`, loaded when Vulkan is first used | MoltenVK, linked directly and copied into the app | The system's loader and driver |
+| Frames on the graphics card | Direct3D 11 textures as Vulkan images (`VK_KHR_external_memory_win32`) | IOSurfaces as Vulkan images (`VK_EXT_metal_objects`) | DRI3 dma-bufs as Vulkan images (`VK_EXT_image_drm_format_modifier`) |
 
-Frames stay on the graphics card where the system allows it, and are copied through memory otherwise: on Linux without DRI3 1.2 (no GPU, some NVIDIA setups on Xorg, remote X), without the Vulkan extensions above, or when the driver cannot import the X server's buffer layout. Copies go through shared memory (XShm), or without it where the X server cannot reach Unishade's memory, such as over the network. The log says which one runs. `--render ... --gpu-source` exercises the graphics-card path of the effect runtime without a window.
+Frames stay on the graphics card where the system allows it, and are copied through memory otherwise: on Windows when Direct3D 11 cannot share them with the graphics card Vulkan runs on or Vulkan cannot import them, on Linux without DRI3 1.2 (no GPU, some NVIDIA setups on Xorg, remote X), without the Vulkan extensions above, or when the driver cannot import the X server's buffer layout. On Linux, copies go through shared memory (XShm), or without it where the X server cannot reach Unishade's memory, such as over the network. The log says which one runs. `--render ... --gpu-source` exercises the graphics-card path of the effect runtime without a window.
 
 On Linux, frames are copied when XDamage says the game drew, at most about once per refresh of the monitor the game is on. Without XDamage they are copied once per refresh. While the overlay is hidden, because another window is in front, a few frames a second are copied. On macOS the stream itself is slowed to five frames a second then. Frames handed over as dma-bufs are not synchronised with the game's drawing, so one can now and then show a picture still being drawn.
 
@@ -36,7 +36,7 @@ ScreenCaptureKit copies a single window whole, title bar included. macOS gives n
 
 ### A panel that does not activate
 
-The menu needs the keyboard, but making Unishade the active program switches away from a game's full-screen Space. Only a panel created with `NSWindowStyleMaskNonactivatingPanel` can take the keyboard without activating its program, and the style has to be set when the window is made. GLFW makes its windows itself, so `posix.cmake` patches GLFW's `cocoa_window.m` in a copy under `patched/`. The patch adds `GLFWPanel`, an `NSPanel` that can become key, and `glfwCocoaPanelHint`, which makes the next window GLFW creates such a panel. `PrepareOverlayWindow` sets the hint. Configuring stops if the patched lines change, so a GLFW update cannot drop the patch unnoticed. If the overlay still is not a panel, the log says so and `FocusOverlay` activates Unishade as before.
+The menu needs the keyboard, but making Unishade the active program switches away from a game's full-screen Space. Only a panel created with `NSWindowStyleMaskNonactivatingPanel` can take the keyboard without activating its program, and the style has to be set when the window is made. GLFW makes its windows itself, so `cmake/libraries.cmake` patches GLFW's `cocoa_window.m` in a copy under `patched/`. The patch adds `GLFWPanel`, an `NSPanel` that can become key, and `glfwCocoaPanelHint`, which makes the next window GLFW creates such a panel. `PrepareOverlayWindow` sets the hint. Configuring stops if the patched lines change, so a GLFW update cannot drop the patch unnoticed. If the overlay still is not a panel, the log says so and `FocusOverlay` activates Unishade as before.
 
 ### Focus
 
@@ -78,15 +78,25 @@ MoltenVK offers no mailbox mode, only FIFO and immediate. In FIFO the overlay wo
 
 ## Shortcuts, screenshots and input
 
-Shortcuts are written as on Windows, such as `Ctrl+F9`, including the number pad keys `Numpad0` to `Numpad9`, `NumpadMultiply`, `NumpadAdd`, `NumpadSubtract`, `NumpadDecimal` and `NumpadDivide`. macOS has function keys up to F20.
+Shortcuts are written the same way on every system, such as `Ctrl+F9`, including the number pad keys `Numpad0` to `Numpad9`, `NumpadMultiply`, `NumpadAdd`, `NumpadSubtract`, `NumpadDecimal` and `NumpadDivide`. macOS has function keys up to F20.
 
-Screenshots go to `Unishade` in the pictures folder: `~/Pictures` on macOS, and on Linux the one `XDG_PICTURES_DIR` names in the environment or in `~/.config/user-dirs.dirs`, which is not always `~/Pictures`. Files are named after the game, with anything that does not belong in a file name left out.
+Screenshots go to `Unishade` in the pictures folder: the one Windows names, which can be in OneDrive, `~/Pictures` on macOS, and on Linux the one `XDG_PICTURES_DIR` names in the environment or in `~/.config/user-dirs.dirs`, which is not always `~/Pictures`. Files are named after the game, with anything that does not belong in a file name left out.
 
-Effects that read the keyboard and mouse, through uniforms such as `key` and `mousebutton`, see Windows virtual-key codes, as on Windows. Unishade reads them for the whole system, so only while the game or the menu is in front, and only while something uses them: a technique with a shortcut, or such a uniform in an effect that is on. The mouse wheel only reaches effects while the menu is open, and X11 cannot tell the back and forward mouse buttons.
+Effects that read the keyboard and mouse, through uniforms such as `key` and `mousebutton`, see Windows virtual-key codes on every system, as in ReShade. Unishade reads them for the whole system, so only while the game or the menu is in front, and only while something uses them: a technique with a shortcut, or such a uniform in an effect that is on. The mouse wheel only reaches effects while the menu is open, and X11 cannot tell the back and forward mouse buttons.
 
 Technique shortcuts work as in ReShade: a preset's `Key` entries, or an effect's `toggle` annotations, turn a technique on or off. Like the keys effects read, they work while the game or the menu is in front, and not while typing in the menu.
 
 ## Building
+
+`CMakeLists.txt` sets up the project and includes the files in `cmake/` in order. Third-party files are downloaded when the build is configured, and checked against their SHA-256.
+
+Windows, with Visual Studio 2022 and its **Desktop development with C++** workload, a recent Windows SDK and CMake 3.20 or newer:
+
+```powershell
+cmake -S . -B build -A x64 -DBUILD_TESTING=ON
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
+```
 
 Linux (Debian and Ubuntu package names):
 
@@ -104,9 +114,10 @@ macOS:
 brew install cmake molten-vk vulkan-headers
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
 cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
 
-The Linux build is `build/unishade`. The macOS build is `build/Unishade.app`, with MoltenVK inside and an ad-hoc signature. An ad-hoc signature differs between builds, so macOS can drop the screen recording permission when a new build replaces the app.
+The Windows build is `build\Release\Unishade.exe`, and `installer/README.md` says how to build Setup. Windows builds only the tests of files that stand alone; the tests that link Unishade's own code run on macOS and Linux. The Linux build is `build/unishade`. The macOS build is `build/Unishade.app`, with MoltenVK inside and an ad-hoc signature. An ad-hoc signature differs between builds, so macOS can drop the screen recording permission when a new build replaces the app.
 
 The Mac app runs on macOS 13 and newer. The top-level `CMakeLists.txt` sets `CMAKE_OSX_DEPLOYMENT_TARGET` before `project()`, because `project()` reads it when it enables the first language, and a value set later has no effect. A value on the command line or in `MACOSX_DEPLOYMENT_TARGET` wins. CI reads the minimum version of the app and of `libMoltenVK.dylib` with `vtool` and fails above 13.0, since the runner's own macOS or a newer MoltenVK from Homebrew would raise it unnoticed. XRes, XDamage and DRI3 are loaded when the system has them, so only their headers are needed to build; without a header the build leaves that part out.
 
@@ -114,24 +125,131 @@ The Mac app runs on macOS 13 and newer. The top-level `CMakeLists.txt` sets `CMA
 
 `unishade --render in.png preset.ini out.png` applies a preset to an image with the overlay's own code and no window. It exits with 1 when a technique the preset turns on is missing or fails to start. A technique an effect turns on by itself is named when it fails, and does not change the exit code. CI renders the repository's presets this way on Mesa's software Vulkan driver.
 
-`--render` and `--install-effects` write their log to the terminal only and do not take the lock that keeps a second Unishade from starting, so the app can start while one runs. Ctrl-C, `SIGTERM` and `SIGHUP` quit the app the way closing the launcher does, and cancel a terminal install.
+`--render` and `--install-effects` write their log to the terminal only and do not take the lock that keeps a second Unishade from starting, so the app can start while one runs. Ctrl-C, and on macOS and Linux `SIGTERM` and `SIGHUP`, quit the app the way closing the launcher does, and cancel a terminal install.
 
 Set `UNISHADE_VALIDATION=1` to run with the Vulkan validation layers.
 
 ## Files
 
+Files include each other by their path from `src`, such as `#include "gpu/gpu.h"`, and the add-on interface as `<unishade_addon.h>`. The `.cpp` and `.mm` files but `main.cpp` and the other systems' files go into the library `unishade_core`, which the tests that need Unishade's own code link.
+
 | File | Does |
 | --- | --- |
-| `main.cpp` | Command line, single instance, starts `App` |
-| `app.cpp` | Finds the game, moves the overlay, shortcuts, presets, screenshots |
-| `ui.cpp` | What the shared launcher in `src/ui` shows, in its window and over the game as the menu |
-| `effects.cpp` | ReShade effect runtime on Vulkan |
-| `gpu.cpp` | Vulkan device, images and window swapchains |
-| `platform_x11.cpp`, `platform_macos.mm`, `platform_win32.cpp` | Everything in `platform.h` |
-| `emoji_macos.cpp` | Draws emoji with Core Text for the launcher and the menu, since Apple Color Emoji holds pictures that Dear ImGui's font loader cannot read. One character at a time, so joined emoji such as families and flags show as their parts |
-| `macho.h` | Reads the SDK a Mac program was built with from its executable, so the overlay knows whether macOS 26 draws the game with the new look. Plain C++, so tests can check it anywhere |
-| `window_rules.h` | macOS rules for which layers can hold a game, whether a window covers its screen, and which pixels of a frame are the game's. Kept apart so `tests/posix_tests.cpp` can check them without a window |
-| `setup.cpp` | `--install-effects` and the launcher's download button. Downloads over https only, except the sources given with `--effects-url` and `--presets-url`, which tests can point at local files |
-| `config.cpp`, `games.cpp`, `hotkeys.cpp` | `Unishade.ini`, `games.ini` and shortcuts |
+| `main.cpp` | Command line, single instance, `--render` and `--install-effects`, starts `App` |
 
-Kept in `src/`: `preset_ini.h` (ReShade presets), `game_list.h` (`games.ini`), `hotkey_text.h` (how shortcuts are written), `names.h` (the rules for game folders and typed names), `package_files.h` (unpacking effect packages), `menu_layout.h` (the menu's size), `ini_text.h` and `theme.h`.
+### `app/`
+
+| File | Does |
+| --- | --- |
+| `app.cpp`, `app.h` | The host: finds the game, moves the overlay, shortcuts, presets, screenshots |
+| `config.cpp`, `config.h` | `Unishade.ini`, the data folder, the screenshots folder and file locks |
+| `log.cpp`, `log.h` | `Unishade.log`, with the previous run's kept as `Unishade.old.log` |
+| `hotkeys.cpp`, `hotkeys.h` | Shortcuts as Dear ImGui keys and modifiers, read from and written to text |
+| `hotkey_text.h` | How shortcuts are written, such as `Ctrl+Shift+F8` |
+| `frame_limit.h` | Holds frames to a rate |
+| `frame_stats.h` | What the debug view shows: frames a second and how long Unishade works on each |
+| `old_settings.h` | Windows: the settings of the ReShade host of Unishade 0.6.3 and earlier, which `Unishade.ini` starts from |
+
+### `base/`
+
+| File | Does |
+| --- | --- |
+| `text.h` | Windows: UTF-8 to UTF-16 and back |
+| `ini_text.h` | Edits an INI file as text, keeping what it does not change |
+| `names.h` | The rules for names that become file and folder names, such as a game's presets folder, and for typed names |
+| `web_address.h` | Which part of a word in a message is a web address, for links in the launcher and the menu |
+| `image.h`, `stb.cpp` | Loads and checks images with stb, DDS included, within a memory budget |
+
+### `games/`
+
+| File | Does |
+| --- | --- |
+| `games.cpp`, `games.h` | `games.ini`, the games Unishade starts with, and `FindGameTarget`, which finds the game's window |
+| `game_list.h` | The text of `games.ini` |
+| `game_scan.cpp`, `game_scan.h` | Finds the games stores installed, for the list Unishade offers the first time it starts. Windows only so far |
+
+### `gpu/`
+
+| File | Does |
+| --- | --- |
+| `gpu.cpp`, `gpu.h` | The Vulkan device, images and window swapchains |
+| `upscale.cpp`, `upscale.h` | AMD's FSR 1, for effects that run below 100% |
+| `backdrop.cpp`, `backdrop.h` | The game's picture blurred behind the menu's tray, and shrunk for the launcher's page and screenshot thumbnails |
+
+### `effects/`
+
+| File | Does |
+| --- | --- |
+| `effects.cpp`, `effects.h` | ReShade effect runtime on Vulkan |
+| `uimask.cpp`, `uimask.h` | Keeps the game's own interface out of effects |
+| `preset_ini.h` | ReShade presets. Saving one changes only what changed |
+
+### `addons/`
+
+The add-on host. The interface add-ons are built against is `addons/unishade_addon.h` at the top of the repository.
+
+| File | Does |
+| --- | --- |
+| `addons.cpp`, `addons.h` | Finds, loads and keeps add-ons |
+| `addon_host.cpp` | The functions an add-on calls |
+| `addon_frames.cpp` | The images add-ons share with Unishade, and the order they and the effects run in |
+| `addon_library.h` | What these files share: an add-on's library as it is loaded |
+| `addon_manifest.h` | An add-on's `addon.ini` and the list of official add-ons' files, as text |
+| `addon_exchange_win32.h` | Windows: Direct3D 11 textures and a fence, shared with add-ons |
+| `addon_exchange_unix.h` | macOS and Linux: IOSurfaces and dma-bufs, shared with add-ons |
+
+### `platform/`
+
+| File | Does |
+| --- | --- |
+| `platform.h` | What differs between the systems: finding windows, copying their picture, global shortcuts and the overlay window's place above the game |
+| `windows/platform_win32.cpp` | Everything in `platform.h` for Windows |
+| `windows/Unishade.rc` | `Unishade.exe`'s icon and version |
+| `windows/Unishade.manifest` | Makes UTF-8 the program's code page |
+| `macos/platform_macos.mm` | Everything in `platform.h` for macOS |
+| `macos/emoji_macos.cpp`, `macos/emoji_macos.h` | Draws emoji with Core Text for the launcher and the menu, since Apple Color Emoji holds pictures that Dear ImGui's font loader cannot read. One character at a time, so joined emoji such as families and flags show as their parts |
+| `macos/macho.h` | Reads the SDK a Mac program was built with from its executable, so the overlay knows whether macOS 26 draws the game with the new look. Plain C++, so tests can check it anywhere |
+| `macos/window_rules.h` | macOS rules for which layers can hold a game, whether a window covers its screen, and which pixels of a frame are the game's. Kept apart so `tests/host_tests.cpp` can check them without a window |
+| `macos/Info.plist.in` | The app's `Info.plist` |
+| `linux/platform_x11.cpp` | Everything in `platform.h` for Linux |
+
+### `net/`, `discord/`, `setup/`
+
+| File | Does |
+| --- | --- |
+| `net/net.cpp`, `net/net.h` | Windows: HTTPS downloads through WinHTTP, shared with Setup |
+| `net/update.cpp`, `net/update.h` | Windows: looks for a newer Unishade on GitHub, which Setup installs |
+| `discord/discord.h`, `discord/discord_win32.cpp` | Discord Rich Presence. Windows only |
+| `discord/discord_rpc.h` | What goes through Discord's connection, the same on every system |
+| `setup/setup.cpp`, `setup/setup.h` | `--install-effects` and the launcher's download button. Downloads over https only, except the sources given with `--effects-url` and `--presets-url`, which tests can point at local files |
+| `setup/package_files.h` | Unpacks effect packages, for Unishade and for Setup on Windows |
+
+### `ui/`
+
+| File | Does |
+| --- | --- |
+| `ui.cpp`, `ui.h` | Fills in what the launcher shows, in its window and over the game as the menu, and carries out what the user does |
+| `launcher_ui.cpp`, `launcher_ui.h` | The launcher's design, drawn with Dear ImGui |
+| `tray.cpp`, `tray.h` | The menu's tray: the preset's effects as tiles, the menu's buttons and the sheets that grow out of it |
+| `kit.cpp`, `kit.h` | Unishade's look in Dear ImGui: colors, text sizes and controls. Setup uses it too |
+| `theme.h` | Unishade's colors |
+| `caption.h` | The launcher window's title bar, and which parts of it move the window |
+| `menu_layout.h` | The menu's size |
+
+### Outside `src/`
+
+| Path | Holds |
+| --- | --- |
+| `CMakeLists.txt` | The project's settings, then the files in `cmake/` |
+| `cmake/fetch.cmake` | `fetch_file` and `patch_source`, which download third-party files and change a few of their lines |
+| `cmake/libraries.cmake` | Dear ImGui, miniz, ReShade's effect compiler, stb, GLFW with its macOS patch, and Vulkan, as `unishade_libraries` |
+| `cmake/addons.cmake` | The example add-on, Depth, DLSS5, and the source file of the official add-ons |
+| `cmake/app.cmake` | The logo, fonts and FSR put into the program, `unishade_core` and the Unishade executable |
+| `cmake/installer.cmake` | Setup for Windows |
+| `cmake/tests.cmake` | The tests |
+| `cmake/bundle_macos.cmake` | Run after every macOS build: copies MoltenVK into `Unishade.app` and signs it again |
+| `cmake/official_addons.cmake` | Run at build time: puts `addons/official.ini`, with the SHA-256 of the add-ons the build made, and each add-on's `addon.ini` and icon into a source file of the program |
+| `addons/` | `unishade_addon.h`, the interface add-ons are built against, `official.ini`, and the add-ons `depth/`, `dlss5/` and `example/` |
+| `installer/` | Setup for Windows |
+| `tests/` | One program per file. `host_tests.cpp` checks settings, games, shortcuts and the rules for macOS windows, and `effects_tests.cpp` the parts of the effect runtime that need no graphics card |
+| `CREDITS.txt` | The credits that come with the macOS and Linux builds. `installer/CREDITS.txt` comes with Windows |
