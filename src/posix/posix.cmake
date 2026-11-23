@@ -320,6 +320,8 @@ set(POSIX_SOURCES
     "${FONTS_SOURCE}"
     "${FSR_SOURCE}"
     "${OFFICIAL_ADDONS_SOURCE}"
+    "${POSIX_DIR}/addon_frames.cpp"
+    "${POSIX_DIR}/addon_host.cpp"
     "${POSIX_DIR}/addons.cpp"
     "${POSIX_DIR}/app.cpp"
     "${POSIX_DIR}/backdrop.cpp"
