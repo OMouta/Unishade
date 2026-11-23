@@ -2,6 +2,10 @@
 # one's manifest and icon. LIST is official.ini, OUTPUT the source file, VERSION the version, BINARIES the add-ons this
 # build made, as name=path separated by |, and FOLDERS the folders with each add-on's addon.ini and icon.png,
 # separated by |.
+
+# Run with -P this file has no policies set, and a CMake older than 4 then reads "@VERSION@" as the variable's value,
+# so the placeholder would be replaced by itself and stay in the list.
+cmake_minimum_required(VERSION 3.20)
 file(READ "${LIST}" text)
 # Without its comments, which name the placeholders.
 string(REGEX REPLACE "(^|\n);[^\n]*" "" text "${text}")
@@ -39,4 +43,8 @@ endforeach()
 string(APPEND source "extern const char* const kOfficialManifests[];\nconst char* const kOfficialManifests[] = {\n${manifests}    nullptr,\n};\n")
 string(APPEND source "extern const unsigned char* const kOfficialIcons[];\nconst unsigned char* const kOfficialIcons[] = {\n${icons}    nullptr,\n};\n")
 string(APPEND source "extern const unsigned kOfficialIconSizes[];\nconst unsigned kOfficialIconSizes[] = {\n${sizes}    0,\n};\n")
+string(FIND "${source}" "@VERSION@" unfilled)
+if(NOT unfilled EQUAL -1)
+    message(FATAL_ERROR "@VERSION@ is still in the official add-ons, so their downloads would not be found.")
+endif()
 file(WRITE "${OUTPUT}" "${source}")

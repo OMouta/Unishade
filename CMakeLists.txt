@@ -12,7 +12,7 @@ else()
 endif()
 # Which beta of that version this is: 2 builds 0.7.0-beta.2, with the beta icon and a BETA badge in the launcher, and
 # the release workflow publishes it as a prerelease. 0 builds the version itself. The workflow reads this line.
-set(UNISHADE_BETA 1)
+set(UNISHADE_BETA 2)
 if(UNISHADE_BETA GREATER 0)
     set(UNISHADE_VERSION "${PROJECT_VERSION}-beta.${UNISHADE_BETA}")
 else()
