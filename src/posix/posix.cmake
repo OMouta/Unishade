@@ -136,10 +136,15 @@ set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_X11 ON CACHE BOOL "" FORCE)
+# CMake before 3.24, as Ubuntu 22.04 packages, does not know DOWNLOAD_EXTRACT_TIMESTAMP and reads it as part of the hash.
+set(GLFW_EXTRACT_TIMESTAMP "")
+if(NOT CMAKE_VERSION VERSION_LESS 3.24)
+    set(GLFW_EXTRACT_TIMESTAMP DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+endif()
 FetchContent_Declare(glfw
     URL https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.zip
     URL_HASH SHA256=b5ec004b2712fd08e8861dc271428f048775200a2df719ccf575143ba749a3e9
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    ${GLFW_EXTRACT_TIMESTAMP})
 FetchContent_MakeAvailable(glfw)
 if(APPLE)
     # The overlay has to take the keyboard for the menu without making Unishade the active program, which would take
