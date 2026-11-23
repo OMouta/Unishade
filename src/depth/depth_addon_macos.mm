@@ -18,6 +18,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdarg>
 #include <cstdio>
@@ -281,7 +282,9 @@ Depth::Depth(const UnishadeHost& unishade) : host(unishade), directory(unishade.
         throw std::runtime_error("The model is missing: " + model.string() + ".");
     // Core ML keeps what it compiled for as long as the cache says, so a model file that changes needs a cache of its
     // own. ONNX Runtime keys the cache by the model's path only.
-    const auto modified = fs::last_write_time(model, error).time_since_epoch().count();
+    // The file clock counts in 128 bits here, which std::to_string does not take.
+    const long long modified = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        fs::last_write_time(model, error).time_since_epoch()).count();
     cacheRoot = fs::path(directory) / "CoreML";
     cache = cacheRoot / (std::to_string(modelSize) + "-" + std::to_string(modified));
 
