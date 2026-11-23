@@ -232,6 +232,32 @@ kbd {
   box-shadow: 0 0 0 1px rgb(255 255 255 / 0.12);
 }
 
+/* The yellow badge a beta's launcher has. */
+.beta-tag,
+.prose.beta p:has(> img)::after {
+  padding: 3px 11px;
+  border-radius: 999px;
+  color: #000;
+  background: var(--yellow);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* While the version the docs describe is in beta, each screenshot says so. The tag sits on the top edge, since a
+   screenshot of a piece of the app has no corner to spare. */
+.prose.beta p:has(> img) {
+  position: relative;
+}
+
+.prose.beta p:has(> img)::after {
+  content: 'Beta';
+  position: absolute;
+  top: -12px;
+  left: 24px;
+}
+
 .prose code {
   padding: 2px 7px;
   border-radius: 7px;

@@ -12,7 +12,7 @@ import menu from '../assets/shots/menu.jpg';
 import menuPresets from '../assets/shots/menu-presets.jpg';
 import addons from '../assets/shots/crop-addons.png';
 import logo from '../../../assets/UnishadeSmall.png';
-import { release } from '../release';
+import { inBeta, release } from '../release';
 import { requirements } from '../site';
 
 // The bands, for the dots at the side that say which one shows.
@@ -59,19 +59,26 @@ const platforms = [
     <section class="band orange" id="orange">
       <div class="shot photo stage">
         <Image src={found} widths={[480, found.width]} sizes={`(max-width: 800px) 84vw, ${found.width}px`} alt="Unishade listing the games it found" class="front" />
+        {inBeta && <span class="beta-tag">Beta</span>}
       </div>
       <h2>Pick your games once.</h2>
       <p>After that, just open the game.</p>
     </section>
 
     <section class="band yellow" id="yellow">
-      <Image src={menu} widths={[960, 1440, 1920]} sizes="92vw" alt="Unishade's menu over a game: the preset's effects as colored tiles, with the preset's name and buttons under them" class="shot photo low" />
+      <div class="shot photo frame">
+        <Image src={menu} widths={[960, 1440, 1920]} sizes="92vw" alt="Unishade's menu over a game: the preset's effects as colored tiles, with the preset's name and buttons under them" />
+        {inBeta && <span class="beta-tag">Beta</span>}
+      </div>
       <h2>Change it while you play.</h2>
       <p>The menu opens over the game, one tile per effect.</p>
     </section>
 
     <section class="band green" id="green">
-      <Image src={menuPresets} widths={[960, 1440, 1920]} sizes="92vw" alt="The menu's list of presets over a game" class="shot photo low" />
+      <div class="shot photo frame">
+        <Image src={menuPresets} widths={[960, 1440, 1920]} sizes="92vw" alt="The menu's list of presets over a game" />
+        {inBeta && <span class="beta-tag">Beta</span>}
+      </div>
       <h2>A preset for every game.</h2>
       <p>Every game keeps the look you gave it.</p>
     </section>
@@ -89,6 +96,7 @@ const platforms = [
       <div class="shot photo stage">
         <Image src={after} widths={[960, 1440, 1920]} sizes="92vw" alt="" class="back dim" />
         <Image src={addons} widths={[480, addons.width]} sizes={`(max-width: 800px) 84vw, ${addons.width}px`} alt="The Add-ons window, with its add-ons turned on" class="front" />
+        {inBeta && <span class="beta-tag">Beta</span>}
       </div>
       <h2>Extend it with add-ons.</h2>
       <p>For when effects alone aren't enough.</p>
@@ -323,9 +331,27 @@ const platforms = [
     object-fit: cover;
   }
 
-  /* The menu sits at the bottom of the game, so that is the part to keep. */
-  .shot.photo.low {
+  /* The game with the menu over it, in a box whose corner can hold the beta tag. The menu sits at the bottom of the
+     game, so that is the part to keep. */
+  .frame {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .frame img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
     object-position: 50% 100%;
+  }
+
+  /* While the version in the pictures is in beta, the ones that show the app say so. */
+  .shot .beta-tag {
+    position: absolute;
+    top: 18px;
+    left: 18px;
   }
 
   /* A piece of the app over the game, as the menu is. The piece keeps the size it has on screen, so its words stay
@@ -498,6 +524,18 @@ const platforms = [
 
     .stage {
       aspect-ratio: auto;
+    }
+
+    .shot .beta-tag {
+      top: 10px;
+      left: 10px;
+      font-size: 0.65rem;
+    }
+
+    /* The piece of the app fills the box here, and its title is in the top corner. */
+    .stage .beta-tag {
+      top: auto;
+      bottom: 10px;
     }
 
     .stage .front {

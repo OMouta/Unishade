@@ -142,4 +142,7 @@ async function newest(): Promise<Release> {
 
 export const release = await newest();
 
+// A beta of the version the site describes is out, so its pictures of the app are that beta's.
+export const inBeta = Boolean(release.upcoming && release.beta?.version.startsWith(`${release.upcoming}-beta.`));
+
 export const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;

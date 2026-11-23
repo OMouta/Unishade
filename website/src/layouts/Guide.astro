@@ -3,7 +3,7 @@
 // an entry of a content collection, listed in the sidebar by order.
 import { render, type CollectionEntry } from 'astro:content';
 import { links } from '../links';
-import { release } from '../release';
+import { inBeta, release } from '../release';
 import Base from './Base.astro';
 
 type Entry = CollectionEntry<'docs'> | CollectionEntry<'developers'>;
@@ -29,7 +29,6 @@ const { entry, pages, root, home, label, kicker, code, markdown, source } = Astr
 // The pages describe the version in CMakeLists.txt. Until it is released they say so, and where the pages of the
 // newest release are, which is its tag on GitHub.
 const upcoming = release.upcoming;
-const inBeta = upcoming && release.beta?.version.startsWith(`${upcoming}-beta.`);
 const released = source && `${links.github}/tree/v${release.version}/${source}`;
 // A chat with an assistant that starts by reading the page's Markdown.
 const ask = `Read ${new URL(markdown ?? '/', Astro.site)} so I can ask questions about making a Unishade add-on.`;
@@ -123,7 +122,7 @@ const tone = (page: Entry) => tones[pages.indexOf(page) % tones.length];
           </p>
         )
       }
-      <div class:list={['prose', { reference: code }]}>
+      <div class:list={['prose', { reference: code, beta: inBeta }]}>
         <Content />
       </div>
       {
