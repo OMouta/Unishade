@@ -86,7 +86,7 @@ On Windows, closing the Unishade window leaves it running by the clock. To quit,
 
 Install the new version over the old one. Your presets, settings and games stay.
 
-On Windows, Unishade tells you when a new version is out, and **Update** on that card installs it: Unishade downloads the new Setup, checks it against the SHA-256 the release lists, and starts again as the new version. A released version's Setup also has to be signed like the Unishade you have. A beta is offered newer betas too, which aren't code-signed. A released version is only offered released versions. Turn the check off with **Settings > Check for updates**. On macOS and Linux, get new versions from the [download page](/download/).
+On Windows, Unishade tells you when a new version is out, and **Update** on that card installs it: Unishade downloads the new Setup, checks it against the SHA-256 the release lists, and starts again as the new version. A released version's Setup also has to be signed like the Unishade you have. A beta is offered newer betas too, which aren't code-signed. A released version is only offered released versions. On macOS and Linux, Unishade tells you too, and **Download** on the card opens the release's page: download the new version there and put it in place of the one you have. Turn the check off with **Settings > Check for updates**.
 
 When a beta of the next version is out, the [download page](/download/) has it too. Setup installs it over the Unishade you have.
 

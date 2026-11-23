@@ -348,7 +348,7 @@ jobs:
             prerelease=(--prerelease)
             version=${RELEASE_TAG#v}
             version=${version%%-beta.*}
-            printf '%s\n\n' "This is a beta of Unishade $version, for testing. Setup installs it over the Unishade you have. On Windows, the beta offers to install newer betas, and $version once it's released. Betas aren't code-signed, so Windows may say **Windows protected your PC** before Setup runs. Click **More info**, then **Run anyway**." > release-notes.md
+            printf '%s\n\n' "This is a beta of Unishade $version, for testing. Setup installs it over the Unishade you have. On Windows, the beta offers to install newer betas, and $version once it's released. On macOS and Linux it says when one is out. Betas aren't code-signed, so Windows may say **Windows protected your PC** before Setup runs. Click **More info**, then **Run anyway**." > release-notes.md
           else
             exclude=(--exclude 'v*-beta.*')
           fi
