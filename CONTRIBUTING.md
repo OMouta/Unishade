@@ -32,7 +32,7 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-The EXE is at `build\Release\Unishade.exe`. See `installer/README.md` for building and testing the installer, and [src/posix](src/posix/README.md) for macOS and Linux.
+The EXE is at `build\Release\Unishade.exe`. See `installer/README.md` for building and testing the installer, and [src/README.md](src/README.md) for macOS and Linux and for how the source is laid out.
 
 GitHub Actions builds and tests the Windows, Linux and macOS versions for pushes and pull requests, and runs `tests/installer_tests.ps1` against the new Setup. You can also run **Build and release** manually from the Actions tab, which signs the Windows files through [SignPath](https://unishade.me/code-signing/) with the test certificate. Successful builds provide `Unishade-windows-x64` (the EXE, the add-ons `Depth.dll` and `Unishade_nvngx.dll`, and Setup), `Unishade-linux-x64` and `Unishade-macOS` artifacts.
 
@@ -67,11 +67,13 @@ A release doesn't change `main`, so Cloudflare would keep linking the old files.
 
 ## Code changes
 
-Game discovery lives in `src/posix/games.cpp`. `FindGameTarget()` uses a manual window selection or the executable list saved in `games.ini`, with Roblox enabled by default. Custom games match their full executable path; Roblox matches its filename because its install folder changes with updates. Discovery queries executable metadata without reading game memory or injecting code.
+Windows, macOS and Linux build the same sources in `src/`, with what differs between the systems in `src/platform/`. The build is in `cmake/`, the add-on interface and the official add-ons in `addons/`, Setup in `installer/` and the tests in `tests/`. `src/README.md` lists what each folder and file does.
+
+Game discovery lives in `src/games/games.cpp`. `FindGameTarget()` uses a manual window selection or the executable list saved in `games.ini`. On macOS and Linux the list starts with Roblox. On Windows it starts empty, and Unishade offers the games `src/games/game_scan.cpp` finds installed. Custom games match their full executable path; Roblox matches its filename because its install folder changes with updates. Discovery queries executable metadata without reading game memory or injecting code.
 
 - The host is C++20.
-- Builds use `/W4`. Fix warnings rather than suppressing them.
-- Hotkey parsing has tests in `tests/posix_tests.cpp`, which builds on macOS and Linux. Add a case when you change it.
+- Builds use `/W4` with MSVC and `-Wall -Wextra` with GCC and Clang. Fix warnings rather than suppressing them.
+- Hotkey parsing has tests in `tests/host_tests.cpp`, which builds on macOS and Linux. Add a case when you change it.
 - Installer changes must pass `tests/installer_tests.ps1`. It downloads all effect packages, so it takes a few minutes. CI runs it too, with the presets from your commit.
 - Keep pull requests focused. Separate unrelated fixes into their own pull requests.
 - Do not bump the version. Releases are cut from tags by the maintainer.
