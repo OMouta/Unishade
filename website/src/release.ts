@@ -2,6 +2,7 @@
 // buttons link straight to the newest files. When GitHub can't be reached, or has no release with a Setup, the
 // buttons link to the Releases page instead and the build goes on. A beta of the version after it, when one is out,
 // comes along for the download page's banner.
+import cmake from '../../CMakeLists.txt?raw';
 import { links, repository } from './links';
 
 export interface Download {
@@ -32,6 +33,8 @@ export interface Release {
   linux?: Download;
   // The newest beta, unless the version it leads to is out.
   beta?: Beta;
+  // The version the site describes, from CMakeLists.txt, while it's newer than the release. The docs say so.
+  upcoming?: string;
 }
 
 interface Asset {
@@ -66,6 +69,9 @@ function newer(a: number[], b: number[]) {
 
 const download = (asset: Asset | undefined): Download | undefined =>
   asset && { url: asset.browser_download_url, name: asset.name, size: asset.size };
+
+// The version being built, from project(Unishade VERSION x.y.z).
+const project = /project\(Unishade VERSION (\d+\.\d+\.\d+)/.exec(cmake)?.[1];
 
 async function list() {
   const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
@@ -117,6 +123,7 @@ async function newest(): Promise<Release> {
     return { macos: asset(/^Unishade-macOS\.zip$/), linux: asset(/^Unishade-linux-x64\.tar\.gz$/) };
   };
   const { release, setup, version } = best;
+  const target = project ? parse(project) : undefined;
   return {
     version: version.slice(0, 3).join('.'),
     date: new Date(release.published_at),
@@ -129,6 +136,7 @@ async function newest(): Promise<Release> {
       beta && newer(beta.version, version)
         ? { version: beta.release.tag_name.slice(1), notes: beta.release.html_url, setup: download(beta.setup)!, ...files(beta.release) }
         : undefined,
+    upcoming: target && newer(target, version) ? project : undefined,
   };
 }
 

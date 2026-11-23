@@ -2,6 +2,8 @@
 // A set of guide pages with a sidebar: the docs for people who use Unishade, and the ones for developers. Each page is
 // an entry of a content collection, listed in the sidebar by order.
 import { render, type CollectionEntry } from 'astro:content';
+import { links } from '../links';
+import { release } from '../release';
 import Base from './Base.astro';
 
 type Entry = CollectionEntry<'docs'> | CollectionEntry<'developers'>;
@@ -19,9 +21,16 @@ interface Props {
   code?: boolean;
   // Where the page is as Markdown, when it is. The page then offers to copy it, for pasting into a chat with an agent.
   markdown?: string;
+  // The folder these pages are in, in the repository, when the newest release has them there too.
+  source?: string;
 }
 
-const { entry, pages, root, home, label, kicker, code, markdown } = Astro.props;
+const { entry, pages, root, home, label, kicker, code, markdown, source } = Astro.props;
+// The pages describe the version in CMakeLists.txt. Until it is released they say so, and where the pages of the
+// newest release are, which is its tag on GitHub.
+const upcoming = release.upcoming;
+const inBeta = upcoming && release.beta?.version.startsWith(`${upcoming}-beta.`);
+const released = source && `${links.github}/tree/v${release.version}/${source}`;
 // A chat with an assistant that starts by reading the page's Markdown.
 const ask = `Read ${new URL(markdown ?? '/', Astro.site)} so I can ask questions about making a Unishade add-on.`;
 const chats = [
@@ -102,6 +111,18 @@ const tone = (page: Entry) => tones[pages.indexOf(page) % tones.length];
     </nav>
 
     <main class="guide">
+      {
+        upcoming && (
+          <p class="upcoming">
+            These pages describe Unishade {upcoming}, which {inBeta ? 'is in beta' : "isn't out yet"}.{' '}
+            {inBeta && <a href="/download/">Get the beta</a>}
+            {inBeta && (released ? ', or read ' : '.')}
+            {!inBeta && released && 'Read '}
+            {released && <a href={released}>the docs for {release.version}</a>}
+            {released && '.'}
+          </p>
+        )
+      }
       <div class:list={['prose', { reference: code }]}>
         <Content />
       </div>
@@ -358,6 +379,15 @@ const tone = (page: Entry) => tones[pages.indexOf(page) % tones.length];
 
   .guide {
     max-width: 760px;
+  }
+
+  /* Says that the pages are ahead of the newest release, until their version is out. */
+  .upcoming {
+    margin-bottom: 32px;
+    padding: 16px 20px;
+    border-radius: var(--radius);
+    color: var(--haze);
+    background: var(--night-raised);
   }
 
   /* The page as Markdown: a button that copies it, in the cover's top right corner, and an arrow beside it that opens
