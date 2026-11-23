@@ -12,6 +12,9 @@ export const links = {
   license: `${github}/blob/main/LICENSE`,
   // How to build the macOS and Linux version.
   build: `${github}/tree/main/src/posix#building`,
+  // For people who write add-ons: the header that is the whole interface, and an add-on to start from.
+  addonHeader: `${github}/blob/main/src/addons/unishade_addon.h`,
+  addonExample: `${github}/tree/main/src/addons/example`,
   reshade: 'https://reshade.me',
   signpath: 'https://about.signpath.io/',
   signpathFoundation: 'https://signpath.org/',
