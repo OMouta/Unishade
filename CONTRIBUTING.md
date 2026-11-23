@@ -76,7 +76,7 @@ Game discovery lives in `src/games/games.cpp`. `FindGameTarget()` uses a manual 
 - Hotkey parsing has tests in `tests/host_tests.cpp`, which builds on macOS and Linux. Add a case when you change it.
 - Installer changes must pass `tests/installer_tests.ps1`. It downloads all effect packages, so it takes a few minutes. CI runs it too, with the presets from your commit.
 - Keep pull requests focused. Separate unrelated fixes into their own pull requests.
-- Do not bump the version. Releases are cut from tags by the maintainer.
+- Do not change the version in `CMakeLists.txt`. The maintainer raises it for a release, and the release workflow creates the tag from it.
 
 ## Pull requests
 
