@@ -15,8 +15,8 @@ Unishade and Setup only go online to check for a new version and to download wha
 
 - Each time it starts, Unishade asks GitHub (api.github.com) for the newest version. The request sends your IP address and a user agent: on Windows one with Unishade's version, like `Unishade/0.6.0`, and on macOS and Linux the one of your system's curl. **Check for updates** in the menu's **Settings** turns this off. On Windows, when you choose **Update**, it downloads the new Setup from GitHub.
 - While **Show on Discord** is on, Unishade for Windows downloads Discord's list of games from discord.com to find your game's icon, at most once a week.
-- Setup downloads ReShade from reshade.me, and ReShade's license, the effects and the presets from GitHub. If you pick an add-on, it comes from GitHub, and depth estimation's model from Hugging Face.
-- On macOS and Linux, Unishade downloads the effects and presets from GitHub when you ask it to, with **Download effects and presets** or `unishade --install-effects`.
+- On Windows, Setup has Unishade download the effects and the presets from GitHub. On macOS and Linux, Unishade downloads them when you ask it to, with **Download effects and presets** or `unishade --install-effects`.
+- When you install an add-on on the **Add-ons** page, it comes from GitHub, and depth estimation's model from Hugging Face.
 
 What those sites do with a request is up to their own privacy policies.
 
