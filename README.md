@@ -54,7 +54,7 @@ Run your games in windowed or borderless mode. The [install guide](https://unish
 If regular ReShade already works in your game, use that.
 
 > [!WARNING]
-> Only download Unishade from [unishade.me](https://unishade.me) or this repository. The unrelated united-debug/unishade repository has been reported as malicious and isn't part of this project.
+> Only download Unishade from [unishade.me](https://unishade.me) or this repository. The unrelated united-debug/unishade repository isn't part of this project.
 
 ## Help
 
