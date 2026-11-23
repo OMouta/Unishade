@@ -14,14 +14,28 @@ $repo = Split-Path $PSScriptRoot -Parent
 $testRoot = Join-Path $repo ('build/installer-tests/' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
 
-# --portable keeps the tests out of the Start menu and Windows' app list.
+# Runs Setup and returns its exit code. Start-Process -Wait would also wait for every program Setup starts, which with
+# --launch is Unishade, so this waits for Setup alone. A Setup that does not end fails the test instead of the whole run.
 function Invoke-Setup([string]$Name, [string[]]$Arguments) {
     $arguments = @('--silent', '--log', "`"$testRoot/$Name.log`"") + $Arguments
     if ($PresetsBaseUrl) { $arguments += @('--presets-url', $PresetsBaseUrl) }
-    return (Start-Process $Setup -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru).ExitCode
+    $start = [Diagnostics.ProcessStartInfo]::new($Setup, ($arguments -join ' '))
+    $start.UseShellExecute = $true
+    $start.WindowStyle = 'Hidden'
+    $process = [Diagnostics.Process]::Start($start)
+    try {
+        if (-not $process.WaitForExit(20 * 60 * 1000)) {
+            $process.Kill()
+            throw "$Name did not end within 20 minutes. See $testRoot/$Name.log"
+        }
+        return $process.ExitCode
+    } finally {
+        $process.Dispose()
+    }
 }
 
-# Exit code 2 means Setup installed Unishade, but effects or presets were left out.
+# --portable keeps the tests out of the Start menu and Windows' app list. Exit code 2 means Setup installed Unishade,
+# but effects or presets were left out.
 function Invoke-TestInstaller(
     [string]$Name, [string]$Components, [bool]$ExpectSuccess = $true, [string[]]$Extra = @(), [int]$ExpectExitCode = 0
 ) {
