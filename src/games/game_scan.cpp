@@ -1,8 +1,8 @@
 // Finds the games installed on this computer, for the list Unishade offers the first time it starts.
 
-#include "games/games.h"
 #include "app/config.h"
 #include "games/game_scan.h"
+#include "games/games.h"
 
 #include <algorithm>
 #include <cctype>

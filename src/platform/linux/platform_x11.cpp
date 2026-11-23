@@ -4,8 +4,8 @@
 // XDamage says when the game drew, so frames are only copied when there is something new.
 
 #include "platform/platform.h"
-#include "gpu/gpu.h"
 #include "app/log.h"
+#include "gpu/gpu.h"
 
 #define GLFW_EXPOSE_NATIVE_X11
 #include <GLFW/glfw3.h>

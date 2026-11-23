@@ -2,9 +2,9 @@
 
 #include "addons/addons.h"
 #include "app/config.h"
-#include "effects/effects.h"
 #include "app/frame_limit.h"
 #include "app/frame_stats.h"
+#include "effects/effects.h"
 #include "games/games.h"
 #include "gpu/gpu.h"
 #include "platform/platform.h"

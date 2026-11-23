@@ -4,8 +4,8 @@
 // For VK_EXT_metal_objects, which lets an IOSurface back a Vulkan image.
 #define VK_USE_PLATFORM_METAL_EXT
 #include "platform/platform.h"
-#include "gpu/gpu.h"
 #include "app/log.h"
+#include "gpu/gpu.h"
 #include "platform/macos/macho.h"
 #include "platform/macos/window_rules.h"
 #include "ui/caption.h"

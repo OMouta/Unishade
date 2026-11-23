@@ -1,14 +1,14 @@
 #include "addons/addon_library.h"
 #include "app/config.h"
-#include "gpu/gpu.h"
-#include "base/ini_text.h"
 #include "app/log.h"
+#include "base/ini_text.h"
+#include "gpu/gpu.h"
 #include "setup/setup.h"
 
 #ifdef _WIN32
 #include <unknwn.h>
-#include "net/net.h"
 #include "base/text.h"
+#include "net/net.h"
 #else
 #include <dlfcn.h>
 #endif

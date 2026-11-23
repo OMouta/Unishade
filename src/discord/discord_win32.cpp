@@ -1,7 +1,7 @@
 #include "discord/discord.h"
 #include "app/app.h"
-#include "discord/discord_rpc.h"
 #include "app/log.h"
+#include "discord/discord_rpc.h"
 #include "net/net.h"
 
 #include <windows.h>

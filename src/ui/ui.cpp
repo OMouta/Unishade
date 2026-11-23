@@ -10,14 +10,14 @@
 #ifdef __APPLE__
 #include "platform/macos/emoji_macos.h"
 #endif
-#include "gpu/backdrop.h"
 #include "app/log.h"
 #include "base/image.h"
-#include "ui/menu_layout.h"
-#include "ui/theme.h"
 #include "effects/uimask.h"
+#include "gpu/backdrop.h"
 #include "ui/kit.h"
 #include "ui/launcher_ui.h"
+#include "ui/menu_layout.h"
+#include "ui/theme.h"
 
 #include <GLFW/glfw3.h>
 #include <imgui.h>

@@ -1,12 +1,12 @@
 #include "setup/setup.h"
 #include "app/config.h"
 #include "app/log.h"
-#include "setup/package_files.h"
 #include "effects/preset_ini.h"
+#include "setup/package_files.h"
 
 #ifdef _WIN32
-#include "net/net.h"
 #include "base/text.h"
+#include "net/net.h"
 
 #include <random>
 #else

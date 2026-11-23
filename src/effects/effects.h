@@ -1,9 +1,9 @@
 #pragma once
 
 #include "app/config.h"
-#include "gpu/gpu.h"
 #include "base/image.h"
 #include "effects/preset_ini.h"
+#include "gpu/gpu.h"
 
 #include <effect_module.hpp>
 

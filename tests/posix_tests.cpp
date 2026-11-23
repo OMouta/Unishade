@@ -2,14 +2,14 @@
 // names, notices and the checksum Setup verifies presets with.
 
 #include "app/config.h"
-#include "games/game_list.h"
-#include "games/games.h"
 #include "app/hotkeys.h"
 #include "app/log.h"
-#include "platform/macos/macho.h"
 #include "effects/preset_ini.h"
-#include "setup/setup.h"
+#include "games/game_list.h"
+#include "games/games.h"
+#include "platform/macos/macho.h"
 #include "platform/macos/window_rules.h"
+#include "setup/setup.h"
 
 #include <unistd.h>
 

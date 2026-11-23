@@ -4,8 +4,8 @@
 
 #include "app/app.h"
 #include "app/log.h"
-#include "setup/setup.h"
 #include "effects/uimask.h"
+#include "setup/setup.h"
 
 // Before GLFW's header, which otherwise defines APIENTRY itself.
 #ifdef _WIN32

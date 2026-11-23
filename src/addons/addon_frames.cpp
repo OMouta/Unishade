@@ -1,10 +1,10 @@
 // Add-ons working on frames: the images they share with Unishade, and the order they and the effects run in.
 
 #include "addons/addon_library.h"
-#include "gpu/backdrop.h"
 #include "app/config.h"
-#include "gpu/gpu.h"
 #include "app/log.h"
+#include "gpu/backdrop.h"
+#include "gpu/gpu.h"
 
 #ifdef _WIN32
 #include <unknwn.h>

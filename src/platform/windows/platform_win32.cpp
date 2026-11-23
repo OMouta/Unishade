@@ -3,11 +3,11 @@
 #include <unknwn.h>
 
 #include "platform/platform.h"
-#include "gpu/gpu.h"
 #include "app/log.h"
 #include "base/text.h"
-#include "ui/theme.h"
+#include "gpu/gpu.h"
 #include "ui/caption.h"
+#include "ui/theme.h"
 
 #include <d3d11_4.h>
 #include <d3dcompiler.h>

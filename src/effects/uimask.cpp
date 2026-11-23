@@ -1,7 +1,7 @@
 #include "effects/uimask.h"
 #include "app/config.h"
-#include "base/image.h"
 #include "app/log.h"
+#include "base/image.h"
 
 #include <effect_codegen.hpp>
 #include <effect_parser.hpp>

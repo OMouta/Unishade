@@ -1,9 +1,9 @@
 #include "app/app.h"
 #include "app/log.h"
-#include "ui/theme.h"
-#include "ui/ui.h"
 #include "effects/uimask.h"
 #include "gpu/upscale.h"
+#include "ui/theme.h"
+#include "ui/ui.h"
 #ifdef _WIN32
 #include "discord/discord.h"
 #include "net/update.h"

@@ -1,6 +1,6 @@
 #include "app/config.h"
-#include "base/ini_text.h"
 #include "app/log.h"
+#include "base/ini_text.h"
 #include "base/names.h"
 
 #ifdef _WIN32
