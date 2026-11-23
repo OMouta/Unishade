@@ -118,7 +118,7 @@ static void Ui(void* addon, const UnishadeUi* ui)
     else
         snprintf(line, sizeof(line), "No game is being played. %u effects are loaded.", host->techniqueCount(host));
     ui->text(ui, line);
-    snprintf(line, sizeof(line), "Said %u times", example->said);
+    snprintf(line, sizeof(line), "Messages shown: %u", example->said);
     ui->progress(ui, line, example->shown > 0 ? example->shown / 3 : 0);
 
     ui->toggle(ui, "Quiet", &example->quiet);
