@@ -5,8 +5,8 @@ on:
     branches: ['**']
   pull_request:
   # Manual runs are signed by SignPath. With release on, they're signed with the release certificate and published as
-  # the version in CMakeLists.txt, or as a prerelease when UNISHADE_BETA there makes it a beta. Otherwise they're signed
-  # with the test certificate, to try the signing.
+  # the version in CMakeLists.txt. When UNISHADE_BETA there makes it a beta, release publishes it as a prerelease
+  # instead, which is not signed. Without release, they're signed with the test certificate, to try the signing.
   workflow_dispatch:
     inputs:
       release:
@@ -35,7 +35,7 @@ jobs:
           persist-credentials: false
       # project(Unishade VERSION x.y.z) and set(UNISHADE_BETA n) set the version the files report and name the release:
       # x.y.z, or x.y.z-beta.n when n is not 0. A release is checked here, so a mistake fails before anyone is asked to
-      # approve the signing.
+      # approve the signing. The steps that sign run when sign is true: on every manual run but the release of a beta.
       - name: Read the version
         id: version
         if: github.event_name == 'workflow_dispatch'
@@ -57,7 +57,11 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if [ "$RELEASE" != true ]; then
+            echo "sign=true" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          if [ "$beta" = 0 ]; then
+            echo "sign=true" >> "$GITHUB_OUTPUT"
           fi
           # A beta can come from the branch its version is made on.
           if [ "$beta" = 0 ] && [ "$GITHUB_REF" != refs/heads/main ]; then
@@ -79,7 +83,7 @@ jobs:
       # with their new SHA-256 and signed, and Setup is built and signed last.
       - name: Upload the add-ons for signing
         id: unsigned-addons
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.version.outputs.sign == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: unsigned-addons
@@ -88,7 +92,7 @@ jobs:
             build/Release/Unishade_nvngx.dll
           if-no-files-found: error
       - name: Sign the add-ons
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.version.outputs.sign == 'true'
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -102,18 +106,18 @@ jobs:
           wait-for-completion-timeout-in-seconds: 3600
           output-artifact-directory: build/Release
       - name: Build the program with the signed add-ons
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.version.outputs.sign == 'true'
         run: cmake --build build --config Release --target Unishade
       - name: Upload the program for signing
         id: unsigned-program
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.version.outputs.sign == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: unsigned-program
           path: build/Release/Unishade.exe
           if-no-files-found: error
       - name: Sign the program
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.version.outputs.sign == 'true'
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -132,7 +136,7 @@ jobs:
       # Building the program and Setup must not have relinked the signed files, or the release would have unsigned
       # copies.
       - name: Check Setup embedded the signed program
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.version.outputs.sign == 'true'
         shell: pwsh
         run: |
           foreach ($file in 'build/Release/Unishade.exe', 'build/Release/Depth.dll', 'build/Release/Unishade_nvngx.dll') {
@@ -140,14 +144,14 @@ jobs:
           }
       - name: Upload Setup for signing
         id: unsigned-setup
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.version.outputs.sign == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: unsigned-setup
           path: build/installer/Unishade-Setup-*.exe
           if-no-files-found: error
       - name: Sign Setup
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.version.outputs.sign == 'true'
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -344,7 +348,7 @@ jobs:
             prerelease=(--prerelease)
             version=${RELEASE_TAG#v}
             version=${version%%-beta.*}
-            printf '%s\n\n' "This is a beta of Unishade $version, for testing. Setup installs it over the Unishade you have. On Windows, the beta tells you about newer betas, and about $version once it's released." > release-notes.md
+            printf '%s\n\n' "This is a beta of Unishade $version, for testing. Setup installs it over the Unishade you have. On Windows, the beta offers to install newer betas, and $version once it's released. Betas aren't code-signed, so Windows may say **Windows protected your PC** before Setup runs. Click **More info**, then **Run anyway**." > release-notes.md
           else
             exclude=(--exclude 'v*-beta.*')
           fi
@@ -359,9 +363,10 @@ jobs:
           The macOS and Linux builds are experimental.
 
           SHA256SUMS.txt lists the SHA-256 of each file. To check a download, run `sha256sum -c SHA256SUMS.txt --ignore-missing` in the folder you downloaded to, or compare the output of `Get-FileHash <file>` in PowerShell, or `shasum -a 256 <file>` on a Mac.
-
-          Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). [Code signing policy](https://unishade.me/code-signing/)
           NOTES
+          if [ ${#prerelease[@]} -eq 0 ]; then
+            printf '\n%s\n' 'Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). [Code signing policy](https://unishade.me/code-signing/)' >> release-notes.md
+          fi
           gh release create "$RELEASE_TAG" upload/* --target "$GITHUB_SHA" --title "$RELEASE_TAG" --notes-file release-notes.md "${prerelease[@]}"
       # Cloudflare builds the site from main, and a release changes nothing there. A release made with the workflow's token
       # doesn't start other workflows either, so the website workflow's release trigger doesn't fire. The deploy hook

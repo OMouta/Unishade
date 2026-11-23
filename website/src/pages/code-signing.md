@@ -11,7 +11,7 @@ Free code signing provided by [SignPath.io](links:signpath), certificate by [Sig
 
 `Unishade.exe`, the depth and DLSS5 add-ons `Depth.dll` and `Unishade_nvngx.dll`, and Unishade Setup, as published on [GitHub Releases](links:releases). GitHub Actions builds them from [Unishade's repository](links:github), and each release is signed only after an approver approves it.
 
-The effects, and the files the add-ons download from their own authors, aren't signed by Unishade. The macOS and Linux builds aren't signed.
+The effects, and the files the add-ons download from their own authors, aren't signed by Unishade. The macOS and Linux builds aren't signed. Betas, which GitHub Releases marks as pre-releases, aren't signed either.
 
 ## Team
 
