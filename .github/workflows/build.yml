@@ -354,10 +354,23 @@ jobs:
           fi
           previous_tag=$(git describe --tags --match 'v*' "${exclude[@]}" --abbrev=0 HEAD 2>/dev/null || true)
           range=HEAD
+          since=
           if [ -n "$previous_tag" ]; then
             range="$previous_tag..HEAD"
+            since=" since $previous_tag"
           fi
-          git log --format='- %s (%h)' "$range" >> release-notes.md
+          # Only the commits that change what the release's files are made from: not the website, the bot, the
+          # workflows, the tests, the scripts or the Markdown pages. A long list is folded, so the page still starts
+          # with what to know before downloading.
+          git log --no-merges --format='- %s (%h)' "$range" -- . ':!website' ':!bot' ':!.github' ':!tests' ':!scripts' ':(exclude,glob)**/*.md' > changes.md
+          count=$(wc -l < changes.md | tr -d ' ')
+          if [ "$count" -gt 30 ]; then
+            printf '<details>\n<summary>%s changes%s</summary>\n\n' "$count" "$since" >> release-notes.md
+            cat changes.md >> release-notes.md
+            printf '\n</details>\n' >> release-notes.md
+          else
+            cat changes.md >> release-notes.md
+          fi
           cat >> release-notes.md <<'NOTES'
 
           SHA256SUMS.txt lists the SHA-256 of each file. To check a download, run `sha256sum -c SHA256SUMS.txt --ignore-missing` in the folder you downloaded to, or compare the output of `Get-FileHash <file>` in PowerShell, or `shasum -a 256 <file>` on a Mac.
