@@ -23,7 +23,7 @@
 //     Library=MyAddon.dylib
 //
 // Id names the add-on in Unishade.ini and in presets, so it stays the same when anything else changes. Api is the
-// version of src/addons/unishade_addon.h it was built for. Each system the add-on runs on has a section with its
+// version of addons/unishade_addon.h it was built for. Each system the add-on runs on has a section with its
 // library, a path in the folder: windows-x64, windows-arm64, macos-arm64, macos-x64, linux-x64 or linux-arm64, or
 // windows, macos or linux alone for a library that runs on every processor there, as a universal library does on macOS.
 // Only Id, Api and the library are needed. Icon is a PNG in the folder.
@@ -177,7 +177,7 @@ inline bool IsSha256(std::string_view text)
     return text.size() == 64 && text.find_first_not_of("0123456789abcdef") == std::string_view::npos;
 }
 
-// Reads the official list, src/addons/official.ini, for a system. Each section is named after an add-on's Id and a
+// Reads the official list, addons/official.ini, for a system. Each section is named after an add-on's Id and a
 // system, as [unishade.depth windows-x64], and each of its keys is a file in the add-on's folder, set to the file's
 // SHA-256 and the address it downloads from. An add-on with a file that lacks either is left out.
 inline std::vector<Files> ReadFiles(const std::string& text, std::string_view platform)

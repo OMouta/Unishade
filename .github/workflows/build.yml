@@ -312,7 +312,7 @@ jobs:
           RELEASE_TAG: v${{ needs.build.outputs.version }}
         run: |
           mkdir upload
-          # Depth.dll, Depth.dylib and Unishade_nvngx.dll are where src/addons/official.ini points the Add-ons page.
+          # Depth.dll, Depth.dylib and Unishade_nvngx.dll are where addons/official.ini points the Add-ons page.
           cp release/build/Release/Unishade.exe release/build/Release/Depth.dll release/build/Release/Unishade_nvngx.dll \
             "release/build/installer/Unishade-Setup-${RELEASE_TAG#v}.exe" release/LICENSE release/Unishade-linux-x64.tar.gz release/Unishade-macOS.zip \
             release/Depth.dylib upload/

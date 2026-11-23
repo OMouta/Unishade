@@ -1,4 +1,4 @@
-// The add-on host with the example add-on, src/addons/example, and no graphics card: finding add-ons by their
+// The add-on host with the example add-on, addons/example, and no graphics card: finding add-ons by their
 // addon.ini, asking before loading, settings, events, the add-on's own controls, drawing over the game and what it
 // asks of Unishade.
 

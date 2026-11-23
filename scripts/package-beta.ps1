@@ -43,7 +43,7 @@ if ($exitCode -ne 0) { throw "Setup failed with exit code $exitCode. See $log" }
 # folder named after its Id, with the addon.ini and icon Unishade would write there.
 $addons = Join-Path $folder 'Addons'
 $id = $null
-foreach ($line in Get-Content "$repo/src/addons/official.ini") {
+foreach ($line in Get-Content "$repo/addons/official.ini") {
     if ($line -match '^\[(\S+) (\S+)\]') { $id = if ($Matches[2] -eq 'windows-x64') { $Matches[1] } else { $null }; continue }
     if (-not $id -or $line -notmatch '^([^;\[=]+)=(\S+) (\S+)$') { continue }
     $file = Join-Path $addons "$id/$($Matches[1])"
@@ -66,7 +66,7 @@ foreach ($line in Get-Content "$repo/src/addons/official.ini") {
     }
     Copy-Item $kept $file
 }
-foreach ($manifest in Get-ChildItem "$repo/src/addons/*/addon.ini") {
+foreach ($manifest in Get-ChildItem "$repo/addons/*/addon.ini") {
     $text = (Get-Content $manifest -Raw).Replace('@VERSION@', $version)
     $id = [regex]::Match($text, '(?m)^Id=(\S+)').Groups[1].Value
     $target = Join-Path $addons $id

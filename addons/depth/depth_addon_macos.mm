@@ -10,7 +10,7 @@
 
 #include "depth_model.h"
 #include "depth_shared.h"
-#include <addons/unishade_addon.h>
+#include <unishade_addon.h>
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>

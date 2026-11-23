@@ -7,7 +7,7 @@
 // changed is brought back.
 
 #include "dlss5.h"
-#include <addons/unishade_addon.h>
+#include <unishade_addon.h>
 
 #include <d3d12.h>
 #include <d3dcompiler.h>

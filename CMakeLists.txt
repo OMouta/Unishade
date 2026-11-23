@@ -83,11 +83,11 @@ endif()
 # The host, in src/posix for every system. It compiles effects with ReShade's effect compiler and runs them on Vulkan.
 include(src/posix/posix.cmake)
 
-# The example add-on, src/addons/example, in C, so every build checks that unishade_addon.h is the C it says it is. The
+# The example add-on, addons/example, in C, so every build checks that unishade_addon.h is the C it says it is. The
 # host's tests load it.
-add_library(example_addon SHARED src/addons/example/example.c)
+add_library(example_addon SHARED addons/example/example.c)
 set_target_properties(example_addon PROPERTIES OUTPUT_NAME Example PREFIX "" C_STANDARD 11 C_VISIBILITY_PRESET hidden)
-target_include_directories(example_addon PRIVATE src/addons)
+target_include_directories(example_addon PRIVATE addons)
 if(MSVC)
     target_compile_options(example_addon PRIVATE /W4)
 else()
@@ -112,9 +112,9 @@ endif()
 # it ad hoc, which is all Apple silicon asks of a library a program without the hardened runtime loads, so the file the
 # official list hashes is the file published.
 if(DEPTH_MACOS)
-    add_library(depth_addon SHARED src/addons/depth/depth_addon_macos.mm src/addons/depth/depth_model.cpp)
+    add_library(depth_addon SHARED addons/depth/depth_addon_macos.mm addons/depth/depth_model.cpp)
     set_target_properties(depth_addon PROPERTIES OUTPUT_NAME Depth PREFIX "")
-    target_include_directories(depth_addon PRIVATE src "${ONNXRUNTIME_INCLUDE}")
+    target_include_directories(depth_addon PRIVATE addons "${ONNXRUNTIME_INCLUDE}")
     target_compile_options(depth_addon PRIVATE -Wall -Wextra -Wno-missing-field-initializers $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
     target_link_libraries(depth_addon PRIVATE "-framework Foundation" "-framework Metal")
 endif()
@@ -124,9 +124,9 @@ if(NOT WIN32)
 endif()
 
 # Depth estimation as an add-on of the Vulkan host, Depth.dll. Its model and ONNX Runtime go in its folder with it.
-add_library(depth_addon SHARED src/addons/depth/depth_addon.cpp src/addons/depth/depth_model.cpp)
+add_library(depth_addon SHARED addons/depth/depth_addon.cpp addons/depth/depth_model.cpp)
 set_target_properties(depth_addon PROPERTIES OUTPUT_NAME Depth)
-target_include_directories(depth_addon PRIVATE src "${ONNXRUNTIME_INCLUDE}")
+target_include_directories(depth_addon PRIVATE addons "${ONNXRUNTIME_INCLUDE}")
 target_compile_definitions(depth_addon PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(depth_addon PRIVATE /W4 /permissive- /EHsc)
 target_link_libraries(depth_addon PRIVATE d3d11 d3d12 d3dcompiler dxgi windowsapp)
@@ -187,9 +187,9 @@ set(NGX_URL "https://raw.githubusercontent.com/NVIDIA/DLSS/v310.9.16/include")
 fetch_file("${NGX_URL}/nvsdk_ngx_defs.h" ea23f33497cd274860d1c25a97644fce807dcb0037c594547203343103fad03e "${NGX_INCLUDE}/nvsdk_ngx_defs.h")
 fetch_file("${NGX_URL}/nvsdk_ngx_params.h" 943bc8cc5cdae03b6303016fbad3183636f2335ae27a2d18776798c3b4efabbc "${NGX_INCLUDE}/nvsdk_ngx_params.h")
 
-# Its path has to contain nvngx.dll. See src/addons/dlss5/dlss5.cpp.
-add_library(Unishade_nvngx SHARED src/addons/dlss5/dlss5.cpp src/addons/dlss5/dlss5_addon.cpp)
-target_include_directories(Unishade_nvngx PRIVATE src "${NGX_INCLUDE}")
+# Its path has to contain nvngx.dll. See addons/dlss5/dlss5.cpp.
+add_library(Unishade_nvngx SHARED addons/dlss5/dlss5.cpp addons/dlss5/dlss5_addon.cpp)
+target_include_directories(Unishade_nvngx PRIVATE addons "${NGX_INCLUDE}")
 target_compile_definitions(Unishade_nvngx PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_DLSS5_EXPORTS)
 target_compile_definitions(Unishade_nvngx PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
 target_compile_options(Unishade_nvngx PRIVATE /W4 /permissive- /EHsc)
@@ -200,7 +200,7 @@ set(STB_URL "https://raw.githubusercontent.com/nothings/stb/f58f558c120e9b32c217
 fetch_file("${STB_URL}/stb_image.h" 594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3 "${STB_DIR}/stb_image.h")
 fetch_file("${STB_URL}/stb_image_write.h" cbd5f0ad7a9cf4468affb36354a1d2338034f2c12473cf1a8e32053cb6914a05 "${STB_DIR}/stb_image_write.h")
 
-add_executable(dlss5_check EXCLUDE_FROM_ALL src/addons/dlss5/check.cpp)
+add_executable(dlss5_check EXCLUDE_FROM_ALL addons/dlss5/check.cpp)
 target_include_directories(dlss5_check PRIVATE "${STB_DIR}")
 target_compile_definitions(dlss5_check PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(dlss5_check PRIVATE /W4 /permissive- /EHsc)

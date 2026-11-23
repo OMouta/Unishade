@@ -3,7 +3,7 @@
 // What the Depth add-on does the same on every system: its settings, the size depth is estimated at, and the numbers
 // and functions its shaders share. depth_addon.cpp is the add-on on Windows, depth_addon_macos.mm on macOS.
 
-#include <addons/unishade_addon.h>
+#include <unishade_addon.h>
 
 #include <algorithm>
 #include <chrono>

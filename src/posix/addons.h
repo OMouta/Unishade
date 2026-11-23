@@ -3,7 +3,7 @@
 #include "effects.h"
 
 #include <addon_manifest.h>
-#include <addons/unishade_addon.h>
+#include <unishade_addon.h>
 
 #include <atomic>
 #include <cstdint>
@@ -44,9 +44,9 @@ protected:
     ~AddonHost() = default;
 };
 
-// Add-ons, built against src/addons/unishade_addon.h. Each is a folder in the Addons folder of the data folder, with an
+// Add-ons, built against addons/unishade_addon.h. Each is a folder in the Addons folder of the data folder, with an
 // addon.ini that says what it is, as src/addon_manifest.h describes, so nothing of an add-on runs before it is wanted.
-// One whose library has the SHA-256 the official list has for its Id, src/addons/official.ini, loads without asking.
+// One whose library has the SHA-256 the official list has for its Id, addons/official.ini, loads without asking.
 // Any other waits until the user says once whether to load it, which Unishade.ini keeps for its Id, so a rebuilt
 // library loads without asking again.
 class Addons

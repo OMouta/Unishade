@@ -1,10 +1,10 @@
 // The developer docs as Markdown, for people who paste them into a chat and for agents that read them: each page at
 // its own address ending in .md, /llms.txt as the list of them, and /llms-full.txt with all of them in one file.
 import { getCollection, type CollectionEntry } from 'astro:content';
-import header from '../../src/addons/unishade_addon.h?raw';
-import exampleSource from '../../src/addons/example/example.c?raw';
-import exampleManifest from '../../src/addons/example/addon.ini?raw';
-import exampleBuild from '../../src/addons/example/CMakeLists.txt?raw';
+import header from '../../addons/unishade_addon.h?raw';
+import exampleSource from '../../addons/example/example.c?raw';
+import exampleManifest from '../../addons/example/addon.ini?raw';
+import exampleBuild from '../../addons/example/CMakeLists.txt?raw';
 import { links } from './links';
 
 type Page = CollectionEntry<'developers'>;

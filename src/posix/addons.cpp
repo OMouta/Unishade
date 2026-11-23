@@ -28,7 +28,7 @@
 #include <cstring>
 #include <sstream>
 
-// What the build puts into the program of the official add-ons: src/addons/official.ini, with the SHA-256 of the
+// What the build puts into the program of the official add-ons: addons/official.ini, with the SHA-256 of the
 // add-ons this build made, and each add-on's addon.ini and icon, in the same order, each ending with an entry that is
 // no add-on's.
 extern const char kOfficialAddons[];

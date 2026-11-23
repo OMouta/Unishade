@@ -15,7 +15,7 @@ Put these four files in a folder:
 - [CMakeLists.txt](/developers/example/CMakeLists.txt)
 - [unishade_addon.h](links:addonHeader)
 
-The first three are [src/addons/example](links:addonExample) in Unishade's source.
+The first three are [addons/example](links:addonExample) in Unishade's source.
 
 ## Build it
 

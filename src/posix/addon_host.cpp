@@ -1,4 +1,4 @@
-// What an add-on calls: the functions of UnishadeHost and UnishadeUi, as src/addons/unishade_addon.h describes them.
+// What an add-on calls: the functions of UnishadeHost and UnishadeUi, as addons/unishade_addon.h describes them.
 
 #include "addon_library.h"
 #include "log.h"

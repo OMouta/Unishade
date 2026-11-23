@@ -7,7 +7,7 @@
 
 #include "depth_model.h"
 #include "depth_shared.h"
-#include <addons/unishade_addon.h>
+#include <unishade_addon.h>
 
 #include <d3d11_4.h>
 #include <d3d12.h>
