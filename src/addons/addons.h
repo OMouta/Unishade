@@ -112,7 +112,7 @@ public:
     struct Official
     {
         std::string tag;          // of the release, such as unishade.depth-v1.2.0
-        bool beta = false;        // the release is a beta
+        bool beta = false;        // the release is a beta, whose files are not signed
         addon::Manifest manifest; // as the release has it
         std::string manifestText; // the addon.ini installing writes
         std::string icon;         // the PNG installing writes as manifest.icon, or empty
@@ -210,9 +210,10 @@ public:
     // The folder an official add-on is in, or the one installing it makes, named after its Id.
     std::string FolderOf(const Official& addon) const;
     // Downloads an official add-on's files into a folder of the Addons folder and checks each one's SHA-256, replacing
-    // what is there, then writes its addon.ini and icon. Stop the add-on before installing it again. Blocks, so call it
-    // from a thread of its own. Throws std::runtime_error with a message to show, or something else once cancel is
-    // set. progress gets the file's index and its bytes so far.
+    // what is there, then writes its addon.ini and icon. On Windows the library of a version, which is not a beta, also
+    // has to be signed as net/update.h says of a release's files. Stop the add-on before installing it again. Blocks,
+    // so call it from a thread of its own. Throws std::runtime_error with a message to show, or something else once
+    // cancel is set. progress gets the file's index and its bytes so far.
     static void Install(const Official& addon, const std::string& folder, const std::atomic<bool>& cancel,
                         const std::function<void(size_t file, uint64_t received, uint64_t total)>& progress = {});
 

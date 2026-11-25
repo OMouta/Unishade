@@ -4,6 +4,7 @@
 #include "app/log.h"
 #include "base/ini_text.h"
 #include "gpu/gpu.h"
+#include "net/update.h"
 #include "setup/setup.h"
 
 #ifdef _WIN32
@@ -881,6 +882,11 @@ void Addons::Install(const Official& addon, const std::string& folder, const std
                 throw std::runtime_error(file.url + " is not the file Unishade expects. Try again later.");
 #endif
         }
+        // The library runs as part of Unishade, so it has to be Unishade's own as far as this system can tell.
+        for (size_t i = 0; i < addon.files.size(); ++i)
+            if (addon.files[i].path == addon.manifest.library)
+                if (const std::string why = NotFromPublisher(parts[i], addon.beta); !why.empty())
+                    throw std::runtime_error(addon.manifest.library + " of " + addon.manifest.name + " " + why + ", so the add-on was not installed.");
         for (size_t i = 0; i < addon.files.size(); ++i)
         {
             fs::rename(parts[i], target / fs::path(addon.files[i].path));

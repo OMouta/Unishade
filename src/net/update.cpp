@@ -291,3 +291,12 @@ UpdateInstall InstallingUpdate()
     std::lock_guard lock(shared.mutex);
     return shared.install;
 }
+
+std::string NotFromPublisher(const fs::path& file, bool beta)
+{
+    const std::wstring publisher = Signer(Self(), nullptr);
+    const std::wstring signer = Signer(file, nullptr);
+    if (publisher.empty() ? beta || !signer.empty() : signer == publisher)
+        return {};
+    return publisher.empty() ? "is not signed, as the files of a version are" : "is not signed by Unishade's publisher";
+}

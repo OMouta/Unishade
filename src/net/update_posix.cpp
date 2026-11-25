@@ -107,3 +107,8 @@ UpdateInstall InstallingUpdate()
 {
     return {};
 }
+
+std::string NotFromPublisher(const std::filesystem::path&, bool)
+{
+    return {};
+}
