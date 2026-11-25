@@ -7,6 +7,7 @@ on:
   # Manual runs are signed by SignPath. With release on, they're signed with the release certificate and published as
   # the version in CMakeLists.txt. When UNISHADE_BETA there makes it a beta, release publishes it as a prerelease
   # instead, which is not signed. Without release, they're signed with the test certificate, to try the signing.
+  # The Mac app is signed with the Developer ID certificate and notarized by Apple on every manual run, a beta's too.
   workflow_dispatch:
     inputs:
       release:
@@ -229,7 +230,8 @@ jobs:
 
   build-macos:
     runs-on: macos-26
-    timeout-minutes: 30
+    # A manual run waits for Apple's notary service twice, for the app and for the disk image.
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 120 || 30 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -255,17 +257,91 @@ jobs:
               $1 == "minos" { found = 1; split($2, v, "."); if (v[1] + 0 > 13 || (v[1] + 0 == 13 && v[2] + 0 > 0)) high = 1 }
               END { if (!found || high) { print file " needs a macOS newer than 13.0, or does not say which."; exit 1 } }'
           done
-      - name: Package
+      # A manual run signs the app with the Developer ID Application certificate, so a Mac opens the download without a
+      # warning and keeps the screen recording permission from one version to the next. The certificate is the
+      # MACOS_CERTIFICATE secret, a .p12 file in base64, and MACOS_CERTIFICATE_PASSWORD its password. It goes into a
+      # keychain of its own, which only this run has.
+      - name: Import the signing certificate
+        id: certificate
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
         run: |
-          cp LICENSE CREDITS.txt build/
-          cd build
-          ditto -c -k --keepParent Unishade.app Unishade-macOS.zip
-          zip -j Unishade-macOS.zip LICENSE CREDITS.txt
+          if [ -z "$CERTIFICATE" ] || [ -z "$NOTARY_KEY" ]; then
+            echo "::error::A manual run signs and notarizes the Mac app, which needs the MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, NOTARY_KEY and NOTARY_KEY_ID secrets."
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password=$(openssl rand -hex 24)
+          security create-keychain -p "$keychain_password" "$keychain"
+          # Without a time after which it locks, since the notary service can take longer than the default.
+          security set-keychain-settings "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          printf '%s' "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -f pkcs12 -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          # Lets codesign use the key without a window asking for the keychain's password.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" > /dev/null
+          # codesign looks for the certificate in the keychains on this list.
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity=$(security find-identity -v -p codesigning "$keychain" | awk '/Developer ID Application/ { print $2; exit }')
+          if [ -z "$identity" ]; then
+            echo "::error::MACOS_CERTIFICATE holds no Developer ID Application certificate with its key that this Mac trusts."
+            exit 1
+          fi
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+          # The App Store Connect API key the notary service takes, which only this user can read.
+          (umask 077 && printf '%s\n' "$NOTARY_KEY" > "$RUNNER_TEMP/notary-key.p8")
+      - name: Sign the app
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          IDENTITY: ${{ steps.certificate.outputs.identity }}
+        run: cmake -DAPP=build/Unishade.app "-DIDENTITY=$IDENTITY" -P cmake/sign_macos.cmake
+      # The app is notarized by itself first, so the copy in Applications has its ticket and opens with no network.
+      - name: Notarize the app
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          NOTARY_KEY: ${{ runner.temp }}/notary-key.p8
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: ./scripts/notarize-macos.sh build/Unishade.app
+      # The disk image is what a release has for the Mac. Every run makes it, so a change that breaks it shows up here.
+      - name: Package
+        run: ./scripts/dmg.sh build/Unishade.app build/Unishade-macOS.dmg
+      - name: Sign and notarize the disk image
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          IDENTITY: ${{ steps.certificate.outputs.identity }}
+          NOTARY_KEY: ${{ runner.temp }}/notary-key.p8
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          codesign --force --sign "$IDENTITY" --timestamp build/Unishade-macOS.dmg
+          ./scripts/notarize-macos.sh build/Unishade-macOS.dmg
+      # What a Mac that downloaded the release decides: Gatekeeper has to accept the disk image and the app in it as
+      # notarized, and the app has to start from there.
+      - name: Check the Mac accepts the disk image
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          spctl --assess --type open --context context:primary-signature --verbose=2 build/Unishade-macOS.dmg
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/image" build/Unishade-macOS.dmg
+          codesign --verify --strict --deep --verbose=2 "$RUNNER_TEMP/image/Unishade.app"
+          spctl --assess --type execute --verbose=2 "$RUNNER_TEMP/image/Unishade.app"
+          xcrun stapler validate "$RUNNER_TEMP/image/Unishade.app"
+          "$RUNNER_TEMP/image/Unishade.app/Contents/MacOS/Unishade" --version
+          hdiutil detach "$RUNNER_TEMP/image"
+      - name: Remove the signing certificate
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/notary-key.p8"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Unishade-macOS
           path: |
-            build/Unishade-macOS.zip
+            build/Unishade-macOS.dmg
             build/Depth.dylib
           if-no-files-found: error
 
@@ -301,7 +377,7 @@ jobs:
           mkdir upload
           # The add-ons the builds made stay out: each has releases of its own, which addon.yml publishes.
           cp release/build/Release/Unishade.exe "release/build/installer/Unishade-Setup-${RELEASE_TAG#v}.exe" release/LICENSE \
-            release/Unishade-linux-x64.tar.gz release/Unishade-macOS.zip upload/
+            release/Unishade-linux-x64.tar.gz release/Unishade-macOS.dmg upload/
           # The SHA-256 of every file, in the format sha256sum -c reads.
           (cd upload && sha256sum -- * > ../SHA256SUMS.txt)
           mv SHA256SUMS.txt upload/
@@ -316,7 +392,7 @@ jobs:
             prerelease=(--prerelease)
             version=${RELEASE_TAG#v}
             version=${version%%-beta.*}
-            printf '%s\n\n' "This is a beta of Unishade $version, for testing. Setup installs it over the Unishade you have. On Windows, the beta offers to install newer betas, and $version once it's released. On macOS and Linux it says when one is out. Betas aren't code-signed, so Windows may say **Windows protected your PC** before Setup runs. Click **More info**, then **Run anyway**." > release-notes.md
+            printf '%s\n\n' "This is a beta of Unishade $version, for testing. Setup installs it over the Unishade you have. On Windows, the beta offers to install newer betas, and $version once it's released. On macOS and Linux it says when one is out. A beta's Setup isn't code-signed, so Windows may say **Windows protected your PC** before it runs. Click **More info**, then **Run anyway**. The Mac app is signed and notarized by Apple." > release-notes.md
           else
             exclude=(--exclude 'v*-beta.*')
           fi
