@@ -1,0 +1,6 @@
+# dmgbuild, which makes the Mac's disk image, and the two packages it needs, each at one version and checked against
+# the SHA-256 of its file on PyPI. scripts/dmg.sh installs them. To raise a version, take the new file's SHA-256 from
+# its page on pypi.org.
+dmgbuild==2.0.0 --hash=sha256:3d4f33f3a0def7ae2a43701a40aa6ae341f90445433694abd4bc67aab779d2f8
+ds_store==1.3.4 --hash=sha256:6d8ae662921846c96b03c244a92aab19a5b4fb3d9cada118fc83cace9250f049
+mac_alias==2.2.4 --hash=sha256:c20f95f75d7f966dd8ea2f84c317d4ff4abee0db9cc8a13b454891c15aa04226
