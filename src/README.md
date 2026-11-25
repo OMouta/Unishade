@@ -194,7 +194,9 @@ The add-on host. The interface add-ons are built against is `addons/unishade_add
 | `addon_host.cpp` | The functions an add-on calls |
 | `addon_frames.cpp` | The images add-ons share with Unishade, and the order they and the effects run in |
 | `addon_library.h` | What these files share: an add-on's library as it is loaded |
-| `addon_manifest.h` | An add-on's `addon.ini` and the list of official add-ons' files, as text |
+| `addon_manifest.h` | An add-on's `addon.ini` and an official add-on's list of files, as text |
+| `addon_releases.h` | The official add-ons' own releases on GitHub: what one has, its tag, and which of them a build is offered |
+| `official_addons.cpp`, `official_addons.h` | Asks GitHub for those releases, picks the one of each add-on this Unishade can run, and keeps what it read in the cache folder |
 | `addon_exchange_win32.h` | Windows: Direct3D 11 textures and a fence, shared with add-ons |
 | `addon_exchange_unix.h` | macOS and Linux: IOSurfaces and dma-bufs, shared with add-ons |
 
@@ -218,7 +220,7 @@ The add-on host. The interface add-ons are built against is `addons/unishade_add
 | File | Does |
 | --- | --- |
 | `net/net.cpp`, `net/net.h` | Windows: HTTPS downloads through WinHTTP, shared with Setup |
-| `net/update.cpp`, `net/update.h` | Windows: looks for a newer Unishade on GitHub and installs it. It downloads the release's Setup, checks it against the release's SHA-256 list and, for a version, its signature, and Setup starts the new version |
+| `net/update.cpp`, `net/update.h` | Windows: looks for a newer Unishade on GitHub and installs it. It downloads the release's Setup, checks it against the release's SHA-256 list and, for a version, its signature, and Setup starts the new version. Also says whether an add-on's library is signed as a version's has to be |
 | `net/update_posix.cpp` | macOS and Linux: looks for a newer Unishade on GitHub and offers the release's page, since there is no Setup to run |
 | `net/releases.h` | Picks the update out of GitHub's list of releases, and a file's SHA-256 out of a release's `SHA256SUMS.txt`. A beta is offered newer betas too |
 | `net/version.h` | Reads versions such as `0.7.0` and `0.7.0-beta.2` and puts them in order |
@@ -246,13 +248,13 @@ The add-on host. The interface add-ons are built against is `addons/unishade_add
 | `CMakeLists.txt` | The project's settings, then the files in `cmake/` |
 | `cmake/fetch.cmake` | `fetch_file` and `patch_source`, which download third-party files and change a few of their lines |
 | `cmake/libraries.cmake` | Dear ImGui, miniz, ReShade's effect compiler, stb, GLFW with its macOS patch, and Vulkan, as `unishade_libraries` |
-| `cmake/addons.cmake` | The example add-on, Depth, DLSS5, and the source file of the official add-ons |
+| `cmake/addons.cmake` | The example add-on, Depth and DLSS5 |
 | `cmake/app.cmake` | The logo, fonts and FSR put into the program, `unishade_core` and the Unishade executable |
 | `cmake/installer.cmake` | Setup for Windows |
 | `cmake/tests.cmake` | The tests |
 | `cmake/bundle_macos.cmake` | Run after every macOS build: copies MoltenVK into `Unishade.app` and signs it again |
-| `cmake/official_addons.cmake` | Run at build time: puts `addons/official.ini`, with the SHA-256 of the add-ons the build made, and each add-on's `addon.ini` and icon into a source file of the program |
-| `addons/` | `unishade_addon.h`, the interface add-ons are built against, `official.ini`, and the add-ons `depth/`, `dlss5/` and `example/` |
+| `cmake/addon_release.cmake` | Run to release an add-on: packs its `addon.ini`, its `files.ini` with the SHA-256 of the libraries built for it, its icon and `SHA256SUMS.txt` |
+| `addons/` | `unishade_addon.h`, the interface add-ons are built against, and the add-ons `depth/`, `dlss5/` and `example/`. An official one has its `addon.ini`, its `files.ini` and its icon there |
 | `installer/` | Setup for Windows |
 | `tests/` | One program per file. `host_tests.cpp` checks settings, games, shortcuts and the rules for macOS windows, and `effects_tests.cpp` the parts of the effect runtime that need no graphics card |
 | `CREDITS.txt` | The credits that come with the macOS and Linux builds. `installer/CREDITS.txt` comes with Windows |

@@ -1,6 +1,6 @@
 # Depth estimation optional downloads
 
-Unishade downloads these files when you install the Depth add-on on its Add-ons page. They are not part of Unishade or its installer. The libraries are assets of the `depth-assets` release, and the model is downloaded straight from Hugging Face at a pinned commit. `addons/official.ini` lists each file's address and SHA-256.
+Unishade downloads these files when you install the Depth add-on on its Add-ons page. They are not part of Unishade or its installer. The libraries are assets of the `depth-assets` release, and the model is downloaded straight from Hugging Face at a pinned commit. `addons/depth/files.ini` lists each file's address and SHA-256.
 
 - `onnxruntime.dll`: ONNX Runtime 1.24.4 with the DirectML execution provider, from the `Microsoft.ML.OnnxRuntime.DirectML` NuGet package (`runtimes/win-x64/native/onnxruntime.dll`). MIT license, Microsoft Corporation.
 - `DirectML.dll`: DirectML 1.15.4, from the `Microsoft.AI.DirectML` NuGet package (`bin/x64-win/DirectML.dll`). Microsoft Software License Terms, which allow redistribution in applications; the terms are in `LICENSE.txt` of that package.

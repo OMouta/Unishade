@@ -1,6 +1,6 @@
 # DLSS5 optional downloads
 
-Unishade downloads `nvngx_dlssnr.dll` when you install the DLSS5 add-on on its Add-ons page. It is not part of Unishade or its installer. It is an asset of the `dlss5-assets` release, and `addons/official.ini` lists its address and SHA-256. `renodx-dlss.addon64` is only used by Unishade 0.6.3 and earlier.
+Unishade downloads `nvngx_dlssnr.dll` when you install the DLSS5 add-on on its Add-ons page. It is not part of Unishade or its installer. It is an asset of the `dlss5-assets` release, and `addons/dlss5/files.ini` lists its address and SHA-256. `renodx-dlss.addon64` is only used by Unishade 0.6.3 and earlier.
 
 - `renodx-dlss.addon64`: RenoDX / [clshortfuse](https://github.com/clshortfuse). [RenoDX Discord](https://discord.com/invite/renodx).
 - `nvngx_dlssnr.dll`: NVIDIA DLSSNR. Copyright 2026 NVIDIA Corporation.

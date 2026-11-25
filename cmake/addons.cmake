@@ -73,3 +73,11 @@ if(WIN32)
     target_link_libraries(dlss5_check PRIVATE d3d12 windowsapp)
     add_dependencies(dlss5_check Unishade_nvngx)
 endif()
+
+# The official add-ons this system has libraries for, which the workflow that releases an add-on builds without the
+# rest of Unishade.
+if(WIN32)
+    add_custom_target(official_addons DEPENDS depth_addon Unishade_nvngx)
+elseif(DEPTH_MACOS)
+    add_custom_target(official_addons DEPENDS depth_addon)
+endif()
