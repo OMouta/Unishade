@@ -42,8 +42,8 @@ constexpr wchar_t kModelFile[] = L"" DEPTH_MODEL_FILE;
 // so Direct3D 12 copies them to and from packed buffers. Rows this wide keep the largest input under 16384 of them.
 constexpr UINT kRowBytes = 16 * D3D12_TEXTURE_DATA_PITCH_ALIGNMENT;
 
-// Preprocess turns the frame into the model's input. Peak, Smooth and Upsample turn its output into DEPTH. They follow
-// kShaderShared.
+// Preprocess turns the frame into the model's input. Range, Histogram, Resolve and Upsample turn its output into DEPTH.
+// They follow kShaderShared.
 constexpr char kShaders[] = R"(
 cbuffer Sizes : register(b0)
 {
@@ -51,6 +51,7 @@ cbuffer Sizes : register(b0)
     uint2 ModelSize;  // of the model's input and output
     uint InputWidth;  // values in a row of the input texture
     uint OutputWidth; // and of the output texture
+    float Blend;      // how far the smoothed anchor moves towards this estimate's
 };
 Texture2D<float4> Source : register(t0);
 Texture2D<float> Result : register(t1);
@@ -107,36 +108,99 @@ float Unordered(uint key)
     return asfloat(key & 0x80000000 ? key & 0x7FFFFFFF : ~key);
 }
 
-groupshared float Peaks[256];
+groupshared float Highs[256];
+groupshared float Lows[256];
 
-// Finds the highest value of the output, the nearest point. Keys starts out zero, below every key.
+// Finds the highest and the lowest value of the output. The keys start out zero, below every key, so the lowest is
+// kept as the highest of the keys turned over.
 [numthreads(256, 1, 1)]
-void Peak(uint3 id : SV_DispatchThreadID, uint thread : SV_GroupIndex)
+void Range(uint3 id : SV_DispatchThreadID, uint thread : SV_GroupIndex)
 {
-    Peaks[thread] = Load(min(id.x, ModelSize.x * ModelSize.y - 1));
+    Highs[thread] = Lows[thread] = Load(min(id.x, ModelSize.x * ModelSize.y - 1));
     GroupMemoryBarrierWithGroupSync();
     for (uint step = 128; step > 0; step >>= 1)
     {
         if (thread < step)
-            Peaks[thread] = max(Peaks[thread], Peaks[thread + step]);
+        {
+            Highs[thread] = max(Highs[thread], Highs[thread + step]);
+            Lows[thread] = min(Lows[thread], Lows[thread + step]);
+        }
         GroupMemoryBarrierWithGroupSync();
     }
     if (thread == 0)
     {
         uint previous;
-        Keys.InterlockedMax(0, Ordered(Peaks[0]), previous);
+        Keys.InterlockedMax(4 * KeyHighest, Ordered(Highs[0]), previous);
+        Keys.InterlockedMax(4 * KeyLowest, ~Ordered(Lows[0]), previous);
     }
 }
 
-// Moves the peak kept in State towards the output's. State starts out zero, until z marks it as set.
-[numthreads(1, 1, 1)]
-void Smooth()
+// Counts the output's values between the lowest and the highest, and the picture's pixels by brightness in each
+// section.
+[numthreads(16, 16, 1)]
+void Histogram(uint3 id : SV_DispatchThreadID)
 {
-    float peak = Unordered(Keys.Load(0));
+    if (any(id.xy >= ModelSize))
+        return;
+    float low = Unordered(~Keys.Load(4 * KeyLowest));
+    float high = Unordered(Keys.Load(4 * KeyHighest));
+    float value = Load(id.y * ModelSize.x + id.x);
+    uint bin = min(uint(saturate((value - low) / max(high - low, 1e-20)) * AnchorBins), AnchorBins - 1);
+    Keys.InterlockedAdd(4 * (KeyBins + bin), 1);
+    uint2 cell = min(id.xy * 3 / ModelSize, 2);
+    uint level = min(uint(dot(Guide.Load(int3(id.xy, 0)).rgb, Luma) * SectionLevels), SectionLevels - 1);
+    Keys.InterlockedAdd(4 * (KeySections + (cell.y * 3 + cell.x) * SectionLevels + level), 1);
+}
+
+// Finds the output's anchor in the counts and moves the one kept in State towards it, or takes it as it is after a
+// cut. State starts out zero, until z marks it as set. Leaves the counts zero for the next estimate, and the sections'
+// for it to tell a cut by.
+[numthreads(1, 1, 1)]
+void Resolve()
+{
+    float low = Unordered(~Keys.Load(4 * KeyLowest));
+    float high = Unordered(Keys.Load(4 * KeyHighest));
+    uint wanted = uint(ModelSize.x * ModelSize.y * AnchorShare);
+    uint below = 0;
+    float anchor = high;
+    bool found = false;
+    uint index;
+    for (index = 0; index < AnchorBins; ++index)
+    {
+        uint count = Keys.Load(4 * (KeyBins + index));
+        if (!found && count > 0 && below + count >= wanted)
+        {
+            anchor = low + (index + float(wanted - below) / count) * (high - low) / AnchorBins;
+            found = true;
+        }
+        below += count;
+        Keys.Store(4 * (KeyBins + index), 0);
+    }
+    uint changed = 0;
+    for (uint section = 0; section < 9; ++section)
+    {
+        uint pixels = 0;
+        uint moved = 0;
+        for (uint level = 0; level < SectionLevels; ++level)
+        {
+            index = section * SectionLevels + level;
+            uint count = Keys.Load(4 * (KeySections + index));
+            uint before = Keys.Load(4 * (KeyPrevious + index));
+            pixels += count;
+            moved += max(count, before) - min(count, before);
+            Keys.Store(4 * (KeyPrevious + index), count);
+            Keys.Store(4 * (KeySections + index), 0);
+        }
+        // Every pixel that left a level arrived at another, so each is counted twice.
+        changed += moved > 2 * CutShare * pixels;
+    }
+    Keys.Store(4 * KeyHighest, 0);
+    Keys.Store(4 * KeyLowest, 0);
     float4 state = State[0];
-    if (state.z == 0)
-        state.x = peak;
-    State[0] = float4(state.x + (peak - state.x) * PeakSmoothing, 0, 1, 0);
+    bool cut = changed >= CutSections;
+    if (state.z == 0 || cut)
+        state.x = anchor;
+    State[0] = float4(state.x + (anchor - state.x) * Blend, cut, 1, 0);
 }
 
 // Upsamples the output to the frame's size with a joint bilateral filter, as Weight says.
@@ -165,7 +229,18 @@ void Upsample(uint3 id : SV_DispatchThreadID)
 }
 )";
 
-constexpr const char* kEntryPoints[] = { "Preprocess", "Peak", "Smooth", "Upsample" };
+constexpr const char* kEntryPoints[] = { "Preprocess", "Range", "Histogram", "Resolve", "Upsample" };
+
+// As Sizes in the shaders.
+struct Sizes
+{
+    UINT source[2];
+    UINT model[2];
+    UINT inputWidth;
+    UINT outputWidth;
+    float blend;
+    UINT unused;
+};
 
 std::wstring Wide(const char* text)
 {
@@ -206,6 +281,7 @@ private:
     void CreateSharedTexture(size_t count, bool half, UINT bind, winrt::com_ptr<ID3D11Texture2D>& texture, HANDLE& handle);
     void CreateShared();
     void ReleaseShared();
+    void UpdateSizes(float blend);
     void Publish();
     void LogState();
 
@@ -231,6 +307,8 @@ private:
     UINT sourceWidth = 0;
     UINT sourceHeight = 0;
     std::optional<uint64_t> lastInput;
+    // When the last estimate became DEPTH, or nothing before the first.
+    std::optional<Clock::time_point> publishedAt;
     Clock::time_point requestedAt{};
     std::atomic<double> workerMs = 0;
     bool slowRequestLogged = false;
@@ -324,7 +402,7 @@ Depth::Depth(const UnishadeHost& unishade) : host(unishade), directory(Wide(unis
         winrt::check_hresult(device->CreateComputeShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, shaders[i].put()));
     }
     D3D11_BUFFER_DESC desc{};
-    desc.ByteWidth = 32;
+    desc.ByteWidth = sizeof(Sizes);
     desc.Usage = D3D11_USAGE_DEFAULT;
     desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     winrt::check_hresult(device->CreateBuffer(&desc, nullptr, sizes.put()));
@@ -624,7 +702,7 @@ void Depth::CreateShared()
         winrt::check_hresult(device->OpenSharedFence(fenceHandle, IID_PPV_ARGS(fence.put())));
 
     D3D11_BUFFER_DESC buffer{};
-    buffer.ByteWidth = 16;
+    buffer.ByteWidth = 4 * kKeyCount;
     buffer.Usage = D3D11_USAGE_DEFAULT;
     buffer.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
     buffer.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
@@ -632,18 +710,21 @@ void Depth::CreateShared()
     D3D11_UNORDERED_ACCESS_VIEW_DESC raw{};
     raw.Format = DXGI_FORMAT_R32_TYPELESS;
     raw.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    raw.Buffer.NumElements = 4;
+    raw.Buffer.NumElements = kKeyCount;
     raw.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
     winrt::check_hresult(device->CreateUnorderedAccessView(keys.get(), &raw, keysTarget.put()));
+    const UINT zero[4] = {};
+    context->ClearUnorderedAccessViewUint(keysTarget.get(), zero);
 
+    buffer.ByteWidth = 16;
     buffer.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
     buffer.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
     buffer.StructureByteStride = 16;
     winrt::check_hresult(device->CreateBuffer(&buffer, nullptr, state.put()));
     winrt::check_hresult(device->CreateUnorderedAccessView(state.get(), nullptr, stateTarget.put()));
     winrt::check_hresult(device->CreateShaderResourceView(state.get(), nullptr, stateView.put()));
-    const UINT zero[4] = {};
     context->ClearUnorderedAccessViewUint(stateTarget.get(), zero);
+    publishedAt.reset();
 
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width = width;
@@ -660,9 +741,15 @@ void Depth::CreateShared()
 
     const float farPlane[4] = { 1, 1, 1, 1 };
     context->ClearUnorderedAccessViewFloat(depthTarget.get(), farPlane);
-    const UINT values[8] = { sourceWidth, sourceHeight, static_cast<UINT>(width), static_cast<UINT>(height), kRowBytes / (halfInput ? 2 : 4),
-                             kRowBytes / (halfOutput ? 2 : 4) };
-    context->UpdateSubresource(sizes.get(), 0, nullptr, values, 0, 0);
+    UpdateSizes(0);
+}
+
+// What the shaders are told. blend is for Resolve.
+void Depth::UpdateSizes(float blend)
+{
+    const Sizes values{ { sourceWidth, sourceHeight }, { static_cast<UINT>(width), static_cast<UINT>(height) }, kRowBytes / (halfInput ? 2 : 4),
+                        kRowBytes / (halfOutput ? 2 : 4), blend };
+    context->UpdateSubresource(sizes.get(), 0, nullptr, &values, 0, 0);
 }
 
 // Turns the model's output into DEPTH, once the fence says it is ready. The frame copy and guide still hold the frame
@@ -670,12 +757,14 @@ void Depth::CreateShared()
 void Depth::Publish()
 {
     winrt::check_hresult(context->Wait(fence.get(), inputValue + 1));
-    const UINT zero[4] = {};
-    context->ClearUnorderedAccessViewUint(keysTarget.get(), zero);
+    const auto now = Clock::now();
+    UpdateSizes(publishedAt ? AnchorBlend(std::chrono::duration<float>(now - *publishedAt).count()) : 1);
+    publishedAt = now;
     const UINT pixels = static_cast<UINT>(width * height);
     Dispatch(1, { nullptr, outputView.get() }, { nullptr, keysTarget.get() }, (pixels + 255) / 256, 1);
-    Dispatch(2, {}, { nullptr, keysTarget.get(), stateTarget.get() }, 1, 1);
-    Dispatch(3, { frameView.get(), outputView.get(), stateView.get(), guideView.get() }, { nullptr, nullptr, nullptr, depthTarget.get() },
+    Dispatch(2, { nullptr, outputView.get(), nullptr, guideView.get() }, { nullptr, keysTarget.get() }, (width + 15) / 16, (height + 15) / 16);
+    Dispatch(3, {}, { nullptr, keysTarget.get(), stateTarget.get() }, 1, 1);
+    Dispatch(4, { frameView.get(), outputView.get(), stateView.get(), guideView.get() }, { nullptr, nullptr, nullptr, depthTarget.get() },
              (sourceWidth + 15) / 16, (sourceHeight + 15) / 16);
 }
 

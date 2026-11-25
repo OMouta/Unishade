@@ -46,6 +46,7 @@ struct Sizes
     uint2 ModelSize; // of the model's input and output
     uint HalfInput;
     uint HalfOutput;
+    float Blend; // how far the smoothed anchor moves towards this estimate's
 };
 
 float Load(constant Sizes& sizes, device const float* result, device const half* halfResult, uint index)
@@ -93,31 +94,99 @@ float Unordered(uint key)
     return as_type<float>((key & 0x80000000) ? key & 0x7FFFFFFF : ~key);
 }
 
-// Finds the highest value of the output, the nearest point. Keys starts out zero, below every key.
-kernel void Peak(uint id [[thread_position_in_grid]], uint lane [[thread_index_in_threadgroup]], constant Sizes& sizes [[buffer(0)]],
-                 device const float* result [[buffer(3)]], device const half* halfResult [[buffer(4)]], device atomic_uint* keys [[buffer(5)]])
+// Finds the highest and the lowest value of the output. The keys start out zero, below every key, so the lowest is
+// kept as the highest of the keys turned over.
+kernel void Range(uint id [[thread_position_in_grid]], uint lane [[thread_index_in_threadgroup]], constant Sizes& sizes [[buffer(0)]],
+                  device const float* result [[buffer(3)]], device const half* halfResult [[buffer(4)]], device atomic_uint* keys [[buffer(5)]])
 {
-    threadgroup float peaks[256];
-    peaks[lane] = Load(sizes, result, halfResult, min(id, sizes.ModelSize.x * sizes.ModelSize.y - 1));
+    threadgroup float highs[256];
+    threadgroup float lows[256];
+    float value = Load(sizes, result, halfResult, min(id, sizes.ModelSize.x * sizes.ModelSize.y - 1));
+    highs[lane] = value;
+    lows[lane] = value;
     threadgroup_barrier(mem_flags::mem_threadgroup);
     for (uint step = 128; step > 0; step >>= 1)
     {
         if (lane < step)
-            peaks[lane] = max(peaks[lane], peaks[lane + step]);
+        {
+            highs[lane] = max(highs[lane], highs[lane + step]);
+            lows[lane] = min(lows[lane], lows[lane + step]);
+        }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
     if (lane == 0)
-        atomic_fetch_max_explicit(keys, Ordered(peaks[0]), memory_order_relaxed);
+    {
+        atomic_fetch_max_explicit(&keys[KeyHighest], Ordered(highs[0]), memory_order_relaxed);
+        atomic_fetch_max_explicit(&keys[KeyLowest], ~Ordered(lows[0]), memory_order_relaxed);
+    }
 }
 
-// Moves the peak kept in state towards the output's. State starts out zero, until z marks it as set.
-kernel void Smooth(device const uint* keys [[buffer(5)]], device float4* state [[buffer(6)]])
+// Counts the output's values between the lowest and the highest, and the picture's pixels by brightness in each
+// section.
+kernel void Histogram(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [[buffer(0)]], device const float* result [[buffer(3)]],
+                      device const half* halfResult [[buffer(4)]], device atomic_uint* keys [[buffer(5)]],
+                      texture2d<float, access::read> guide [[texture(1)]])
 {
-    float peak = Unordered(keys[0]);
+    if (any(id >= sizes.ModelSize))
+        return;
+    float low = Unordered(~atomic_load_explicit(&keys[KeyLowest], memory_order_relaxed));
+    float high = Unordered(atomic_load_explicit(&keys[KeyHighest], memory_order_relaxed));
+    float value = Load(sizes, result, halfResult, id.y * sizes.ModelSize.x + id.x);
+    uint bin = min(uint(saturate((value - low) / max(high - low, 1e-20f)) * float(AnchorBins)), AnchorBins - 1u);
+    atomic_fetch_add_explicit(&keys[KeyBins + bin], 1u, memory_order_relaxed);
+    uint2 cell = min(id * 3u / sizes.ModelSize, uint2(2u));
+    uint level = min(uint(dot(guide.read(id).rgb, Luma) * float(SectionLevels)), SectionLevels - 1u);
+    atomic_fetch_add_explicit(&keys[KeySections + (cell.y * 3u + cell.x) * SectionLevels + level], 1u, memory_order_relaxed);
+}
+
+// Finds the output's anchor in the counts and moves the one kept in state towards it, or takes it as it is after a
+// cut. State starts out zero, until z marks it as set. Leaves the counts zero for the next estimate, and the sections'
+// for it to tell a cut by.
+kernel void Resolve(constant Sizes& sizes [[buffer(0)]], device uint* keys [[buffer(5)]], device float4* state [[buffer(6)]])
+{
+    float low = Unordered(~keys[KeyLowest]);
+    float high = Unordered(keys[KeyHighest]);
+    uint wanted = uint(float(sizes.ModelSize.x * sizes.ModelSize.y) * AnchorShare);
+    uint below = 0;
+    float anchor = high;
+    bool found = false;
+    for (uint bin = 0; bin < AnchorBins; ++bin)
+    {
+        uint count = keys[KeyBins + bin];
+        if (!found && count > 0 && below + count >= wanted)
+        {
+            anchor = low + (float(bin) + float(wanted - below) / float(count)) * (high - low) / float(AnchorBins);
+            found = true;
+        }
+        below += count;
+        keys[KeyBins + bin] = 0;
+    }
+    uint changed = 0;
+    for (uint section = 0; section < 9; ++section)
+    {
+        uint pixels = 0;
+        uint moved = 0;
+        for (uint level = 0; level < SectionLevels; ++level)
+        {
+            uint index = section * SectionLevels + level;
+            uint count = keys[KeySections + index];
+            uint before = keys[KeyPrevious + index];
+            pixels += count;
+            moved += max(count, before) - min(count, before);
+            keys[KeyPrevious + index] = count;
+            keys[KeySections + index] = 0;
+        }
+        // Every pixel that left a level arrived at another, so each is counted twice.
+        if (float(moved) > 2 * CutShare * float(pixels))
+            ++changed;
+    }
+    keys[KeyHighest] = 0;
+    keys[KeyLowest] = 0;
     float4 current = state[0];
-    if (current.z == 0)
-        current.x = peak;
-    state[0] = float4(current.x + (peak - current.x) * PeakSmoothing, 0, 1, 0);
+    bool cut = changed >= CutSections;
+    if (current.z == 0 || cut)
+        current.x = anchor;
+    state[0] = float4(current.x + (anchor - current.x) * sizes.Blend, cut ? 1 : 0, 1, 0);
 }
 
 // Upsamples the output to the frame's size with a joint bilateral filter, as Weight says.
@@ -159,13 +228,14 @@ kernel void Far(uint2 id [[thread_position_in_grid]], texture2d<float, access::w
 enum Kernel
 {
     kPreprocess,
-    kPeak,
-    kSmooth,
+    kRange,
+    kHistogram,
+    kResolve,
     kUpsample,
     kFar,
     kKernelCount,
 };
-constexpr const char* kKernelNames[] = { "Preprocess", "Peak", "Smooth", "Upsample", "Far" };
+constexpr const char* kKernelNames[] = { "Preprocess", "Range", "Histogram", "Resolve", "Upsample", "Far" };
 
 // As Sizes in the shaders.
 struct Sizes
@@ -174,6 +244,8 @@ struct Sizes
     uint32_t modelSize[2];
     uint32_t halfInput;
     uint32_t halfOutput;
+    float blend;
+    uint32_t unused;
 };
 
 class Depth
@@ -219,6 +291,8 @@ private:
     uint32_t sourceWidth = 0;
     uint32_t sourceHeight = 0;
     std::optional<uint64_t> lastInput;
+    // When the last estimate became DEPTH, or nothing before the first.
+    std::optional<Clock::time_point> publishedAt;
     // The frame's work made the model's input, which the worker gets once the work is done.
     bool inputMade = false;
     Clock::time_point requestedAt{};
@@ -311,7 +385,7 @@ Depth::Depth(const UnishadeHost& unishade) : host(unishade), directory(unishade.
             throw std::runtime_error(std::string("Metal could not prepare ") + kKernelNames[i] +
                                      (pipelineError ? std::string(": ") + pipelineError.localizedDescription.UTF8String : std::string(".")));
     }
-    if (!queue || pipelines[kPeak].maxTotalThreadsPerThreadgroup < 256)
+    if (!queue || pipelines[kRange].maxTotalThreadsPerThreadgroup < 256)
         throw std::runtime_error("Metal cannot run the depth shaders on this graphics card.");
 
     worker = std::thread(&Depth::Worker, this);
@@ -451,7 +525,7 @@ void Depth::CreateShared(id<MTLCommandBuffer> commands)
     const NSUInteger pixels = static_cast<NSUInteger>(width) * height;
     input = [device newBufferWithLength:3 * pixels * (halfInput ? 2 : 4) options:MTLResourceStorageModeShared];
     output = [device newBufferWithLength:pixels * (halfOutput ? 2 : 4) options:MTLResourceStorageModeShared];
-    keys = [device newBufferWithLength:sizeof(uint32_t) options:MTLResourceStorageModeShared];
+    keys = [device newBufferWithLength:kKeyCount * sizeof(uint32_t) options:MTLResourceStorageModeShared];
     state = [device newBufferWithLength:4 * sizeof(float) options:MTLResourceStorageModeShared];
     if (!input || !output || !keys || !state)
     {
@@ -459,11 +533,13 @@ void Depth::CreateShared(id<MTLCommandBuffer> commands)
         throw std::runtime_error("The graphics card is out of memory.");
     }
     guide = CreateTexture(MTLPixelFormatRGBA8Unorm, width, height, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite);
+    std::memset(keys.contents, 0, keys.length);
     std::memset(state.contents, 0, state.length);
+    publishedAt.reset();
     inputMemory = input.contents;
     outputMemory = output.contents;
     ++version;
-    sizes = { { sourceWidth, sourceHeight }, { static_cast<uint32_t>(width), static_cast<uint32_t>(height) }, halfInput, halfOutput };
+    sizes = { { sourceWidth, sourceHeight }, { static_cast<uint32_t>(width), static_cast<uint32_t>(height) }, halfInput, halfOutput, 0, 0 };
     Far(commands);
 }
 
@@ -480,8 +556,9 @@ void Depth::Far(id<MTLCommandBuffer> commands)
 // next one is only copied after this.
 void Depth::Publish(id<MTLCommandBuffer> commands)
 {
-    // The graphics card is done with keys, since every frame waits for its work.
-    *static_cast<uint32_t*>(keys.contents) = 0;
+    const auto now = Clock::now();
+    sizes.blend = publishedAt ? AnchorBlend(std::chrono::duration<float>(now - *publishedAt).count()) : 1;
+    publishedAt = now;
     const NSUInteger pixels = static_cast<NSUInteger>(width) * height;
     id<MTLComputeCommandEncoder> encoder = [commands computeCommandEncoder];
     [encoder setBytes:&sizes length:sizeof(sizes) atIndex:0];
@@ -489,14 +566,16 @@ void Depth::Publish(id<MTLCommandBuffer> commands)
     [encoder setBuffer:output offset:0 atIndex:4];
     [encoder setBuffer:keys offset:0 atIndex:5];
     [encoder setBuffer:state offset:0 atIndex:6];
-    [encoder setComputePipelineState:pipelines[kPeak]];
-    [encoder dispatchThreadgroups:MTLSizeMake((pixels + 255) / 256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
-    [encoder setComputePipelineState:pipelines[kSmooth]];
-    [encoder dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
-    [encoder setComputePipelineState:pipelines[kUpsample]];
     [encoder setTexture:frameCopy atIndex:0];
     [encoder setTexture:guide atIndex:1];
     [encoder setTexture:depth atIndex:2];
+    [encoder setComputePipelineState:pipelines[kRange]];
+    [encoder dispatchThreadgroups:MTLSizeMake((pixels + 255) / 256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    [encoder setComputePipelineState:pipelines[kHistogram]];
+    [encoder dispatchThreadgroups:MTLSizeMake((width + 15) / 16, (height + 15) / 16, 1) threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
+    [encoder setComputePipelineState:pipelines[kResolve]];
+    [encoder dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+    [encoder setComputePipelineState:pipelines[kUpsample]];
     [encoder dispatchThreadgroups:MTLSizeMake((sourceWidth + 15) / 16, (sourceHeight + 15) / 16, 1) threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
     [encoder endEncoding];
 }
