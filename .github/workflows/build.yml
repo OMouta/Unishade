@@ -259,40 +259,24 @@ jobs:
           done
       # A manual run signs the app with the Developer ID Application certificate, so a Mac opens the download without a
       # warning and keeps the screen recording permission from one version to the next. The certificate is the
-      # MACOS_CERTIFICATE secret, a .p12 file in base64, and MACOS_CERTIFICATE_PASSWORD its password. It goes into a
-      # keychain of its own, which only this run has.
+      # MACOS_CERTIFICATE secret, a .p12 file in base64, and MACOS_CERTIFICATE_PASSWORD its password.
       - name: Import the signing certificate
         id: certificate
         if: github.event_name == 'workflow_dispatch'
+        uses: ./.github/actions/mac-certificate
+        with:
+          certificate: ${{ secrets.MACOS_CERTIFICATE }}
+          password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      # The App Store Connect API key Apple's notary service takes, in a file only this user can read.
+      - name: Write the notary key
+        if: github.event_name == 'workflow_dispatch'
         env:
-          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
         run: |
-          if [ -z "$CERTIFICATE" ] || [ -z "$NOTARY_KEY" ]; then
-            echo "::error::A manual run signs and notarizes the Mac app, which needs the MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, NOTARY_KEY and NOTARY_KEY_ID secrets."
+          if [ -z "$NOTARY_KEY" ]; then
+            echo "::error::A manual run notarizes the Mac app, which needs the NOTARY_KEY and NOTARY_KEY_ID secrets, and NOTARY_ISSUER_ID for a team's key."
             exit 1
           fi
-          keychain="$RUNNER_TEMP/signing.keychain-db"
-          keychain_password=$(openssl rand -hex 24)
-          security create-keychain -p "$keychain_password" "$keychain"
-          # Without a time after which it locks, since the notary service can take longer than the default.
-          security set-keychain-settings "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          printf '%s' "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
-          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -f pkcs12 -T /usr/bin/codesign
-          rm "$RUNNER_TEMP/certificate.p12"
-          # Lets codesign use the key without a window asking for the keychain's password.
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" > /dev/null
-          # codesign looks for the certificate in the keychains on this list.
-          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
-          identity=$(security find-identity -v -p codesigning "$keychain" | awk '/Developer ID Application/ { print $2; exit }')
-          if [ -z "$identity" ]; then
-            echo "::error::MACOS_CERTIFICATE holds no Developer ID Application certificate with its key that this Mac trusts."
-            exit 1
-          fi
-          echo "identity=$identity" >> "$GITHUB_OUTPUT"
-          # The App Store Connect API key the notary service takes, which only this user can read.
           (umask 077 && printf '%s\n' "$NOTARY_KEY" > "$RUNNER_TEMP/notary-key.p8")
       - name: Sign the app
         if: github.event_name == 'workflow_dispatch'
