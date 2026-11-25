@@ -86,19 +86,32 @@ std::vector<float> Closeness(const std::vector<float>& depth)
     return closeness;
 }
 
-// The mean difference between a and b moved shift pixels to the left, over the pixels both have, as a share of the
-// nearest thing's closeness.
+// The mean difference between a and b moved shift pixels to the left, over the pixels both have, as a share of b's
+// mean there, so it says the same whatever the closeness is measured against.
 double Difference(const std::vector<float>& a, const std::vector<float>& b, int width, int height, int shift)
 {
-    double sum = 0;
-    size_t count = 0;
+    double sum = 0, mean = 0;
     for (int y = 0; y < height; ++y)
         for (int x = std::max(0, -shift); x < std::min(width, width - shift); ++x)
         {
             sum += std::abs(a[size_t(y) * width + x] - b[size_t(y) * width + x + shift]);
-            ++count;
+            mean += b[size_t(y) * width + x + shift];
         }
-    return count ? sum / count : 0;
+    return mean > 0 ? sum / mean : 0;
+}
+
+// How much closer everything in a is than in b moved shift pixels to the left: the middle one of the ratios, over a
+// part of the pixels both have. 1 when depth as a whole is the same in both.
+double Scale(const std::vector<float>& a, const std::vector<float>& b, int width, int height, int shift)
+{
+    std::vector<float> ratios;
+    for (int y = 0; y < height; y += 4)
+        for (int x = std::max(0, -shift); x < std::min(width, width - shift); x += 4)
+            ratios.push_back(a[size_t(y) * width + x] / b[size_t(y) * width + x + shift]);
+    if (ratios.empty())
+        return 1;
+    std::nth_element(ratios.begin(), ratios.begin() + ratios.size() / 2, ratios.end());
+    return ratios[ratios.size() / 2];
 }
 
 void SaveDepth(const std::vector<float>& depth, int width, int height, const std::filesystem::path& folder, const std::string& name)
@@ -336,17 +349,20 @@ int Main(int argc, wchar_t** argv)
     // Depth takes a few estimates to follow the picture once it starts to move, so the first half of the moving frames
     // does not count.
     const int from = frames / 2;
-    double flicker = 0, late = 0;
+    double flicker = 0, late = 0, pulse = 0, off = 0;
     for (int index = from; index < frames; ++index)
     {
         // What is at x in this frame was scroll pixels to the right in the one before, and is where the picture came
         // to rest in the last frame.
         flicker += Difference(closeness[index], closeness[index - 1], width, height, scroll);
         late += Difference(closeness[index], closeness[total - 1], width, height, offsets[index] - offsets[total - 1]);
+        pulse += std::abs(Scale(closeness[index], closeness[index - 1], width, height, scroll) - 1);
+        off += std::abs(Scale(closeness[index], closeness[total - 1], width, height, offsets[index] - offsets[total - 1]) - 1);
     }
     const int counted = std::max(1, frames - from);
-    std::printf("Frame to frame, depth changed by %.3f%% of the nearest thing's on average while the picture moved.\n", 100 * flicker / counted);
-    std::printf("It was %.3f%% from the depth the picture came to rest at.\n", 100 * late / counted);
+    std::printf("Frame to frame, depth changed by %.3f%% on average while the picture moved, and as a whole by %.3f%%.\n", 100 * flicker / counted,
+                100 * pulse / counted);
+    std::printf("It was %.3f%% from the depth the picture came to rest at, and as a whole %.3f%%.\n", 100 * late / counted, 100 * off / counted);
     std::printf("A frame took the add-on %.2f ms on the processor and %.2f ms until the graphics card was done, %.2f ms at worst.\n",
                 callMs / total, frameMs / total, worstMs);
     SaveDepth(lastMoving, width, height, output, "moving");
