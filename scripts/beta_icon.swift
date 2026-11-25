@@ -1,6 +1,6 @@
 // Makes a beta's icon from the logo: assets/UnishadeBeta.png, the logo with a BETA label across its bottom, and
 // assets/UnishadeBeta.ico, the same picture at the sizes Windows draws. Run it on a Mac, from the repository's folder,
-// when the logo changes:
+// when the logo changes, and scripts/mac_icon.swift after it, which makes the Mac app's icons from both logos:
 //
 //   swift scripts/beta_icon.swift
 

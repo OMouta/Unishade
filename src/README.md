@@ -254,6 +254,7 @@ The add-on host. The interface add-ons are built against is `addons/unishade_add
 | `cmake/tests.cmake` | The tests |
 | `cmake/bundle_macos.cmake` | Run after every macOS build: copies MoltenVK into `Unishade.app` and signs it again |
 | `cmake/sign_macos.cmake` | Signs `Unishade.app` for the hardened runtime: ad hoc after a build, or with a Developer ID certificate for a release |
+| `scripts/mac_icon.swift` | Draws the Mac app's icons, `assets/UnishadeMac.png` and `assets/UnishadeMacBeta.png`: the logo on the black rounded square a Mac icon is. `cmake/app.cmake` makes the app's icon file from one of them |
 | `scripts/dmg.sh` | Packs `Unishade.app` into the disk image a Mac release is, with dmgbuild at the version in `scripts/dmg-requirements.txt`. `scripts/dmg_settings.py` says what Finder's window for it shows, and `scripts/dmg_background.swift` draws the picture behind its icons into `assets/dmg/` |
 | `scripts/notarize-macos.sh` | Has Apple's notary service check a signed `Unishade.app` or disk image, and attaches the ticket it answers with |
 | `cmake/addon_release.cmake` | Run to release an add-on: packs its `addon.ini`, its `files.ini` with the SHA-256 of the libraries built for it, its icon and `SHA256SUMS.txt` |
