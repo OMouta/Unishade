@@ -324,9 +324,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Unishade-macOS
-          path: |
-            build/Unishade-macOS.dmg
-            build/Depth.dylib
+          path: build/Unishade-macOS.dmg
           if-no-files-found: error
 
   release:
