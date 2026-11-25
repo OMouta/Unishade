@@ -117,7 +117,7 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-The Windows build is `build\Release\Unishade.exe`, and `installer/README.md` says how to build Setup. Windows builds only the tests of files that stand alone; the tests that link Unishade's own code run on macOS and Linux. The Linux build is `build/unishade`. The macOS build is `build/Unishade.app`, with MoltenVK inside and an ad-hoc signature. An ad-hoc signature differs between builds, so macOS can drop the screen recording permission when a new build replaces the app.
+The Windows build is `build\Release\Unishade.exe`, and `installer/README.md` says how to build Setup. Windows builds only the tests of files that stand alone; the tests that link Unishade's own code run on macOS and Linux. The Linux build is `build/unishade`. The macOS build is `build/Unishade.app`, with MoltenVK inside and an ad-hoc signature. An ad-hoc signature differs between builds, so macOS can drop the screen recording permission when a new build replaces the app. The app is signed for the hardened runtime, as a release is, with the entitlement that has it load add-ons, which are libraries someone else signed. An ad-hoc build also lets a debugger and Instruments attach.
 
 The Mac app runs on macOS 13 and newer. The top-level `CMakeLists.txt` sets `CMAKE_OSX_DEPLOYMENT_TARGET` before `project()`, because `project()` reads it when it enables the first language, and a value set later has no effect. A value on the command line or in `MACOSX_DEPLOYMENT_TARGET` wins. CI reads the minimum version of the app and of `libMoltenVK.dylib` with `vtool` and fails above 13.0, since the runner's own macOS or a newer MoltenVK from Homebrew would raise it unnoticed. XRes, XDamage and DRI3 are loaded when the system has them, so only their headers are needed to build; without a header the build leaves that part out.
 
@@ -253,6 +253,7 @@ The add-on host. The interface add-ons are built against is `addons/unishade_add
 | `cmake/installer.cmake` | Setup for Windows |
 | `cmake/tests.cmake` | The tests |
 | `cmake/bundle_macos.cmake` | Run after every macOS build: copies MoltenVK into `Unishade.app` and signs it again |
+| `cmake/sign_macos.cmake` | Signs `Unishade.app` for the hardened runtime: ad hoc after a build, or with a Developer ID certificate for a release |
 | `cmake/addon_release.cmake` | Run to release an add-on: packs its `addon.ini`, its `files.ini` with the SHA-256 of the libraries built for it, its icon and `SHA256SUMS.txt` |
 | `addons/` | `unishade_addon.h`, the interface add-ons are built against, and the add-ons `depth/`, `dlss5/` and `example/`. An official one has its `addon.ini`, its `files.ini` and its icon there |
 | `installer/` | Setup for Windows |
