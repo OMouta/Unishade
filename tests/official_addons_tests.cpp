@@ -47,9 +47,12 @@ fs::path Pack(const std::string& id, const std::string& version, int api = 1, co
     Put(source / "files.ini", files);
     Put(source / "art" / "icon.png", "the icon of " + id);
     Put(source / "One.lib", "the library of " + id + " " + version);
+    // Into a folder named from where the script runs, as the workflow names it.
     const fs::path packed = work / "releases" / (id + "-v" + version);
-    const std::string command = std::string("\"") + CMAKE_COMMAND + "\" \"-DADDON=" + source.string() + "\" \"-DBINARIES=One.lib=" + (source / "One.lib").string() +
-                                "\" \"-DOUTPUT=" + packed.string() + "\" -P \"" + PACK_SCRIPT + "\" > /dev/null";
+    fs::create_directories(packed.parent_path());
+    const std::string command = "cd \"" + packed.parent_path().string() + "\" && \"" + CMAKE_COMMAND + "\" \"-DADDON=" + source.string() +
+                                "\" \"-DBINARIES=One.lib=" + (source / "One.lib").string() + "\" \"-DOUTPUT=" + packed.filename().string() + "\" -P \"" +
+                                PACK_SCRIPT + "\" > /dev/null";
     if (std::system(command.c_str()) != 0)
         std::printf("Failed: could not pack %s %s\n", id.c_str(), version.c_str());
     return packed;
