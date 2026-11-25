@@ -10,6 +10,7 @@ import {
   type ChatInputCommandInteraction,
   type Interaction,
 } from "discord.js";
+import { describeModels, modelList, setModels, unknownModels } from "./answer.ts";
 import { removeMessage, saveMessage, savedMessages } from "./context.ts";
 import {
   channelList,
@@ -110,6 +111,21 @@ export const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .setContexts(InteractionContextType.Guild),
   new SlashCommandBuilder()
+    .setName("model")
+    .setDescription("See or change the OpenRouter models the bot asks")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .setContexts(InteractionContextType.Guild)
+    .addSubcommand((command) => command.setName("show").setDescription("See the models"))
+    .addSubcommand((command) =>
+      command
+        .setName("set")
+        .setDescription("Ask these models instead of OPENROUTER_MODEL")
+        .addStringOption((option) =>
+          option.setName("models").setDescription("OpenRouter model IDs, separated by commas and asked in order").setRequired(true).setMaxLength(1000),
+        ),
+    )
+    .addSubcommand((command) => command.setName("clear").setDescription("Go back to the models in OPENROUTER_MODEL")),
+  new SlashCommandBuilder()
     .setName("limit-settings")
     .setDescription("See or change how many questions members can ask")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
@@ -198,6 +214,40 @@ async function limitSettings(interaction: ChatInputCommandInteraction<"cached">)
   }
   await interaction.reply(ephemeral(describeSettings()));
   if (subcommand !== "show") await logNote(interaction.client, `<@${interaction.user.id}> changed the limits:\n${describeSettings()}`);
+}
+
+// set and clear are saved across restarts and go to the log. Each subcommand replies with the models asked now.
+async function modelSettings(interaction: ChatInputCommandInteraction<"cached">) {
+  const subcommand = interaction.options.getSubcommand();
+  if (subcommand === "set") {
+    const list = modelList(interaction.options.getString("models", true));
+    if (!list.length) {
+      await interaction.reply(ephemeral("Give at least one model ID, such as openai/gpt-oss-20b."));
+      return;
+    }
+    // Fetching OpenRouter's model list can take longer than the 3 seconds Discord waits for a reply.
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const unknown = await unknownModels(list).catch((error) => {
+      console.error("Could not fetch OpenRouter's model list:", error);
+      return undefined;
+    });
+    if (!unknown) {
+      await interaction.editReply("Couldn't reach OpenRouter to check the models, so nothing changed. Try again in a moment.");
+      return;
+    }
+    if (unknown.length) {
+      await interaction.editReply(
+        `OpenRouter doesn't list ${unknown.map((model) => `\`${model}\``).join(", ")}, so nothing changed. Copy the IDs from openrouter.ai/models.`,
+      );
+      return;
+    }
+    setModels(list);
+    await interaction.editReply(describeModels());
+  } else {
+    if (subcommand === "clear") setModels();
+    await interaction.reply(ephemeral(describeModels()));
+  }
+  if (subcommand !== "show") await logNote(interaction.client, `<@${interaction.user.id}> changed the models. ${describeModels()}`);
 }
 
 // Like a mention, but it can take a file and its tags are options.
@@ -292,6 +342,10 @@ export async function handleInteraction(interaction: Interaction) {
     }
     if (interaction.commandName === "limit-settings") {
       await limitSettings(interaction);
+      return;
+    }
+    if (interaction.commandName === "model") {
+      await modelSettings(interaction);
       return;
     }
     // Asking OpenRouter can take longer than the 3 seconds Discord waits for a reply.

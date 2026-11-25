@@ -59,6 +59,10 @@ Right-click a member and pick **Apps > Exclude from AI** to have the bot ignore 
 
 `/limit-settings boost` multiplies everyone's hourly and daily limits, such as `multiplier: 2` for a 2x week. Give it `days` to have it end on its own, or set it back to 1 to end it. While it's on, `/limits` tells members. `/limit-settings set` changes the hourly or daily limit for everyone or a tier, `/limit-settings threads` changes how many answers a private thread gets, and `/limit-settings show` lists the limits. `/limit-settings reset` gives a member a full hour and day of questions again, or everyone without a member. Changes last across restarts and go to the log. Only members who can manage the server see the command.
 
+## Changing the model
+
+`/model set` makes the bot ask other OpenRouter models than the ones in `OPENROUTER_MODEL`, such as `models: openai/gpt-oss-120b`. List several separated by commas and they're asked in order, like in `OPENROUTER_MODEL`. The bot checks the IDs against OpenRouter's model list and changes nothing if one isn't there. `/model clear` goes back to `OPENROUTER_MODEL`, and `/model show` lists the models it asks now. Changes last across restarts, even if `OPENROUTER_MODEL` changes, and go to the log. Only members who can manage the server see the command.
+
 ## Log
 
 With `LOG_CHANNEL_ID` set, every answer goes to that channel: who asked and where, the question, the answer or why it failed, the tags, the model, tokens and cost. So does who paused or unpaused the bot, opened a private thread or asked for a human.
@@ -75,4 +79,4 @@ pnpm install
 pnpm start
 ```
 
-Set `DISCORD_TOKEN` to the bot's token and `OPENROUTER_API_KEY` to an OpenRouter API key, either in the environment or in `bot/.env`. `OPENROUTER_MODEL` picks the model, `openai/gpt-oss-20b` if it's not set. List several separated by commas, and when one fails, such as a free model at its daily limit, the next one answers. `CHANNEL_ID` takes the IDs of the channels members can ask in, separated by commas, threads in them included. Without it, they can ask anywhere. `TIER1_ROLE_IDS`, `TIER2_ROLE_IDS` and `TEAM_ROLE_IDS` take role IDs separated by commas. `LOG_CHANNEL_ID` is the channel for the log. The bot also needs **Message Content Intent** and **Server Members Intent** turned on in the Discord Developer Portal.
+Set `DISCORD_TOKEN` to the bot's token and `OPENROUTER_API_KEY` to an OpenRouter API key, either in the environment or in `bot/.env`. `OPENROUTER_MODEL` picks the model, `openai/gpt-oss-20b` if it's not set, and `/model set` overrides it. List several separated by commas, and when one fails, such as a free model at its daily limit, the next one answers. `CHANNEL_ID` takes the IDs of the channels members can ask in, separated by commas, threads in them included. Without it, they can ask anywhere. `TIER1_ROLE_IDS`, `TIER2_ROLE_IDS` and `TEAM_ROLE_IDS` take role IDs separated by commas. `LOG_CHANNEL_ID` is the channel for the log. The bot also needs **Message Content Intent** and **Server Members Intent** turned on in the Discord Developer Portal.

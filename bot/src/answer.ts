@@ -1,4 +1,6 @@
-import { renderContext } from "./context.ts";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { dataDir, renderContext } from "./context.ts";
 import type { Conversation } from "./conversation.ts";
 import { maySearch, switches } from "./tags.ts";
 
@@ -6,8 +8,33 @@ export const apiKey = process.env.OPENROUTER_API_KEY;
 if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set");
 // Separated by commas and asked in order, so another model can answer when one fails, such as a free model at its
 // daily limit.
-const configured = process.env.OPENROUTER_MODEL?.split(",").map((model) => model.trim()).filter(Boolean) ?? [];
-const models = configured.length ? configured : ["openai/gpt-oss-20b"];
+export const modelList = (list: string | undefined) => list?.split(",").map((model) => model.trim()).filter(Boolean) ?? [];
+const configured = modelList(process.env.OPENROUTER_MODEL);
+const envModels = configured.length ? configured : ["openai/gpt-oss-20b"];
+
+// Set with /model set, the models asked in place of OPENROUTER_MODEL until /model clear. Kept across restarts, so
+// changing the environment doesn't undo it.
+const overrideFile = path.join(dataDir, "model.json");
+let override: string[] | undefined = existsSync(overrideFile) ? (JSON.parse(readFileSync(overrideFile, "utf8")) as { models: string[] }).models : undefined;
+const modelsNow = () => override ?? envModels;
+
+// Without models, the override is cleared and OPENROUTER_MODEL applies again.
+export function setModels(list?: string[]) {
+  override = list;
+  if (!list) {
+    rmSync(overrideFile, { force: true });
+    return;
+  }
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(overrideFile, JSON.stringify({ models: list }, null, 2));
+}
+
+// What /model shows the team after each change.
+export function describeModels(): string {
+  const list = (each: string[]) => each.map((model) => `\`${model}\``).join(", ");
+  if (!override) return `Asking ${list(envModels)}, from OPENROUTER_MODEL.`;
+  return `Asking ${list(override)}, set with /model. /model clear goes back to ${list(envModels)} from OPENROUTER_MODEL.`;
+}
 
 const instructions = `You are the bot in the Unishade Discord server. Unishade is an open-source app that runs ReShade effects on a game from outside the game's process. Someone mentioned you or picked a message for you to answer, and your reply is posted in the channel as written.
 
@@ -42,6 +69,8 @@ type Usage = { total_tokens?: number; cost?: number; server_tool_use_details?: {
 
 // Asks the models in order until one answers. When a model fails partway, the next one starts over.
 async function firstAnswer(ask: (model: string) => Promise<Answer>): Promise<Answer> {
+  // Read once, so a change partway through doesn't skip or repeat a model.
+  const models = modelsNow();
   for (const model of models.slice(0, -1)) {
     try {
       return await ask(model);
@@ -74,11 +103,22 @@ export const summarize = (transcript: string) =>
     ),
   );
 
-async function loadImageModels(): Promise<Set<string>> {
+async function fetchModels() {
   const response = await fetch("https://openrouter.ai/api/v1/models", { signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`OpenRouter answered ${response.status} for the model list`);
   const { data } = (await response.json()) as { data: { id: string; architecture?: { input_modalities?: string[] } }[] };
-  return new Set(data.filter((each) => each.architecture?.input_modalities?.includes("image")).map((each) => each.id));
+  return data;
+}
+
+async function loadImageModels(): Promise<Set<string>> {
+  return new Set((await fetchModels()).filter((each) => each.architecture?.input_modalities?.includes("image")).map((each) => each.id));
+}
+
+// The ones OpenRouter doesn't list, such as a misspelled ID, which would fail every question they're asked. Fetched
+// each time, so a model added since the bot started is found.
+export async function unknownModels(list: string[]): Promise<string[]> {
+  const known = new Set((await fetchModels()).map((each) => each.id));
+  return list.filter((model) => !known.has(model));
 }
 
 // The models that take images, from OpenRouter's list, fetched when the first image comes in.
