@@ -203,7 +203,8 @@ void Check()
     }
 
     const std::atomic<bool> cancel = false;
-    const std::string json = Fetch(L"https://api.github.com/repos/OMouta/Unishade/releases?per_page=30", cancel);
+    // As many as GitHub lists at once: the add-ons' releases are in the list too, between Unishade's own.
+    const std::string json = Fetch(L"https://api.github.com/repos/OMouta/Unishade/releases?per_page=100", cancel);
     const std::string tag = NewestRelease(json, ParseVersion(UNISHADE_VERSION).value_or(Version{}));
     if (tag.empty())
     {

@@ -77,7 +77,8 @@ async function list() {
   const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
   // Without a token GitHub allows 60 requests an hour, which local builds rarely reach.
   if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-  const response = await fetch(`${api}/repos/${repository}/releases?per_page=30`, {
+  // As many as GitHub lists at once: the add-ons' releases are in the list too, between Unishade's own.
+  const response = await fetch(`${api}/repos/${repository}/releases?per_page=100`, {
     headers,
     signal: AbortSignal.timeout(15_000),
   });
@@ -99,8 +100,8 @@ async function newest(): Promise<Release> {
     return fallback;
   }
 
-  // The depth and DLSS5 files are releases too, so only vX.Y.Z and vX.Y.Z-beta.N tags count, like the host's update
-  // check. A tag that names a beta makes the release one, whatever its prerelease flag says.
+  // The add-ons and the files they need are releases too, so only vX.Y.Z and vX.Y.Z-beta.N tags count, like the host's
+  // update check. A tag that names a beta makes the release one, whatever its prerelease flag says.
   type Found = { release: GitHubRelease; setup: Asset; version: number[] };
   let best: Found | undefined;
   let beta: Found | undefined;
