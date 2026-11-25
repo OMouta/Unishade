@@ -120,8 +120,9 @@ async function newest(): Promise<Release> {
 
   const files = (release: GitHubRelease) => {
     const asset = (pattern: RegExp) => download(release.assets.find((file) => pattern.test(file.name)));
-    // Releases before macOS and Linux support have neither.
-    return { macos: asset(/^Unishade-macOS\.zip$/), linux: asset(/^Unishade-linux-x64\.tar\.gz$/) };
+    // Releases before macOS and Linux support have neither. The Mac's file is a disk image from 0.7.0 on, and was a
+    // zip before.
+    return { macos: asset(/^Unishade-macOS\.dmg$/) ?? asset(/^Unishade-macOS\.zip$/), linux: asset(/^Unishade-linux-x64\.tar\.gz$/) };
   };
   const { release, setup, version } = best;
   const target = project ? parse(project) : undefined;
