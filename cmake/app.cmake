@@ -169,8 +169,10 @@ if(APPLE)
         COMMAND iconutil -c icns "${APP_ICONSET}" -o "${APP_ICON}"
         DEPENDS "${ICON_PNG}"
         VERBATIM)
-    add_executable(Unishade MACOSX_BUNDLE "${SRC_DIR}/main.cpp" "${APP_ICON}")
-    set_source_files_properties("${APP_ICON}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    # The license and the credits come inside the app, since the disk image a release is holds nothing but the app.
+    set(APP_NOTICES "${CMAKE_SOURCE_DIR}/LICENSE" "${CMAKE_SOURCE_DIR}/CREDITS.txt")
+    add_executable(Unishade MACOSX_BUNDLE "${SRC_DIR}/main.cpp" "${APP_ICON}" ${APP_NOTICES})
+    set_source_files_properties("${APP_ICON}" ${APP_NOTICES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     set_target_properties(Unishade PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST "${SRC_DIR}/platform/macos/Info.plist.in"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
