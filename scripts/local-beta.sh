@@ -60,43 +60,44 @@ esac
 
 ditto "$build/Unishade.app" "$folder/Unishade.app"
 
-# The Add-ons page installs the official add-ons from this version's release, whose files are not this build's, if
-# the release exists at all. They go in the zip from this build instead: each one's files for this Mac, from the
-# addresses in official.ini, in a folder named after its Id, with the addon.ini and icon Unishade would write there.
-awk -v wanted="$system]" '
-    /^\[/ { id = ($2 == wanted) ? substr($1, 2) : ""; next }
-    id != "" && /^[^;=]+=/ { at = index($0, "="); print id, substr($0, 1, at - 1), substr($0, at + 1) }
-' "$repo/addons/official.ini" | while read -r id name hash url; do
-    file="$folder/Addons/$id/$name"
-    mkdir -p "$(dirname "$file")"
-    case $hash in
-    @*@)
-        # Built here. Unishade has the hash of this very file.
-        built=${hash#@}
-        cp "$build/${built%@}" "$file"
-        continue
-        ;;
-    esac
-    kept="$repo/build/local-beta-downloads/$hash"
-    if [ ! -f "$kept" ]; then
-        mkdir -p "$(dirname "$kept")"
-        echo "Downloading $url"
-        curl --fail --location --silent --show-error --output "$kept.part" "$url"
-        if [ "$(shasum -a 256 "$kept.part" | cut -d ' ' -f 1)" != "$hash" ]; then
-            echo "$url is not the file official.ini lists." >&2
-            exit 1
+# The Add-ons page installs the official add-ons from their own releases, whose libraries are not this build's. This
+# build's go in the zip instead: each one's files for this Mac, from the addresses in its files.ini, in a folder named
+# after its Id, with the addon.ini and icon Unishade would write there.
+for list in "$repo"/addons/*/files.ini; do
+    source=$(dirname "$list")
+    id=$(sed -n 's/^Id=//p' "$source/addon.ini")
+    awk -v wanted="[$system]" '
+        /^\[/ { inside = ($1 == wanted); next }
+        inside && /^[^;=]+=/ { at = index($0, "="); print substr($0, 1, at - 1), substr($0, at + 1) }
+    ' "$list" | while read -r name hash url; do
+        file="$folder/Addons/$id/$name"
+        mkdir -p "$(dirname "$file")"
+        case $hash in
+        @*@)
+            # Built here.
+            built=${hash#@}
+            cp "$build/${built%@}" "$file"
+            continue
+            ;;
+        esac
+        kept="$repo/build/local-beta-downloads/$hash"
+        if [ ! -f "$kept" ]; then
+            mkdir -p "$(dirname "$kept")"
+            echo "Downloading $url"
+            curl --fail --location --silent --show-error --output "$kept.part" "$url"
+            if [ "$(shasum -a 256 "$kept.part" | cut -d ' ' -f 1)" != "$hash" ]; then
+                echo "$url is not the file $list lists." >&2
+                exit 1
+            fi
+            mv "$kept.part" "$kept"
         fi
-        mv "$kept.part" "$kept"
-    fi
-    cp "$kept" "$file"
-done
-for manifest in "$repo"/addons/*/addon.ini; do
-    id=$(sed -n 's/^Id=//p' "$manifest")
+        cp "$kept" "$file"
+    done
     # Only the add-ons that have files for this Mac have a folder.
     if [ -z "$id" ] || [ ! -d "$folder/Addons/$id" ]; then continue; fi
-    # Without its comments and the empty lines they leave at the top, as the build puts it into Unishade.
-    sed -e '/^;/d' -e "s/@VERSION@/$version/g" "$manifest" | sed '/./,$!d' > "$folder/Addons/$id/addon.ini"
-    cp "$(dirname "$manifest")/icon.png" "$folder/Addons/$id/"
+    # Without its comments and the empty lines they leave at the top, as a release has it.
+    sed -e '/^;/d' "$source/addon.ini" | sed '/./,$!d' > "$folder/Addons/$id/addon.ini"
+    cp "$source/icon.png" "$folder/Addons/$id/"
 done
 
 cat >> "$folder/README.txt" <<'README'
@@ -126,8 +127,9 @@ echo "The add-ons are installed. Start Unishade again if it is open."
 INSTALL
     cat >> "$folder/README.txt" <<'README'
 
-The Add-ons page can't install this build's add-ons, so they come in this folder. To install them, open Terminal,
-type "sh " with the space after it, drag install-addons.sh into the Terminal window and press Return.
+The Add-ons page installs the released add-ons, not this build's, which come in this folder. To install them, open
+Terminal, type "sh " with the space after it, drag install-addons.sh into the Terminal window and press Return. Then
+click Load for each on the Add-ons page. Update there puts the released add-on in its place.
 README
 fi
 

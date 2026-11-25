@@ -45,43 +45,43 @@ $exitCode = (Start-Process $setup -ArgumentList $arguments -WindowStyle Hidden -
 if ($exitCode -eq 2) { throw "Setup left out effects or presets. See $log" }
 if ($exitCode -ne 0) { throw "Setup failed with exit code $exitCode. See $log" }
 
-# The Add-ons page installs the official add-ons from this version's release, whose files are not this build's, if
-# the release exists at all. They go in from this build instead: each one's files for Windows, from the addresses in
-# official.ini, in a folder of the Addons folder named after its Id, with the addon.ini and icon Unishade would write
-# there.
+# The Add-ons page installs the official add-ons from their own releases, whose libraries are not this build's. This
+# build's go in instead: each one's files for Windows, from the addresses in its files.ini, in a folder of the Addons
+# folder named after its Id, with the addon.ini and icon Unishade would write there. Unishade asks once whether to load
+# each, since its library is no release's, and offers to update it to the released one.
 $addons = Join-Path $folder 'Addons'
-$id = $null
-foreach ($line in Get-Content "$repo/addons/official.ini") {
-    if ($line -match '^\[(\S+) (\S+)\]') { $id = if ($Matches[2] -eq 'windows-x64') { $Matches[1] } else { $null }; continue }
-    if (-not $id -or $line -notmatch '^([^;\[=]+)=(\S+) (\S+)$') { continue }
-    $file = Join-Path $addons "$id/$($Matches[1])"
-    $hash = $Matches[2]
-    $url = $Matches[3]
-    New-Item -ItemType Directory -Path (Split-Path $file -Parent) -Force | Out-Null
-    if ($hash -match '^@(.+)@$') {
-        # Built here. Unishade.exe has the hash of this very file.
-        Copy-Item (Join-Path $build "Release/$($Matches[1])") $file
-        continue
-    }
-    $kept = Join-Path $build "local-beta-downloads/$hash"
-    if (-not (Test-Path $kept)) {
-        New-Item -ItemType Directory -Path (Split-Path $kept -Parent) -Force | Out-Null
-        Write-Host "Downloading $url"
-        curl.exe --fail --location --silent --show-error --output "$kept.part" $url
-        if ($LASTEXITCODE) { throw "Could not download $url" }
-        if ((Get-FileHash "$kept.part" -Algorithm SHA256).Hash -ne $hash) { throw "$url is not the file official.ini lists." }
-        Move-Item "$kept.part" $kept -Force
-    }
-    Copy-Item $kept $file
-}
-foreach ($manifest in Get-ChildItem "$repo/addons/*/addon.ini") {
-    $text = (Get-Content $manifest -Raw).Replace('@VERSION@', $version)
-    $id = [regex]::Match($text, '(?m)^Id=(\S+)').Groups[1].Value
+foreach ($list in Get-ChildItem "$repo/addons/*/files.ini") {
+    $manifest = Get-Content (Join-Path $list.Directory 'addon.ini') -Raw
+    $id = [regex]::Match($manifest, '(?m)^Id=(\S+)').Groups[1].Value
     $target = Join-Path $addons $id
+    $inside = $false
+    foreach ($line in Get-Content $list) {
+        if ($line -match '^\[(\S+)\]') { $inside = $Matches[1] -eq 'windows-x64'; continue }
+        if (-not $inside -or $line -notmatch '^([^;\[=]+)=(\S+) (\S+)$') { continue }
+        $file = Join-Path $target $Matches[1]
+        $hash = $Matches[2]
+        $url = $Matches[3]
+        New-Item -ItemType Directory -Path (Split-Path $file -Parent) -Force | Out-Null
+        if ($hash -match '^@(.+)@$') {
+            # Built here.
+            Copy-Item (Join-Path $build "Release/$($Matches[1])") $file
+            continue
+        }
+        $kept = Join-Path $build "local-beta-downloads/$hash"
+        if (-not (Test-Path $kept)) {
+            New-Item -ItemType Directory -Path (Split-Path $kept -Parent) -Force | Out-Null
+            Write-Host "Downloading $url"
+            curl.exe --fail --location --silent --show-error --output "$kept.part" $url
+            if ($LASTEXITCODE) { throw "Could not download $url" }
+            if ((Get-FileHash "$kept.part" -Algorithm SHA256).Hash -ne $hash) { throw "$url is not the file $list lists." }
+            Move-Item "$kept.part" $kept -Force
+        }
+        Copy-Item $kept $file
+    }
     # Only the add-ons that have files for Windows have a folder.
     if (-not (Test-Path $target)) { continue }
-    Set-Content (Join-Path $target 'addon.ini') $text -NoNewline
-    Copy-Item (Join-Path $manifest.Directory 'icon.png') $target
+    Set-Content (Join-Path $target 'addon.ini') $manifest -NoNewline
+    Copy-Item (Join-Path $list.Directory 'icon.png') $target
 }
 
 # Setup's uninstall list means nothing outside an installation.
