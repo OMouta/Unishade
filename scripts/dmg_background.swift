@@ -40,29 +40,36 @@ func picture(scale: CGFloat) -> CGImage {
     // Core Graphics measures from the bottom left, in points from here on.
     draw.scaleBy(x: scale, y: scale)
 
-    // Finder writes the icons' names in black on a light desktop and in white on a dark one, whatever is behind them.
-    // The launcher's accent color, darkened a little toward the bottom, is about as far from black as from white, so
-    // both can be read.
-    let shades = CGGradient(colorsSpace: space, colors: [color(0x6C76F5), color(0x5459D2)] as CFArray, locations: [0, 1])!
-    draw.drawLinearGradient(shades, start: CGPoint(x: 0, y: height), end: CGPoint(x: 0, y: 0), options: [])
+    // Black, like the launcher and the space around the logo.
+    draw.setFillColor(color(0x000000))
+    draw.fill(CGRect(x: 0, y: 0, width: width, height: height))
+
+    // Finder writes the icons' names in black on any background a disk image sets, also on a dark desktop, so each
+    // name gets a pill in the white of the logo's cube to stand on. A name's middle is 83 points below its icon's.
+    draw.setFillColor(color(0xF2F2FB))
+    for x in [appX, applicationsX] {
+        let pill = CGRect(x: x - 58, y: height - iconsY - 83 - 13, width: 116, height: 26)
+        draw.addPath(CGPath(roundedRect: pill, cornerWidth: 13, cornerHeight: 13, transform: nil))
+    }
+    draw.fillPath()
 
     // An arrow from the app to the Applications folder, in the gap between the two icons.
     let y = height - iconsY
     let middle = (appX + applicationsX) / 2
-    draw.setStrokeColor(color(0xFFFFFF, 0.9))
-    draw.setLineWidth(6)
+    draw.setStrokeColor(color(0xF2F2FB))
+    draw.setLineWidth(4)
     draw.setLineCap(.round)
     draw.setLineJoin(.round)
-    draw.move(to: CGPoint(x: middle - 42, y: y))
-    draw.addLine(to: CGPoint(x: middle + 42, y: y))
-    draw.move(to: CGPoint(x: middle + 20, y: y + 22))
-    draw.addLine(to: CGPoint(x: middle + 42, y: y))
-    draw.addLine(to: CGPoint(x: middle + 20, y: y - 22))
+    draw.move(to: CGPoint(x: middle - 34, y: y))
+    draw.addLine(to: CGPoint(x: middle + 34, y: y))
+    draw.move(to: CGPoint(x: middle + 16, y: y + 18))
+    draw.addLine(to: CGPoint(x: middle + 34, y: y))
+    draw.addLine(to: CGPoint(x: middle + 16, y: y - 18))
     draw.strokePath()
 
     let text = NSAttributedString(string: "Drag Unishade to Applications", attributes: [
-        NSAttributedString.Key(kCTFontAttributeName as String): CTFontCreateWithFontDescriptor(face, 17, nil),
-        NSAttributedString.Key(kCTForegroundColorAttributeName as String): color(0xFFFFFF),
+        NSAttributedString.Key(kCTFontAttributeName as String): CTFontCreateWithFontDescriptor(face, 15, nil),
+        NSAttributedString.Key(kCTForegroundColorAttributeName as String): color(0xA2A5C8),
     ])
     let line = CTLineCreateWithAttributedString(text)
     let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
