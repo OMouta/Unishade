@@ -33,4 +33,4 @@ if (UNISHADE_HAS(UnishadeHost, host, takeScreenshot))
 
 ## Official add-ons
 
-Depth and DLSS5 are built with each Unishade and carry its version. After Unishade updates, an installed one keeps working, and the Add-ons page shows **Update** to get the new one.
+Depth and DLSS5 are released on their own, each with a version of its own, as a release on GitHub with the add-on's `addon.ini` in it. Unishade offers the newest release whose `Api` it has, so a release built for a newer version of the interface leaves older Unishades on the one before it. When a newer release is out, an installed one keeps working, and the Add-ons page shows **Update** to get the new one.

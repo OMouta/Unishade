@@ -13,7 +13,9 @@ Unishade's own:
 - **Depth** estimates how far everything in the picture is. Ambient occlusion, depth of field, fog and other effects that use depth need it. It costs some frame rate. It runs on Windows and on Macs with Apple silicon and macOS 14 or newer.
 - **DLSS5** runs NVIDIA's DLSS neural rendering on the picture. It needs Windows and an NVIDIA RTX graphics card.
 
-Click **Install** on one to download it, then use its switch to turn it on or off. After Unishade updates, an add-on from the older version keeps working and shows **Update**.
+Unishade's own add-ons come out on their own, apart from Unishade, so a new version of one needs no new Unishade. When you open the Add-ons page, Unishade asks GitHub which ones there are, so the first time it needs a connection to list them.
+
+Click **Install** on one to download it, then use its switch to turn it on or off. When a newer version of an add-on is out, the one you have keeps working and shows **Update**. A beta of Unishade is offered betas of the add-ons too.
 
 ## Settings
 

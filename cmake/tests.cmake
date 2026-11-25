@@ -77,6 +77,13 @@ target_compile_definitions(addons_tests PRIVATE EXAMPLE_ADDON="$<TARGET_FILE:exa
     EXAMPLE_MANIFEST="${CMAKE_SOURCE_DIR}/addons/example/addon.ini")
 add_dependencies(addons_tests example_addon)
 
+# Packs releases of add-ons with cmake/addon_release.cmake and has Unishade find them, without GitHub.
+unishade_test(official_addons_tests)
+target_link_libraries(official_addons_tests PRIVATE unishade_core)
+target_compile_options(official_addons_tests PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+target_compile_definitions(official_addons_tests PRIVATE CMAKE_COMMAND="${CMAKE_COMMAND}"
+    PACK_SCRIPT="${CMAKE_SOURCE_DIR}/cmake/addon_release.cmake" ADDONS_FOLDER="${CMAKE_SOURCE_DIR}/addons")
+
 # Settings, games, shortcuts and the rules for macOS windows.
 unishade_test(host_tests)
 target_link_libraries(host_tests PRIVATE unishade_core)

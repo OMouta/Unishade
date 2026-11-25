@@ -1,6 +1,6 @@
 #pragma once
 
-// An add-on's manifest and the list of official add-ons' files, as text. Nothing here touches the disk.
+// An add-on's manifest and an official add-on's list of files, as text. Nothing here touches the disk.
 //
 // An add-on is a folder in the Addons folder with an addon.ini in it, which says what the add-on is without anything
 // of it being run:
@@ -41,7 +41,7 @@ namespace addon
 {
 inline constexpr char kManifestFile[] = "addon.ini";
 
-// The system this program was built for, as manifests and the official list name it.
+// The system this program was built for, as manifests and lists of files name it.
 constexpr std::string_view Platform()
 {
 #if defined(_WIN32)
@@ -165,63 +165,56 @@ struct Download
     std::string url;
 };
 
-// An official add-on's files for one system.
-struct Files
-{
-    std::string id;
-    std::vector<Download> files;
-};
-
 inline bool IsSha256(std::string_view text)
 {
     return text.size() == 64 && text.find_first_not_of("0123456789abcdef") == std::string_view::npos;
 }
 
-// Reads the official list, addons/official.ini, for a system. Each section is named after an add-on's Id and a
-// system, as [unishade.depth windows-x64], and each of its keys is a file in the add-on's folder, set to the file's
-// SHA-256 and the address it downloads from. An add-on with a file that lacks either is left out.
-inline std::vector<Files> ReadFiles(const std::string& text, std::string_view platform)
+// Reads an official add-on's list of files, the files.ini of its release, for a system. Each section is named after a
+// system, as a manifest's are, and each of its keys is a file in the add-on's folder, set to the file's SHA-256 and
+// the address it downloads from:
+//
+//     [windows-x64]
+//     Depth.dll=2df6...5b04 https://github.com/OMouta/Unishade/releases/download/unishade.depth-v1.2.0/Depth.dll
+//
+// Empty when the add-on has no files for the system, or one of them lacks a SHA-256, a secure address or a place in
+// the folder: an add-on is installed whole or not at all.
+inline std::vector<Download> ReadFiles(const std::string& text, std::string_view platform)
 {
     const auto trim = [](std::string_view part) {
         const size_t start = part.find_first_not_of(" \t\r");
         return start == std::string_view::npos ? std::string() : std::string(part.substr(start, part.find_last_not_of(" \t\r") - start + 1));
     };
-    std::vector<Files> list;
-    std::vector<bool> broken;
-    bool inside = false;
-    std::istringstream stream(text);
-    for (std::string line; std::getline(stream, line);)
+    // The system and processor first, then the system alone.
+    for (const std::string_view wanted : { platform, platform.substr(0, platform.find('-')) })
     {
-        line = trim(line);
-        if (line.empty() || line[0] == ';' || line[0] == '#')
-            continue;
-        if (line.front() == '[')
+        std::vector<Download> files;
+        bool inside = false, found = false, broken = false;
+        std::istringstream stream(text);
+        for (std::string line; std::getline(stream, line);)
         {
-            const std::string header = trim(std::string_view(line).substr(1, line.find(']') == std::string::npos ? std::string::npos : line.find(']') - 1));
-            const size_t space = header.find(' ');
-            inside = space != std::string::npos && trim(std::string_view(header).substr(space)) == platform && ValidId(header.substr(0, space));
-            if (inside)
+            line = trim(line);
+            if (line.empty() || line[0] == ';' || line[0] == '#')
+                continue;
+            if (line.front() == '[')
             {
-                list.push_back({ header.substr(0, space), {} });
-                broken.push_back(false);
+                inside = trim(std::string_view(line).substr(1, line.find(']') == std::string::npos ? std::string::npos : line.find(']') - 1)) == wanted;
+                found |= inside;
+                continue;
             }
-            continue;
+            const size_t equals = line.find('=');
+            if (!inside || equals == std::string::npos)
+                continue;
+            Download file{ trim(std::string_view(line).substr(0, equals)), {}, {} };
+            std::istringstream value(line.substr(equals + 1));
+            value >> file.sha256 >> file.url;
+            std::transform(file.sha256.begin(), file.sha256.end(), file.sha256.begin(), [](char c) { return c >= 'A' && c <= 'F' ? char(c - 'A' + 'a') : c; });
+            broken |= !InsideFolder(file.path) || !IsSha256(file.sha256) || !file.url.starts_with("https://");
+            files.push_back(std::move(file));
         }
-        const size_t equals = line.find('=');
-        if (!inside || equals == std::string::npos)
-            continue;
-        Download file{ trim(std::string_view(line).substr(0, equals)), {}, {} };
-        std::istringstream value(line.substr(equals + 1));
-        value >> file.sha256 >> file.url;
-        std::transform(file.sha256.begin(), file.sha256.end(), file.sha256.begin(), [](char c) { return c >= 'A' && c <= 'F' ? char(c - 'A' + 'a') : c; });
-        if (!InsideFolder(file.path) || !IsSha256(file.sha256) || !file.url.starts_with("https://"))
-            broken.back() = true;
-        list.back().files.push_back(std::move(file));
+        if (found)
+            return broken ? std::vector<Download>() : files;
     }
-    std::vector<Files> whole;
-    for (size_t i = 0; i < list.size(); ++i)
-        if (!broken[i] && !list[i].files.empty())
-            whole.push_back(std::move(list[i]));
-    return whole;
+    return {};
 }
 } // namespace addon

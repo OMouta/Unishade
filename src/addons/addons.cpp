@@ -1,4 +1,5 @@
 #include "addons/addon_library.h"
+#include "addons/official_addons.h"
 #include "app/config.h"
 #include "app/log.h"
 #include "base/ini_text.h"
@@ -26,15 +27,9 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <sstream>
-
-// What the build puts into the program of the official add-ons: addons/official.ini, with the SHA-256 of the
-// add-ons this build made, and each add-on's addon.ini and icon, in the same order, each ending with an entry that is
-// no add-on's.
-extern const char kOfficialAddons[];
-extern const char* const kOfficialManifests[];
-extern const unsigned char* const kOfficialIcons[];
-extern const unsigned kOfficialIconSizes[];
+#include <thread>
 
 using addon::CloseLibrary;
 using addon::kFrameFlags;
@@ -59,30 +54,6 @@ constexpr char kSitsOutHdr[] = "It doesn't take HDR pictures, so it's off while 
 fs::path AddonsDirectory()
 {
     return DataDirectory() / "Addons";
-}
-
-// The official add-ons that have a library for this system, and a list of files with it.
-std::vector<Addons::Official> ReadOfficialList()
-{
-    const std::vector<addon::Files> lists = addon::ReadFiles(kOfficialAddons, addon::Platform());
-    std::vector<Addons::Official> list;
-    for (size_t i = 0; kOfficialManifests[i]; ++i)
-    {
-        Addons::Official official;
-        official.manifestText = kOfficialManifests[i];
-        if (!addon::ReadManifest(official.manifestText, addon::Platform(), official.manifest).empty() || official.manifest.library.empty())
-            continue;
-        official.icon = { kOfficialIcons[i], kOfficialIconSizes[i] };
-        for (const addon::Files& files : lists)
-            if (files.id == official.manifest.id)
-                official.files = files.files;
-        for (const addon::Download& file : official.files)
-            if (file.path == official.manifest.library)
-                official.sha256 = file.sha256;
-        if (!official.sha256.empty())
-            list.push_back(std::move(official));
-    }
-    return list;
 }
 
 bool IsColor(UnishadeSettingType type)
@@ -188,7 +159,8 @@ void Addons::Init(fx::Runtime& effects, AddonHost& app)
     host = &app;
     told = app.DescribeForAddons();
     effectsGeneration = effects.EffectsGeneration();
-    official = ReadOfficialList();
+    // What the last look found, until the Add-ons page has GitHub asked again.
+    official = KeptOfficialAddons();
     for (const Official& addon : official)
         Log(LogLevel::Info, "Official add-on: %s %s, %s.", addon.manifest.id.c_str(), addon.manifest.version.c_str(), addon.manifest.library.c_str());
     std::error_code error;
@@ -251,8 +223,7 @@ void Addons::Scan()
         const fs::path folder = AddonsDirectory() / fs::path(entry.folder);
         known->manifest = std::move(entry.manifest);
         known->problem = std::move(entry.problem);
-        known->official = false;
-        known->replaceable = false;
+        known->sha256.clear();
         known->icon.clear();
         if (!known->manifest.icon.empty() && fs::is_regular_file(folder / fs::path(known->manifest.icon), error))
             known->icon = (folder / fs::path(known->manifest.icon)).string();
@@ -270,11 +241,7 @@ void Addons::Scan()
                              std::to_string(UNISHADE_API_VERSION) + ". Update Unishade to use it.";
         else if (!fs::is_regular_file(folder / fs::path(known->manifest.library), error))
             known->problem = "Its library, " + known->manifest.library + ", is missing.";
-        else if (const Official* listed = OfficialFor(known->manifest.id))
-        {
-            known->official = Sha256(ReadFile(folder / fs::path(known->manifest.library))) == listed->sha256;
-            known->replaceable = !known->official;
-        }
+        Mark(*known);
         if (added && known->problem.empty())
             Log(LogLevel::Info, "Add-on found: %s %s in %s, official=%d.", known->manifest.id.c_str(), known->manifest.version.c_str(),
                 entry.folder.c_str(), known->official);
@@ -336,6 +303,94 @@ const Addons::Official* Addons::OfficialFor(const std::string& id) const
         if (entry.manifest.id == id)
             return &entry;
     return nullptr;
+}
+
+void Addons::Mark(Addon& addon)
+{
+    addon.official = false;
+    addon.replaceable = false;
+    const Official* listed = addon.problem.empty() ? OfficialFor(addon.manifest.id) : nullptr;
+    if (!listed)
+        return;
+    if (addon.sha256.empty())
+        addon.sha256 = Sha256(ReadFile(AddonsDirectory() / fs::path(addon.folder) / fs::path(addon.manifest.library)));
+    addon.official = addon.sha256 == listed->sha256;
+    addon.replaceable = !addon.official;
+}
+
+struct Addons::Look
+{
+    std::mutex mutex;
+    bool done = false;
+    std::vector<Official> found;
+    std::string error;
+};
+
+void Addons::LookForOfficial(const std::function<void()>& wake, const std::function<std::string(const std::string& url)>& fetch)
+{
+    if (look || std::chrono::steady_clock::now() < lookAgain)
+        return;
+    Log(LogLevel::Info, "Asking GitHub for the official add-ons.");
+    look = std::make_shared<Look>();
+    // The thread may still run while Unishade exits, so it keeps what it works on.
+    std::thread([state = look, known = official, wake, fetch = fetch ? fetch : FetchText(FetchFromTheNet)] {
+        std::vector<Official> found;
+        std::string error;
+        try
+        {
+            found = FindOfficialAddons(fetch, known);
+        }
+        catch (const std::exception& e)
+        {
+            error = e.what();
+        }
+        catch (...)
+        {
+            error = "The download stopped.";
+        }
+        {
+            std::lock_guard lock(state->mutex);
+            state->found = std::move(found);
+            state->error = std::move(error);
+            state->done = true;
+        }
+        if (wake)
+            wake();
+    }).detach();
+}
+
+void Addons::TakeOfficial()
+{
+    if (!look)
+        return;
+    std::vector<Official> found;
+    std::string error;
+    {
+        std::lock_guard lock(look->mutex);
+        if (!look->done)
+            return;
+        found = std::move(look->found);
+        error = std::move(look->error);
+    }
+    look.reset();
+    ++officialGeneration;
+    lookFailed = !error.empty();
+    // GitHub answers one address only so many times an hour, so it is not asked each time the page opens. After a
+    // failure it is asked again sooner, since the page has nothing to show until it answers.
+    lookAgain = std::chrono::steady_clock::now() + (lookFailed ? std::chrono::minutes(1) : std::chrono::minutes(60));
+    if (lookFailed)
+    {
+        Log(LogLevel::Warning, "Could not ask GitHub for the official add-ons: %s", error.c_str());
+        return;
+    }
+    official = std::move(found);
+    for (const Official& addon : official)
+        Log(LogLevel::Info, "Official add-on: %s %s, %s.", addon.manifest.id.c_str(), addon.manifest.version.c_str(), addon.manifest.library.c_str());
+    // Scan leaves a loaded add-on as it is, so its place on the new list is looked up here.
+    for (Addon& addon : addons)
+        if (addon.library->module)
+            Mark(addon);
+    Scan();
 }
 
 std::string Addons::FolderOf(const Official& addon) const
@@ -708,6 +763,7 @@ void Addons::Fail(Addon& addon, const std::string& error)
 
 void Addons::Update()
 {
+    TakeOfficial();
     const bool presetChanged = runtime->PresetGeneration() != presetGeneration;
     presetGeneration = runtime->PresetGeneration();
     bool work = std::exchange(changed, false);
@@ -834,7 +890,7 @@ void Addons::Install(const Official& addon, const std::string& folder, const std
         {
             const fs::path icon = target / fs::path(addon.manifest.icon);
             fs::create_directories(icon.parent_path());
-            WriteFile(icon, std::string(reinterpret_cast<const char*>(addon.icon.data()), addon.icon.size()));
+            WriteFile(icon, addon.icon);
         }
         if (!WriteFile(target / ::addon::kManifestFile, addon.manifestText))
             throw std::runtime_error("Could not write " + (target / ::addon::kManifestFile).string() + ".");

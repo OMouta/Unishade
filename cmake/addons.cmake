@@ -32,7 +32,7 @@ endif()
 
 # Depth estimation on macOS, Depth.dylib. Its model and libonnxruntime.dylib go in its folder with it. The linker signs
 # it ad hoc, which is all Apple silicon asks of a library a program without the hardened runtime loads, so the file the
-# official list hashes is the file published.
+# add-on's release lists the SHA-256 of is the file published.
 if(DEPTH_MACOS)
     add_library(depth_addon SHARED addons/depth/depth_addon_macos.mm addons/depth/depth_model.cpp)
     set_target_properties(depth_addon PROPERTIES OUTPUT_NAME Depth PREFIX "")
@@ -73,27 +73,3 @@ if(WIN32)
     target_link_libraries(dlss5_check PRIVATE d3d12 windowsapp)
     add_dependencies(dlss5_check Unishade_nvngx)
 endif()
-
-# The official add-ons go into the program too: the list of their files, with the SHA-256 of the add-ons this build
-# makes, so they are official to the Unishade built with them, and each one's manifest and icon, which Unishade writes
-# to the add-on's folder when it installs it. Each add-on this build makes goes in OFFICIAL_ADDONS_BINARIES as its file
-# name, =, and the file, separated by |, and its target in OFFICIAL_ADDONS_TARGETS.
-set(OFFICIAL_ADDONS_SOURCE "${CMAKE_BINARY_DIR}/official_addons.cpp")
-set(OFFICIAL_ADDONS_FOLDERS "${CMAKE_SOURCE_DIR}/addons/depth|${CMAKE_SOURCE_DIR}/addons/dlss5")
-set(OFFICIAL_ADDONS_BINARIES "")
-set(OFFICIAL_ADDONS_TARGETS "")
-if(WIN32)
-    set(OFFICIAL_ADDONS_BINARIES "Depth.dll=$<TARGET_FILE:depth_addon>|Unishade_nvngx.dll=$<TARGET_FILE:Unishade_nvngx>")
-    set(OFFICIAL_ADDONS_TARGETS depth_addon Unishade_nvngx)
-elseif(DEPTH_MACOS)
-    set(OFFICIAL_ADDONS_BINARIES "Depth.dylib=$<TARGET_FILE:depth_addon>")
-    set(OFFICIAL_ADDONS_TARGETS depth_addon)
-endif()
-add_custom_command(OUTPUT "${OFFICIAL_ADDONS_SOURCE}"
-    COMMAND "${CMAKE_COMMAND}" "-DLIST=${CMAKE_SOURCE_DIR}/addons/official.ini" "-DOUTPUT=${OFFICIAL_ADDONS_SOURCE}"
-            "-DVERSION=${UNISHADE_VERSION}" "-DBINARIES=${OFFICIAL_ADDONS_BINARIES}" "-DFOLDERS=${OFFICIAL_ADDONS_FOLDERS}"
-            -P "${CMAKE_SOURCE_DIR}/cmake/official_addons.cmake"
-    DEPENDS "${CMAKE_SOURCE_DIR}/addons/official.ini" "${CMAKE_SOURCE_DIR}/cmake/official_addons.cmake"
-            "${CMAKE_SOURCE_DIR}/addons/depth/addon.ini" "${CMAKE_SOURCE_DIR}/addons/depth/icon.png"
-            "${CMAKE_SOURCE_DIR}/addons/dlss5/addon.ini" "${CMAKE_SOURCE_DIR}/addons/dlss5/icon.png" ${OFFICIAL_ADDONS_TARGETS}
-    VERBATIM)

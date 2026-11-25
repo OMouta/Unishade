@@ -78,30 +78,28 @@ int main()
 
     const std::string hash(64, 'a');
     const std::string list = "; comment\n"
-                             "[unishade.depth windows-x64]\n"
+                             "[windows-x64]\n"
                              "Depth.dll=" + std::string(64, 'A') + " https://example.com/Depth.dll\n"
                              "models/depth.onnx=" + hash + " https://example.com/depth.onnx\n"
                              "\n"
-                             "[unishade.depth macos-arm64]\n"
+                             "[macos]\n"
                              "Depth.dylib=" + hash + " https://example.com/Depth.dylib\n"
                              "\n"
-                             "[unishade.dlss5 windows-x64]\n"
-                             "Unishade_nvngx.dll=@Unishade_nvngx.dll@ https://example.com/Unishade_nvngx.dll\n"
-                             "\n"
-                             "[unishade.plain windows-x64]\n"
-                             "Plain.dll=" + hash + " http://example.com/Plain.dll\n"
-                             "\n"
-                             "[unishade.out windows-x64]\n"
-                             "../Out.dll=" + hash + " https://example.com/Out.dll\n";
-    const std::vector<Files> windows = ReadFiles(list, "windows-x64");
-    ok &= Check(windows.size() == 1 && windows[0].id == "unishade.depth" && windows[0].files.size() == 2,
-                "lists the add-ons for the system whose files all have a SHA-256, a secure address and a place in the folder");
-    ok &= Check(windows.size() == 1 && windows[0].files[0].path == "Depth.dll" && windows[0].files[0].sha256 == hash &&
-                    windows[0].files[0].url == "https://example.com/Depth.dll" && windows[0].files[1].path == "models/depth.onnx",
-                "with each file's path, SHA-256 in lowercase and address");
-    const std::vector<Files> mac = ReadFiles(list, "macos-arm64");
-    ok &= Check(mac.size() == 1 && mac[0].files.size() == 1 && mac[0].files[0].path == "Depth.dylib", "each system has its own files");
-    ok &= Check(ReadFiles(list, "linux-x64").empty(), "a system without add-ons has none");
+                             "[macos-x64]\n"
+                             "intel/Depth.dylib=" + hash + " https://example.com/intel/Depth.dylib\n";
+    const std::vector<Download> windows = ReadFiles(list, "windows-x64");
+    ok &= Check(windows.size() == 2 && windows[0].path == "Depth.dll" && windows[0].sha256 == hash && windows[0].url == "https://example.com/Depth.dll" &&
+                    windows[1].path == "models/depth.onnx",
+                "lists a system's files, with each one's path, SHA-256 in lowercase and address");
+    const std::vector<Download> mac = ReadFiles(list, "macos-arm64");
+    ok &= Check(mac.size() == 1 && mac[0].path == "Depth.dylib", "a section for the system alone is for every processor");
+    const std::vector<Download> intel = ReadFiles(list, "macos-x64");
+    ok &= Check(intel.size() == 1 && intel[0].path == "intel/Depth.dylib", "a section for the processor comes first");
+    ok &= Check(ReadFiles(list, "linux-x64").empty(), "a system without files has none");
+    for (const std::string& file : { "Plain.dll=" + hash + " http://example.com/Plain.dll", "../Out.dll=" + hash + " https://example.com/Out.dll",
+                                     std::string("Unfilled.dll=@Unfilled.dll@ https://example.com/Unfilled.dll"), "Nowhere.dll=" + hash })
+        ok &= Check(ReadFiles("[linux]\nGood.so=" + hash + " https://example.com/Good.so\n" + file + "\n", "linux-x64").empty(),
+                    "a list with a file that lacks a SHA-256, a secure address or a place in the folder is no list");
 
     return ok ? 0 : 1;
 }

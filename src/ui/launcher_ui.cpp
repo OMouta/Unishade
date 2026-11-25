@@ -1843,8 +1843,14 @@ void AddonRow(Flow& flow, Host& host, const Addon& addon, size_t index)
 float AddonsBody(const Model& model, Host& host, ImVec2 min, float width)
 {
     Flow flow(min, width, kWhole);
+    host.ShowingAddons();
+    if (!model.addonsNote.empty())
+        Note(flow, model.addonsNote);
     if (!model.addons || model.addons->empty())
-        Note(flow, "No add-ons yet.");
+    {
+        if (model.addonsNote.empty())
+            Note(flow, "No add-ons yet.");
+    }
     else
         for (size_t i = 0; i < model.addons->size(); ++i)
             AddonRow(flow, host, (*model.addons)[i], i);
