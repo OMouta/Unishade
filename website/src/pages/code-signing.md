@@ -15,7 +15,7 @@ The effects, and the files the add-ons download from their own authors, aren't s
 
 ## macOS
 
-The Mac app and its disk image aren't signed through SignPath. GitHub Actions signs them with the Apple Developer ID certificate of Unishade's maintainer, and Apple notarizes them. That goes for betas too.
+The Mac app and its disk image aren't signed through SignPath. GitHub Actions signs them with the Apple Developer ID certificate of Unishade's maintainer, and Apple notarizes them. That goes for betas too. The depth add-on's `Depth.dylib` is signed with the same certificate.
 
 ## Team
 

@@ -32,8 +32,8 @@ endif()
 
 # Depth estimation on macOS, Depth.dylib. Its model and libonnxruntime.dylib go in its folder with it. The linker signs
 # it ad hoc, which is all Apple silicon asks of a library Unishade loads, since Unishade's entitlement has the hardened
-# runtime load libraries that others signed. So the file the add-on's release lists the SHA-256 of is the file
-# published.
+# runtime load libraries that others signed. The add-on's release signs it with the Developer ID certificate, before it
+# lists the file's SHA-256.
 if(DEPTH_MACOS)
     add_library(depth_addon SHARED addons/depth/depth_addon_macos.mm addons/depth/depth_model.cpp)
     set_target_properties(depth_addon PROPERTIES OUTPUT_NAME Depth PREFIX "")

@@ -4,7 +4,8 @@ name: Release an add-on
 # describes: under a tag made of the Id and the Version in its addon.ini, such as unishade.depth-v1.2.0. Unishade's
 # Add-ons page finds the release on GitHub, so every Unishade that can run the add-on offers it without a new version
 # of Unishade. A Version ending in -beta.N is a beta: a prerelease that is not signed, which only betas of Unishade are
-# offered. A version's libraries for Windows are signed by SignPath with the release certificate.
+# offered. A version's libraries for Windows are signed by SignPath with the release certificate. The library for the
+# Mac is signed with the Developer ID certificate, a beta's too.
 on:
   workflow_dispatch:
     inputs:
@@ -150,6 +151,25 @@ jobs:
               $1 == "minos" { found = 1; split($2, v, "."); if (v[1] + 0 > 13 || (v[1] + 0 == 13 && v[2] + 0 > 0)) high = 1 }
               END { if (!found || high) { print file " needs a macOS newer than 13.0, or does not say which."; exit 1 } }'
           done
+      # Signed before the release lists the SHA-256 of the file, so the file listed is the file published. The
+      # certificate is the one Unishade for the Mac is signed with, from the same secrets.
+      - name: Import the signing certificate
+        id: certificate
+        uses: ./.github/actions/mac-certificate
+        with:
+          certificate: ${{ secrets.MACOS_CERTIFICATE }}
+          password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      - name: Sign the add-ons
+        env:
+          IDENTITY: ${{ steps.certificate.outputs.identity }}
+        run: |
+          for binary in build/*.dylib; do
+            codesign --force --sign "$IDENTITY" --timestamp "$binary"
+            codesign --verify --strict --verbose=2 "$binary"
+          done
+      - name: Remove the signing certificate
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: addons-macos
@@ -196,7 +216,7 @@ jobs:
           exclude=()
           if [ "$BETA" = true ]; then
             prerelease=(--prerelease)
-            printf '%s\n\n' "This is a beta of Unishade's $name add-on, for testing. Betas of Unishade offer it on their Add-ons page, which installs it, so there is nothing to download here. It isn't code-signed." > release-notes.md
+            printf '%s\n\n' "This is a beta of Unishade's $name add-on, for testing. Betas of Unishade offer it on their Add-ons page, which installs it, so there is nothing to download here. Its library for Windows isn't code-signed." > release-notes.md
           else
             exclude=(--exclude '*-beta.*')
             printf '%s\n\n' "This is a version of Unishade's $name add-on. Unishade offers it on its Add-ons page, which installs it, so there is nothing to download here." > release-notes.md
