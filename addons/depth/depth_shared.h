@@ -25,15 +25,29 @@ constexpr int kSizes[] = { 924, 518, 392, 266 };
 constexpr int kShortestSide = 224;
 constexpr auto kStatisticsInterval = std::chrono::seconds(30);
 // How many unsigned numbers the keys hold, as the shaders lay them out.
-constexpr unsigned kKeyCount = 546;
-// The anchor the output is divided by follows each estimate's own over about this long, so depth does not pulse from
-// one estimate to the next. A cut to another scene takes the new one at once.
-constexpr float kAnchorSeconds = 0.15f;
+constexpr unsigned kKeyCount = 258;
+// FitStep in the shaders.
+constexpr unsigned kFitStep = 4;
+// Each estimate's fit to the history moves back towards no scale and shift over about this long, so that depth as a
+// whole follows the anchor over seconds but does not jump when an estimate lands.
+constexpr float kFitSeconds = 1.0f;
 
-// How far the smoothed anchor moves towards the anchor of an estimate that came seconds after the one before.
-inline float AnchorBlend(float seconds)
+inline float FitRelax(float seconds)
 {
-    return 1 - std::exp(-std::max(seconds, 0.0f) / kAnchorSeconds);
+    return 1 - std::exp(-std::max(seconds, 0.0f) / kFitSeconds);
+}
+
+// A trusted history takes each estimate in over about this long, and keeps the rest of itself, so one estimate's
+// flicker does not show whole. In seconds rather than estimates, since Detail and the graphics card make estimates
+// land from every frame to a few times a second.
+constexpr float kHistorySeconds = 0.3f;
+// A picture that stopped changing is estimated again for this long, so the history settles on it rather than keeping
+// what the estimates during the motion left, such as where something moved away.
+constexpr auto kSettleTime = std::chrono::seconds(1);
+
+inline float HistoryShare(float seconds)
+{
+    return 1 - std::exp(-std::max(seconds, 0.0f) / kHistorySeconds);
 }
 
 inline const UnishadeSetting kSettings[] = {
@@ -74,20 +88,19 @@ CONSTANT float3 Std = float3(0.229, 0.224, 0.225);
 CONSTANT float AnchorShare = 0.995;
 // The anchor is found in a count of the output's values, in this many steps from the lowest to the highest.
 CONSTANT uint AnchorBins = 256;
-// A cut to another scene is told from the picture's brightness: each of 3 by 3 sections counts its pixels by
-// brightness, in this many levels, and a cut is when at least CutSections of them have CutShare of their pixels at
-// another level than in the estimate before. A score or a map that changes only reaches the sections it is in.
+// The motion estimator tells a cut to another scene from the picture's brightness: each of 3 by 3 sections counts its
+// pixels by brightness, in this many levels, and a cut is when at least CutSections of them have CutShare of their
+// pixels at another level than in the picture before. A score or a map that changes only reaches the sections it is
+// in. A cut drops the history of depth.
 CONSTANT uint SectionLevels = 16;
 CONSTANT uint CutSections = 7;
 CONSTANT float CutShare = 0.3;
 CONSTANT float3 Luma = float3(0.299, 0.587, 0.114);
-// Where each count is in the keys, which are unsigned numbers: the highest and the lowest output value, the output's
-// values, the sections' levels, and those of the estimate before.
+// Where each count is in the keys, which are unsigned numbers: the highest and the lowest output value, and the
+// output's values.
 CONSTANT uint KeyHighest = 0;
 CONSTANT uint KeyLowest = 1;
 CONSTANT uint KeyBins = 2;
-CONSTANT uint KeySections = 258;
-CONSTANT uint KeyPrevious = 402;
 // Unishade's RESHADE_DEPTH_LINEARIZATION_FAR_PLANE.
 CONSTANT float FarPlane = 1000.0;
 // The model only knows how far things are relative to each other. What is at the anchor is put at this fraction of the
@@ -104,6 +117,52 @@ float Weight(float2 offset, float3 difference)
 {
     return exp(-dot(offset, offset) / (2 * SpatialSigma * SpatialSigma)) *
            (exp(-dot(difference, difference) / (2 * ColorSigma * ColorSigma)) + 1e-3f);
+}
+
+// Depth follows the picture's motion between estimates: a history of closeness, at the picture's size, is moved along
+// it in every frame and each estimate is blended into it. A pixel's history is trusted while every vector that moved
+// it had at least this confidence since an estimate was blended in. The estimator's confidence falls where the color a
+// vector brings does not match, such as where something came into view, and is 0 after a cut.
+CONSTANT float TrustedConfidence = 0.3;
+// Each pixel's flags in the history: whether it is trusted, and whether the frame the next estimate is made from saw
+// it, which is when every vector since that frame was trusted too.
+CONSTANT uint Trusted = 1;
+CONSTANT uint SeenByEstimate = 2;
+// The history is read between pixels, except where the four it lies between differ by more than this share of the
+// nearest one's closeness. There it takes the nearest, so an edge stays sharp however often it moves.
+CONSTANT float EdgeSpread = 0.1;
+// Each estimate is aligned to the history by a scale and a shift fitted over every FitStep-th pixel of the picture both
+// see, unless they are fewer than FitMinimum of them, as after a cut.
+CONSTANT uint FitStep = 4;
+CONSTANT float FitMinimum = 0.05;
+
+// Whether the history is read between the pixels whose closeness these are.
+bool Reproject(float4 taps)
+{
+    float low = min(min(taps.x, taps.y), min(taps.z, taps.w));
+    float high = max(max(taps.x, taps.y), max(taps.z, taps.w));
+    return high - low <= EdgeSpread * high;
+}
+
+// The scale and shift in x and y that bring an estimate to the history, from the sums over the pixels both see of 1,
+// the history's closeness h, the estimate's e, h * h in first, and h * e in crossed, each closeness less 1. The
+// estimate is the noisier of the two, so it is fitted to the history rather than the other way round, which would
+// shrink the scale by its noise. The fit moves back towards none by relax, so that over many estimates depth follows
+// the anchor and does not wander off from it.
+float4 Align(float4 first, float crossed, uint samples, float relax)
+{
+    float count = first.x;
+    if (count < FitMinimum * float(samples))
+        return float4(1, 0, count, 0);
+    float history = first.y / count;
+    float estimate = first.z / count;
+    float spread = first.w / count - history * history;
+    float together = crossed / count - history * estimate;
+    float slope = clamp(spread > 1e-8f ? together / spread : 1.0f, 0.5f, 2.0f);
+    float offset = estimate - slope * history;
+    float scale = 1 / slope;
+    float shift = 1 - (1 + offset) / slope;
+    return float4(scale + (1 - scale) * relax, shift * (1 - relax), count, 0);
 }
 
 // DEPTH for an output value divided by the smoothed anchor. The output is inverse depth, so distance goes with its

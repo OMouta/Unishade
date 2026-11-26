@@ -1,12 +1,14 @@
 // Depth estimation as a Unishade add-on, Depth.dll. Depth Anything V2 runs through ONNX Runtime on DirectML
 // (depth_model.cpp) on a Direct3D 12 device of its own. Direct3D 11 on the same graphics card takes the frame Unishade
 // shares, makes the model's input from it and turns the model's output into DEPTH. The model runs on a worker thread
-// and can take longer than a frame: frames that arrive meanwhile are skipped, and DEPTH keeps the last estimate.
+// and can take longer than a frame: frames that arrive meanwhile are not estimated. Depth is kept as a history that
+// follows the picture's motion, from motion_d3d11.h, in every frame, and each estimate is blended into it.
 //
 // The files it needs are in its folder with it: depth-anything-v2-small.onnx, onnxruntime.dll and DirectML.dll.
 
 #include "depth_model.h"
 #include "depth_shared.h"
+#include "motion/motion_d3d11.h"
 #include <unishade_addon.h>
 
 #include <d3d11_4.h>
@@ -23,6 +25,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <future>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -42,8 +45,9 @@ constexpr wchar_t kModelFile[] = L"" DEPTH_MODEL_FILE;
 // so Direct3D 12 copies them to and from packed buffers. Rows this wide keep the largest input under 16384 of them.
 constexpr UINT kRowBytes = 16 * D3D12_TEXTURE_DATA_PITCH_ALIGNMENT;
 
-// Preprocess turns the frame into the model's input. Range, Histogram, Resolve and Upsample turn its output into DEPTH.
-// They follow kShaderShared.
+// Preprocess turns the frame into the model's input. Range, Histogram and Resolve find the anchor of its output, Gather
+// and Fit align it to the history, and Accumulate blends it in. Warp moves the history along the picture's motion in
+// every frame. They follow kShaderShared.
 constexpr char kShaders[] = R"(
 cbuffer Sizes : register(b0)
 {
@@ -51,17 +55,26 @@ cbuffer Sizes : register(b0)
     uint2 ModelSize;  // of the model's input and output
     uint InputWidth;  // values in a row of the input texture
     uint OutputWidth; // and of the output texture
-    float Blend;      // how far the smoothed anchor moves towards this estimate's
+    uint Restart;     // whether this frame is the next estimate's, which the history's motion is counted from
+    float Relax;      // how far this estimate's scale and shift move back towards none
+    uint Show;        // whether the history holds depth yet, to write to DEPTH
+    float Share;      // how much of this estimate a trusted history takes
 };
 Texture2D<float4> Source : register(t0);
 Texture2D<float> Result : register(t1);
-StructuredBuffer<float4> Smoothed : register(t2);
+StructuredBuffer<float4> Scaling : register(t2); // the anchor, then the fit
 Texture2D<float4> Guide : register(t3);
+Texture2D<float2> Motion : register(t4);
+Texture2D<float> Confidence : register(t5);
+Texture2D<float4> History : register(t6);
+StructuredBuffer<float4> Sums : register(t7);
 RWTexture2D<float> Input : register(u0);
 RWByteAddressBuffer Keys : register(u1);
 RWStructuredBuffer<float4> State : register(u2);
 RWTexture2D<float> Depth : register(u3);
 RWTexture2D<float4> GuideTarget : register(u4);
+RWTexture2D<float4> HistoryTarget : register(u5);
+RWStructuredBuffer<float4> SumsTarget : register(u6);
 
 void Store(uint index, float value)
 {
@@ -74,7 +87,7 @@ float Load(uint index)
 }
 
 // Box-filters the frame down to the model size and writes planar, ImageNet-normalized RGB, and the colors themselves
-// for Upsample.
+// for EstimateAt.
 [numthreads(16, 16, 1)]
 void Preprocess(uint3 id : SV_DispatchThreadID)
 {
@@ -135,8 +148,7 @@ void Range(uint3 id : SV_DispatchThreadID, uint thread : SV_GroupIndex)
     }
 }
 
-// Counts the output's values between the lowest and the highest, and the picture's pixels by brightness in each
-// section.
+// Counts the output's values between the lowest and the highest.
 [numthreads(16, 16, 1)]
 void Histogram(uint3 id : SV_DispatchThreadID)
 {
@@ -147,14 +159,9 @@ void Histogram(uint3 id : SV_DispatchThreadID)
     float value = Load(id.y * ModelSize.x + id.x);
     uint bin = min(uint(saturate((value - low) / max(high - low, 1e-20)) * AnchorBins), AnchorBins - 1);
     Keys.InterlockedAdd(4 * (KeyBins + bin), 1);
-    uint2 cell = min(id.xy * 3 / ModelSize, 2);
-    uint level = min(uint(dot(Guide.Load(int3(id.xy, 0)).rgb, Luma) * SectionLevels), SectionLevels - 1);
-    Keys.InterlockedAdd(4 * (KeySections + (cell.y * 3 + cell.x) * SectionLevels + level), 1);
 }
 
-// Finds the output's anchor in the counts and moves the one kept in State towards it, or takes it as it is after a
-// cut. State starts out zero, until z marks it as set. Leaves the counts zero for the next estimate, and the sections'
-// for it to tell a cut by.
+// Finds the output's anchor in the counts and keeps it in State[0]. Leaves the counts zero for the next estimate.
 [numthreads(1, 1, 1)]
 void Resolve()
 {
@@ -164,8 +171,7 @@ void Resolve()
     uint below = 0;
     float anchor = high;
     bool found = false;
-    uint index;
-    for (index = 0; index < AnchorBins; ++index)
+    for (uint index = 0; index < AnchorBins; ++index)
     {
         uint count = Keys.Load(4 * (KeyBins + index));
         if (!found && count > 0 && below + count >= wanted)
@@ -176,41 +182,17 @@ void Resolve()
         below += count;
         Keys.Store(4 * (KeyBins + index), 0);
     }
-    uint changed = 0;
-    for (uint section = 0; section < 9; ++section)
-    {
-        uint pixels = 0;
-        uint moved = 0;
-        for (uint level = 0; level < SectionLevels; ++level)
-        {
-            index = section * SectionLevels + level;
-            uint count = Keys.Load(4 * (KeySections + index));
-            uint before = Keys.Load(4 * (KeyPrevious + index));
-            pixels += count;
-            moved += max(count, before) - min(count, before);
-            Keys.Store(4 * (KeyPrevious + index), count);
-            Keys.Store(4 * (KeySections + index), 0);
-        }
-        // Every pixel that left a level arrived at another, so each is counted twice.
-        changed += moved > 2 * CutShare * pixels;
-    }
     Keys.Store(4 * KeyHighest, 0);
     Keys.Store(4 * KeyLowest, 0);
-    float4 state = State[0];
-    bool cut = changed >= CutSections;
-    if (state.z == 0 || cut)
-        state.x = anchor;
-    State[0] = float4(state.x + (anchor - state.x) * Blend, cut, 1, 0);
+    State[0] = float4(anchor, 0, 0, 0);
 }
 
-// Upsamples the output to the frame's size with a joint bilateral filter, as Weight says.
-[numthreads(16, 16, 1)]
-void Upsample(uint3 id : SV_DispatchThreadID)
+// The estimate's closeness at a point of the frame it was estimated from, in its pixels, divided by the anchor. The
+// output is upsampled with a joint bilateral filter, as Weight says, guided by the color of the pixel the point is in.
+float EstimateAt(float2 at)
 {
-    if (any(id.xy >= SourceSize))
-        return;
-    float3 color = Source.Load(int3(id.xy, 0)).rgb;
-    float2 position = (id.xy + 0.5) * ModelSize / SourceSize - 0.5;
+    float3 color = Source.Load(int3(clamp(int2(floor(at)), 0, int2(SourceSize) - 1), 0)).rgb;
+    float2 position = at * ModelSize / SourceSize - 0.5;
     int2 corner = int2(floor(position)) - 1;
     float sum = 0;
     float weights = 0;
@@ -225,11 +207,147 @@ void Upsample(uint3 id : SV_DispatchThreadID)
             sum += weight * Load(texel.y * ModelSize.x + texel.x);
             weights += weight;
         }
-    Depth[id.xy] = StoredDepth(sum / weights / max(Smoothed[0].x, 1e-6));
+    return sum / weights / max(Scaling[0].x, 1e-6);
+}
+
+// The history at a point of the frame before, in its pixels, as Reproject says.
+float4 HistoryAt(float2 at)
+{
+    int2 last = int2(SourceSize) - 1;
+    float2 position = at - 0.5;
+    int2 corner = int2(floor(position));
+    float2 fraction = position - corner;
+    float4 a = History.Load(int3(clamp(corner, 0, last), 0));
+    float4 b = History.Load(int3(clamp(corner + int2(1, 0), 0, last), 0));
+    float4 c = History.Load(int3(clamp(corner + int2(0, 1), 0, last), 0));
+    float4 d = History.Load(int3(clamp(corner + int2(1, 1), 0, last), 0));
+    float4 nearest = fraction.y < 0.5 ? (fraction.x < 0.5 ? a : b) : (fraction.x < 0.5 ? c : d);
+    float4 between = lerp(lerp(a, b, fraction.x), lerp(c, d, fraction.x), fraction.y);
+    return float4(Reproject(float4(a.x, b.x, c.x, d.x)) ? between.xyz : nearest.xyz, nearest.w);
+}
+
+// Moves the history along the picture's motion. What a pixel was in the frame before is at its vector, and the motion
+// from there to the next estimate's frame adds up. A pixel the vector cannot be trusted for, such as one that came
+// into view, loses its history's trust, and the estimate's frame's view of it too.
+[numthreads(16, 16, 1)]
+void Warp(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= SourceSize))
+        return;
+    float2 motion = Motion.Load(int3(id.xy, 0));
+    float4 history = HistoryAt(id.xy + 0.5 + motion);
+    uint flags = Confidence.Load(int3(id.xy, 0)) >= TrustedConfidence ? uint(history.w) : 0;
+    float2 toEstimate = motion + history.yz;
+    if (Restart)
+    {
+        toEstimate = 0;
+        flags |= SeenByEstimate;
+    }
+    HistoryTarget[id.xy] = float4(history.x, toEstimate, flags);
+    if (Show)
+        Depth[id.xy] = StoredDepth(history.x);
+}
+
+groupshared float4 FirstSums[256];
+groupshared float4 SecondSums[256];
+
+// Sums what Fit needs over every FitStep-th pixel the history and the estimate both see: the count, and the history's
+// and the estimate's closeness and their products, less 1 so the sums keep their precision. Each group writes its own,
+// in two float4 a group.
+[numthreads(16, 16, 1)]
+void Gather(uint3 id : SV_DispatchThreadID, uint thread : SV_GroupIndex, uint3 group : SV_GroupID)
+{
+    uint2 pixel = id.xy * FitStep + FitStep / 2;
+    float4 first = 0;
+    float4 second = 0;
+    if (all(pixel < SourceSize))
+    {
+        float4 history = History.Load(int3(pixel, 0));
+        if ((uint(history.w) & (Trusted | SeenByEstimate)) == (Trusted | SeenByEstimate))
+        {
+            float h = history.x - 1;
+            float e = EstimateAt(pixel + 0.5 + history.yz) - 1;
+            first = float4(1, h, e, h * h);
+            second = float4(h * e, 0, 0, 0);
+        }
+    }
+    FirstSums[thread] = first;
+    SecondSums[thread] = second;
+    GroupMemoryBarrierWithGroupSync();
+    for (uint step = 128; step > 0; step >>= 1)
+    {
+        if (thread < step)
+        {
+            FirstSums[thread] += FirstSums[thread + step];
+            SecondSums[thread] += SecondSums[thread + step];
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (thread == 0)
+    {
+        uint groups = (SourceSize.x + FitStep * 16 - 1) / (FitStep * 16);
+        uint index = group.y * groups + group.x;
+        SumsTarget[2 * index] = FirstSums[0];
+        SumsTarget[2 * index + 1] = SecondSums[0];
+    }
+}
+
+// Fits the scale and shift that bring the estimate to the history in State[1], as Align says.
+[numthreads(1, 1, 1)]
+void Fit()
+{
+    uint2 groups = (SourceSize + FitStep * 16 - 1) / (FitStep * 16);
+    float4 first = 0;
+    float4 second = 0;
+    for (uint index = 0; index < groups.x * groups.y; ++index)
+    {
+        first += Sums[2 * index];
+        second += Sums[2 * index + 1];
+    }
+    uint2 samples = (SourceSize + FitStep - 1) / FitStep;
+    State[1] = Align(first, second.x, samples.x * samples.y, Relax);
+}
+
+// Blends the estimate, aligned to the history, into it where the estimate's frame saw the pixel: at once where the
+// history is not trusted, and by Share where it is. Where the estimate's frame did not see it, the history stays.
+[numthreads(16, 16, 1)]
+void Accumulate(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= SourceSize))
+        return;
+    float4 history = History.Load(int3(id.xy, 0));
+    uint flags = uint(history.w);
+    float closeness = history.x;
+    if (flags & SeenByEstimate)
+    {
+        float4 fit = Scaling[1];
+        float estimate = max(EstimateAt(id.xy + 0.5 + history.yz) * fit.x + fit.y, 0);
+        closeness = flags & Trusted ? lerp(closeness, estimate, Share) : estimate;
+        flags |= Trusted;
+    }
+    float2 toEstimate = history.yz;
+    if (Restart)
+    {
+        toEstimate = 0;
+        flags |= SeenByEstimate;
+    }
+    HistoryTarget[id.xy] = float4(closeness, toEstimate, flags);
+    Depth[id.xy] = StoredDepth(closeness);
 }
 )";
 
-constexpr const char* kEntryPoints[] = { "Preprocess", "Range", "Histogram", "Resolve", "Upsample" };
+constexpr const char* kEntryPoints[] = { "Preprocess", "Range", "Histogram", "Resolve", "Warp", "Gather", "Fit", "Accumulate" };
+enum Shader
+{
+    kPreprocess,
+    kRange,
+    kHistogram,
+    kResolve,
+    kWarp,
+    kGather,
+    kFit,
+    kAccumulate,
+};
 
 // As Sizes in the shaders.
 struct Sizes
@@ -238,8 +356,11 @@ struct Sizes
     UINT model[2];
     UINT inputWidth;
     UINT outputWidth;
-    float blend;
-    UINT unused;
+    UINT restart;
+    float relax;
+    UINT show;
+    float share;
+    UINT unused[2];
 };
 
 std::wstring Wide(const char* text)
@@ -274,15 +395,16 @@ private:
     void Copy(ID3D12CommandQueue* queue, ID3D12Resource* texture, ID3D12Resource* buffer, bool toBuffer);
     void Worker();
     void Request(uint64_t value);
-    void Dispatch(size_t shader, std::array<ID3D11ShaderResourceView*, 4> views, std::array<ID3D11UnorderedAccessView*, 5> targets, UINT x, UINT y);
+    void Dispatch(Shader shader, std::array<ID3D11ShaderResourceView*, 8> views, std::array<ID3D11UnorderedAccessView*, 7> targets, UINT x, UINT y);
     void Open(const UnishadeFrame& frame);
-    void Update(ID3D11Texture2D* source, uint64_t picture, int size);
+    void Update(uint64_t picture, int size, bool opened);
     void Resize(const D3D11_TEXTURE2D_DESC& frame, int size);
     void CreateSharedTexture(size_t count, bool half, UINT bind, winrt::com_ptr<ID3D11Texture2D>& texture, HANDLE& handle);
     void CreateShared();
     void ReleaseShared();
-    void UpdateSizes(float blend);
-    void Publish();
+    void UpdateSizes(float relax, float share, bool restart);
+    void Follow(bool restart);
+    void Publish(bool restart);
     void LogState();
 
     const UnishadeHost& host;
@@ -314,6 +436,25 @@ private:
     bool slowRequestLogged = false;
     winrt::com_ptr<ID3D11Texture2D> frameCopy;
     winrt::com_ptr<ID3D11ShaderResourceView> frameView;
+
+    // Depth follows the picture's motion, which the estimator finds between the frame and a copy of the one before.
+    // Its shaders take seconds to compile, on a thread of their own, and depth only follows motion once they are.
+    std::future<void> compiling;
+    std::unique_ptr<motion::Estimator> estimator;
+    winrt::com_ptr<ID3D11ShaderResourceView> colorView;
+    winrt::com_ptr<ID3D11Texture2D> previous;
+    winrt::com_ptr<ID3D11ShaderResourceView> previousView;
+    bool hasPrevious = false;
+    std::optional<uint64_t> lastPicture;
+    Clock::time_point changedAt{};
+    // The history, as kShaders lays it out, in two textures each pass reads one of and writes the other.
+    std::array<winrt::com_ptr<ID3D11ShaderResourceView>, 2> historyViews;
+    std::array<winrt::com_ptr<ID3D11UnorderedAccessView>, 2> historyTargets;
+    size_t historyIndex = 0;
+    // Whether the history holds an estimate yet.
+    bool showing = false;
+    winrt::com_ptr<ID3D11ShaderResourceView> sumsView;
+    winrt::com_ptr<ID3D11UnorderedAccessView> sumsTarget;
 
     // Made for each frame and model size. The input and output textures are shared with the Direct3D 12 device, like
     // the fence.
@@ -401,6 +542,7 @@ Depth::Depth(const UnishadeHost& unishade) : host(unishade), directory(Wide(unis
             throw std::runtime_error(errors ? static_cast<const char*>(errors->GetBufferPointer()) : "Compute shaders are unavailable on this graphics card.");
         winrt::check_hresult(device->CreateComputeShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, shaders[i].put()));
     }
+    compiling = std::async(std::launch::async, motion::Estimator::Compile);
     D3D11_BUFFER_DESC desc{};
     desc.ByteWidth = sizeof(Sizes);
     desc.Usage = D3D11_USAGE_DEFAULT;
@@ -607,8 +749,8 @@ void Depth::Request(uint64_t value)
     SetEvent(request);
 }
 
-// Runs a shader with views in their registers, t0 to t3 and u0 to u4, and unbinds them after.
-void Depth::Dispatch(size_t shader, std::array<ID3D11ShaderResourceView*, 4> views, std::array<ID3D11UnorderedAccessView*, 5> targets, UINT x, UINT y)
+// Runs a shader with views in their registers, t0 to t7 and u0 to u6, and unbinds them after.
+void Depth::Dispatch(Shader shader, std::array<ID3D11ShaderResourceView*, 8> views, std::array<ID3D11UnorderedAccessView*, 7> targets, UINT x, UINT y)
 {
     ID3D11Buffer* constants[] = { sizes.get() };
     context->CSSetShader(shaders[shader].get(), nullptr, 0);
@@ -643,18 +785,20 @@ void Depth::ReleaseShared()
 }
 
 // Sizes the model to the frame's aspect ratio. What follows the model's size is made again once the model is built for
-// it.
+// it. What follows the frame's size is made again here when that changed, and the history starts out empty.
 void Depth::Resize(const D3D11_TEXTURE2D_DESC& frame, int longest)
 {
     size = longest;
     const ModelSize model = ModelSizeFor(frame.Width, frame.Height, longest);
     width = model.width;
     height = model.height;
-    sourceWidth = frame.Width;
-    sourceHeight = frame.Height;
     lastInput.reset();
     Log(UNISHADE_LOG_INFO, "Resized: source=%ux%u, model=%dx%d.", frame.Width, frame.Height, width, height);
     ReleaseShared();
+    if (frame.Width == sourceWidth && frame.Height == sourceHeight)
+        return;
+    sourceWidth = frame.Width;
+    sourceHeight = frame.Height;
 
     D3D11_TEXTURE2D_DESC copy = frame;
     copy.MipLevels = 1;
@@ -668,6 +812,50 @@ void Depth::Resize(const D3D11_TEXTURE2D_DESC& frame, int longest)
     frameView = nullptr;
     winrt::check_hresult(device->CreateTexture2D(&copy, nullptr, frameCopy.put()));
     winrt::check_hresult(device->CreateShaderResourceView(frameCopy.get(), nullptr, frameView.put()));
+    previous = nullptr;
+    previousView = nullptr;
+    winrt::check_hresult(device->CreateTexture2D(&copy, nullptr, previous.put()));
+    winrt::check_hresult(device->CreateShaderResourceView(previous.get(), nullptr, previousView.put()));
+    hasPrevious = false;
+    estimator = nullptr;
+
+    // The history is 32-bit floats, since the motion to the next estimate's frame adds up to hundreds of pixels.
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = sourceWidth;
+    desc.Height = sourceHeight;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    desc.SampleDesc = { 1, 0 };
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+    const float empty[4] = {};
+    for (size_t i = 0; i < historyViews.size(); ++i)
+    {
+        winrt::com_ptr<ID3D11Texture2D> texture;
+        historyViews[i] = nullptr;
+        historyTargets[i] = nullptr;
+        winrt::check_hresult(device->CreateTexture2D(&desc, nullptr, texture.put()));
+        winrt::check_hresult(device->CreateShaderResourceView(texture.get(), nullptr, historyViews[i].put()));
+        winrt::check_hresult(device->CreateUnorderedAccessView(texture.get(), nullptr, historyTargets[i].put()));
+        context->ClearUnorderedAccessViewFloat(historyTargets[i].get(), empty);
+    }
+    showing = false;
+
+    // Two float4 for each group of Gather.
+    const UINT groups = ((sourceWidth + kFitStep * 16 - 1) / (kFitStep * 16)) * ((sourceHeight + kFitStep * 16 - 1) / (kFitStep * 16));
+    D3D11_BUFFER_DESC buffer{};
+    buffer.ByteWidth = 2 * groups * 16;
+    buffer.Usage = D3D11_USAGE_DEFAULT;
+    buffer.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+    buffer.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    buffer.StructureByteStride = 16;
+    winrt::com_ptr<ID3D11Buffer> sums;
+    sumsView = nullptr;
+    sumsTarget = nullptr;
+    winrt::check_hresult(device->CreateBuffer(&buffer, nullptr, sums.put()));
+    winrt::check_hresult(device->CreateShaderResourceView(sums.get(), nullptr, sumsView.put()));
+    winrt::check_hresult(device->CreateUnorderedAccessView(sums.get(), nullptr, sumsTarget.put()));
 }
 
 // A texture the Direct3D 12 device opens, holding count values of the model's type in rows of kRowBytes.
@@ -688,8 +876,7 @@ void Depth::CreateSharedTexture(size_t count, bool half, UINT bind, winrt::com_p
     winrt::check_hresult(texture.as<IDXGIResource1>()->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr, &handle));
 }
 
-// Makes what follows the model's size, once the model is built for it. DEPTH starts out at the far plane until the
-// first estimate arrives.
+// Makes what follows the model's size, once the model is built for it.
 void Depth::CreateShared()
 {
     const size_t pixels = static_cast<size_t>(width) * height;
@@ -716,7 +903,8 @@ void Depth::CreateShared()
     const UINT zero[4] = {};
     context->ClearUnorderedAccessViewUint(keysTarget.get(), zero);
 
-    buffer.ByteWidth = 16;
+    // The anchor, then the fit.
+    buffer.ByteWidth = 32;
     buffer.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
     buffer.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
     buffer.StructureByteStride = 16;
@@ -738,34 +926,64 @@ void Depth::CreateShared()
     winrt::check_hresult(device->CreateTexture2D(&desc, nullptr, guide.put()));
     winrt::check_hresult(device->CreateUnorderedAccessView(guide.get(), nullptr, guideTarget.put()));
     winrt::check_hresult(device->CreateShaderResourceView(guide.get(), nullptr, guideView.put()));
-
-    const float farPlane[4] = { 1, 1, 1, 1 };
-    context->ClearUnorderedAccessViewFloat(depthTarget.get(), farPlane);
-    UpdateSizes(0);
 }
 
-// What the shaders are told. blend is for Resolve.
-void Depth::UpdateSizes(float blend)
+// What the shaders are told. relax is for Fit and share for Accumulate.
+void Depth::UpdateSizes(float relax, float share, bool restart)
 {
     const Sizes values{ { sourceWidth, sourceHeight }, { static_cast<UINT>(width), static_cast<UINT>(height) }, kRowBytes / (halfInput ? 2 : 4),
-                        kRowBytes / (halfOutput ? 2 : 4), blend };
+                        kRowBytes / (halfOutput ? 2 : 4), restart, relax, showing, share };
     context->UpdateSubresource(sizes.get(), 0, nullptr, &values, 0, 0);
 }
 
-// Turns the model's output into DEPTH, once the fence says it is ready. The frame copy and guide still hold the frame
-// it was estimated from, since the next one is only copied after this.
-void Depth::Publish()
+// Moves the history along the picture's motion from the frame before, which the estimator finds once its shaders are
+// compiled. Until then the history stands still and takes each estimate whole, as if every estimate were of the frame
+// it lands in.
+void Depth::Follow(bool restart)
+{
+    if (!estimator && (!compiling.valid() || compiling.wait_for(std::chrono::seconds(0)) == std::future_status::ready))
+    {
+        if (compiling.valid())
+            compiling.get();
+        estimator = std::make_unique<motion::Estimator>(device.get(), sourceWidth, sourceHeight);
+    }
+    // The first frame has none before it, so it is compared with itself and has no motion.
+    if (estimator)
+        estimator->Estimate(context.get(), colorView.get(), hasPrevious ? previousView.get() : colorView.get(), 1);
+    context->CopyResource(previous.get(), color.get());
+    hasPrevious = true;
+    UpdateSizes(0, 0, restart || !estimator);
+    Dispatch(kWarp,
+             { nullptr, nullptr, nullptr, nullptr, estimator ? estimator->motionView.get() : nullptr, estimator ? estimator->confidenceView.get() : nullptr,
+               historyViews[historyIndex].get() },
+             { nullptr, nullptr, nullptr, depthTarget.get(), nullptr, historyTargets[1 - historyIndex].get() }, (sourceWidth + 15) / 16,
+             (sourceHeight + 15) / 16);
+    historyIndex = 1 - historyIndex;
+}
+
+// Blends the model's output into the history, once the fence says it is ready. The frame copy and guide still hold the
+// frame it was estimated from, since the next one is only copied after this.
+void Depth::Publish(bool restart)
 {
     winrt::check_hresult(context->Wait(fence.get(), inputValue + 1));
     const auto now = Clock::now();
-    UpdateSizes(publishedAt ? AnchorBlend(std::chrono::duration<float>(now - *publishedAt).count()) : 1);
+    const float seconds = publishedAt ? std::chrono::duration<float>(now - *publishedAt).count() : 0;
+    UpdateSizes(publishedAt ? FitRelax(seconds) : 1, HistoryShare(seconds), restart || !estimator);
     publishedAt = now;
     const UINT pixels = static_cast<UINT>(width * height);
-    Dispatch(1, { nullptr, outputView.get() }, { nullptr, keysTarget.get() }, (pixels + 255) / 256, 1);
-    Dispatch(2, { nullptr, outputView.get(), nullptr, guideView.get() }, { nullptr, keysTarget.get() }, (width + 15) / 16, (height + 15) / 16);
-    Dispatch(3, {}, { nullptr, keysTarget.get(), stateTarget.get() }, 1, 1);
-    Dispatch(4, { frameView.get(), outputView.get(), stateView.get(), guideView.get() }, { nullptr, nullptr, nullptr, depthTarget.get() },
+    Dispatch(kRange, { nullptr, outputView.get() }, { nullptr, keysTarget.get() }, (pixels + 255) / 256, 1);
+    Dispatch(kHistogram, { nullptr, outputView.get(), nullptr, guideView.get() }, { nullptr, keysTarget.get() }, (width + 15) / 16, (height + 15) / 16);
+    Dispatch(kResolve, {}, { nullptr, keysTarget.get(), stateTarget.get() }, 1, 1);
+    const std::array<ID3D11ShaderResourceView*, 8> estimate{ frameView.get(), outputView.get(), stateView.get(), guideView.get(), nullptr, nullptr,
+                                                             historyViews[historyIndex].get() };
+    const UINT samples[] = { (sourceWidth + kFitStep - 1) / kFitStep, (sourceHeight + kFitStep - 1) / kFitStep };
+    Dispatch(kGather, estimate, { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, sumsTarget.get() }, (samples[0] + 15) / 16,
+             (samples[1] + 15) / 16);
+    Dispatch(kFit, { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, sumsView.get() }, { nullptr, nullptr, stateTarget.get() }, 1, 1);
+    Dispatch(kAccumulate, estimate, { nullptr, nullptr, nullptr, depthTarget.get(), nullptr, historyTargets[1 - historyIndex].get() },
              (sourceWidth + 15) / 16, (sourceHeight + 15) / 16);
+    historyIndex = 1 - historyIndex;
+    showing = true;
 }
 
 void Depth::LogState()
@@ -783,11 +1001,13 @@ void Depth::LogState()
 void Depth::Open(const UnishadeFrame& frame)
 {
     color = nullptr;
+    colorView = nullptr;
     depth = nullptr;
     depthTarget = nullptr;
     hostFence = nullptr;
     winrt::check_hresult(device->OpenSharedFence(frame.fence, IID_PPV_ARGS(hostFence.put())));
     winrt::check_hresult(device->OpenSharedResource1(frame.color.handle, IID_PPV_ARGS(color.put())));
+    winrt::check_hresult(device->CreateShaderResourceView(color.get(), nullptr, colorView.put()));
     winrt::check_hresult(device->OpenSharedResource1(frame.depth.handle, IID_PPV_ARGS(depth.put())));
     winrt::check_hresult(device->CreateUnorderedAccessView(depth.get(), nullptr, depthTarget.put()));
     generation = frame.generation;
@@ -807,15 +1027,17 @@ void Depth::Frame(const UnishadeFrame& frame)
         const float farPlane[4] = { 1, 1, 1, 1 };
         context->ClearUnorderedAccessViewFloat(depthTarget.get(), farPlane);
     }
-    Update(color.get(), frame.picture, LongestSide(frame));
+    Update(frame.picture, LongestSide(frame), opened);
     winrt::check_hresult(context->Signal(hostFence.get(), frame.signal));
     context->Flush();
 }
 
-// Estimates depth for the frame on the worker and publishes the newest result to DEPTH. Frames that arrive while an
-// estimate is in progress are skipped. The same picture again still publishes a completed result.
-void Depth::Update(ID3D11Texture2D* source, uint64_t picture, int longest)
+// Moves depth along the picture's motion in every frame that changed, estimates depth for the frame on the worker and
+// blends the newest result in. Frames that arrive while an estimate is in progress are not estimated. The same picture
+// again still blends in a completed result. Depth is written to DEPTH whenever it changed, or the image is new.
+void Depth::Update(uint64_t picture, int longest, bool opened)
 {
+    bool landed = false;
     if (busy)
     {
         if (!slowRequestLogged && Clock::now() - requestedAt >= std::chrono::seconds(2))
@@ -823,22 +1045,18 @@ void Depth::Update(ID3D11Texture2D* source, uint64_t picture, int longest)
             slowRequestLogged = true;
             LogState();
         }
-        if (!done)
-            return;
-        if (failed)
-            throw std::runtime_error(failure);
-        // GetCompletedValue returns UINT64_MAX on a removed device.
-        if (inputValue && d3d12Fence->GetCompletedValue() < inputValue + 1)
-            return;
-        done = false;
-        busy = false;
-        // Nothing is left to publish to after the device was lost.
-        if (inputValue && input && !D3D12Removed())
+        if (done)
         {
-            Publish();
-            ++estimates;
-            observedMs += std::chrono::duration<double, std::milli>(Clock::now() - requestedAt).count();
-            submitMs += workerMs.load();
+            if (failed)
+                throw std::runtime_error(failure);
+            // GetCompletedValue returns UINT64_MAX on a removed device.
+            if (!inputValue || d3d12Fence->GetCompletedValue() >= inputValue + 1)
+            {
+                done = false;
+                busy = false;
+                // Nothing is left to publish to after the device was lost.
+                landed = inputValue && input && !D3D12Removed();
+            }
         }
     }
     if (Clock::now() - statisticsSince >= kStatisticsInterval)
@@ -852,6 +1070,27 @@ void Depth::Update(ID3D11Texture2D* source, uint64_t picture, int longest)
         observedMs = submitMs = 0;
     }
 
+    D3D11_TEXTURE2D_DESC desc{};
+    color->GetDesc(&desc);
+    const bool resized = desc.Width != sourceWidth || desc.Height != sourceHeight || size != longest;
+    const bool moved = opened || !lastPicture || *lastPicture != picture;
+    lastPicture = picture;
+    if (moved)
+    {
+        // A picture that stood still past its settling is not estimated, and its history is as good as just blended
+        // into, so the first estimate once it moves again blends in as one that came soon after the last would.
+        if (publishedAt && Clock::now() - changedAt >= kSettleTime)
+            publishedAt = Clock::now();
+        changedAt = Clock::now();
+    }
+    // What the worker reads is only made again while it is idle. Depth still follows the picture meanwhile.
+    if (busy)
+    {
+        if (moved && desc.Width == sourceWidth && desc.Height == sourceHeight)
+            Follow(false);
+        return;
+    }
+
     // The shared textures and fence belong to the removed device. Asking for the model again makes the worker create a
     // new device first. CreateShared opens its fence after that.
     if (D3D12Removed())
@@ -860,24 +1099,38 @@ void Depth::Update(ID3D11Texture2D* source, uint64_t picture, int longest)
         fence = nullptr;
         modelWidth = modelHeight = 0;
     }
-
-    D3D11_TEXTURE2D_DESC desc{};
-    source->GetDesc(&desc);
-    if (desc.Width != sourceWidth || desc.Height != sourceHeight || size != longest)
+    // An estimate that lands after a resize is of the size before, so it is dropped.
+    if (resized)
+    {
         Resize(desc, longest);
-    if (lastInput && *lastInput == picture)
-        return;
+        landed = false;
+    }
     // The worker builds the model for each size, which tells what types it takes.
-    if (modelWidth != width || modelHeight != height)
+    const bool modelReady = modelWidth == width && modelHeight == height;
+    if (modelReady && !input)
+        CreateShared();
+    const bool estimate = modelReady && (!lastInput || *lastInput != picture || Clock::now() - changedAt < kSettleTime);
+    // A picture that is estimated again without changing still has the history's motion counted from it.
+    if (moved || (estimate && !landed))
+        Follow(estimate && !landed);
+    if (landed)
+    {
+        Publish(estimate);
+        ++estimates;
+        observedMs += std::chrono::duration<double, std::milli>(Clock::now() - requestedAt).count();
+        submitMs += workerMs.load();
+    }
+    if (!modelReady)
     {
         Request(0);
         return;
     }
-    if (!input)
-        CreateShared();
+    if (!estimate)
+        return;
 
-    context->CopyResource(frameCopy.get(), source);
-    Dispatch(0, { frameView.get() }, { inputTarget.get(), nullptr, nullptr, nullptr, guideTarget.get() }, (width + 15) / 16, (height + 15) / 16);
+    context->CopyResource(frameCopy.get(), color.get());
+    Dispatch(kPreprocess, { frameView.get() }, { inputTarget.get(), nullptr, nullptr, nullptr, guideTarget.get() }, (width + 15) / 16,
+             (height + 15) / 16);
     fenceValue += 2;
     winrt::check_hresult(context->Signal(fence.get(), fenceValue - 1));
     Request(fenceValue - 1);
