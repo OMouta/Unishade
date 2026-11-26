@@ -367,7 +367,7 @@ void Addon::Frame(const UnishadeFrame& frame)
         // at the game's rate. Output still holds the last result, which shows again instead.
         if (!(sameLook && change.repeated))
         {
-            if (!Dlss5Evaluate(dlss5, sdr, hasDepth ? depth.get() : nullptr, hdr ? changed.get() : output.get(), &look,
+            if (!Dlss5Evaluate(dlss5, sdr, hasDepth ? depth.get() : nullptr, nullptr, 1, 1, hdr ? changed.get() : output.get(), &look,
                                change.cut || depthChanged))
                 throw std::runtime_error(Dlss5Error(dlss5));
             if (hdr)

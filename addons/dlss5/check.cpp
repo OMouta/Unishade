@@ -5,11 +5,14 @@
 // shows that each input Unishade_nvngx.dll sets reaches the network, since NGX ignores a parameter it does not know
 // without saying so: it runs the image with only that input changed and compares the outputs. Then it runs the add-on
 // as Unishade does, on the same picture twice, a cut and a small move. The image after --keys is the scene the cut
-// goes to. It returns 1 when an input changed nothing or the add-on did the wrong thing.
+// goes to. It returns 1 when an input changed nothing or the add-on did the wrong thing. With --keys it also runs a
+// pan with its true motion vectors, with them negated and with none, and says which is closest to a still picture's
+// result, since nothing NVIDIA published says which way round DLSS5 takes them.
 
 #include "dlss5.h"
 #include <unishade_addon.h>
 
+#include <DirectXPackedVector.h>
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <dxgi1_2.h>
@@ -25,6 +28,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -203,12 +207,12 @@ struct Gpu
     }
 };
 
-Image Crop(const Image& image, UINT width, UINT height, UINT left = 0)
+Image Crop(const Image& image, UINT width, UINT height, UINT left = 0, UINT top = 0)
 {
     Image crop{ width, height };
     crop.pixels.resize(size_t(width) * height * 4);
     for (UINT row = 0; row < height; ++row)
-        std::copy_n(image.pixels.data() + (size_t(row) * image.width + left) * 4, size_t(width) * 4, crop.pixels.data() + size_t(row) * width * 4);
+        std::copy_n(image.pixels.data() + (size_t(top + row) * image.width + left) * 4, size_t(width) * 4, crop.pixels.data() + size_t(row) * width * 4);
     return crop;
 }
 
@@ -263,7 +267,7 @@ Image Run(const Api& api, Dlss5* dlss5, Gpu& gpu, const Image& input, const Dlss
     for (int frame = 1; frame <= frames; ++frame)
     {
         const auto start = std::chrono::steady_clock::now();
-        if (!api.evaluate(dlss5, color.get(), nullptr, output.get(), &look, false))
+        if (!api.evaluate(dlss5, color.get(), nullptr, nullptr, 1, 1, output.get(), &look, false))
             throw std::runtime_error(std::string("Dlss5Evaluate failed: ") + api.error(dlss5));
         const auto took = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
         std::printf("Evaluated frame %d at %ux%u with %d pass(es) in %.1f ms\n", frame, input.width, input.height, look.passCount, took);
@@ -296,15 +300,41 @@ Image Depth(UINT width, UINT height, Shape shape)
     return depth;
 }
 
+// The same vector for every pixel, as R16G16_FLOAT.
+Image Motion(UINT width, UINT height, float x, float y)
+{
+    Image motion{ width, height, std::vector<uint8_t>(size_t(width) * height * 4), DXGI_FORMAT_R16G16_FLOAT };
+    const DirectX::PackedVector::HALF vector[2] = { DirectX::PackedVector::XMConvertFloatToHalf(x), DirectX::PackedVector::XMConvertFloatToHalf(y) };
+    for (size_t pixel = 0; pixel < size_t(width) * height; ++pixel)
+        std::memcpy(motion.pixels.data() + pixel * 4, vector, 4);
+    return motion;
+}
+
+// A pan: the image's content moves kPanX pixels right and kPanY down each frame, so every pixel's vector to where it
+// was in the previous picture is (-kPanX, -kPanY). Whole pixels, so each frame is the image itself, only cropped.
+constexpr UINT kPanX = 4, kPanY = 2, kPanFrames = 8;
+
+std::vector<Image> Pan(const Image& image, UINT width, UINT height)
+{
+    std::vector<Image> frames;
+    for (UINT frame = 0; frame < kPanFrames; ++frame)
+        frames.push_back(Crop(image, width, height, (kPanFrames - 1 - frame) * kPanX, (kPanFrames - 1 - frame) * kPanY));
+    return frames;
+}
+
 struct Step
 {
     const Image* color;
     const Image* depth; // null for none
     bool reset;
+    const Image* motion = nullptr; // null for none
+    float scaleX = 1, scaleY = 1;
 };
 
-// Runs the steps on a DLSS5 of its own, so no trial gets another's history, and reads back the last output.
-Image Trial(const Api& api, const std::filesystem::path& runtime, const std::wstring& data, const Dlss5Look& look, const std::vector<Step>& steps)
+// Runs the steps on a DLSS5 of its own, so no trial gets another's history, and reads back the last output, and every
+// output into each if it is given.
+Image Trial(const Api& api, const std::filesystem::path& runtime, const std::wstring& data, const Dlss5Look& look, const std::vector<Step>& steps,
+            std::vector<Image>* each = nullptr)
 {
     char error[1024] = "";
     Dlss5* dlss5 = api.create(runtime.c_str(), data.c_str(), nullptr, error, sizeof(error));
@@ -326,8 +356,13 @@ Image Trial(const Api& api, const std::filesystem::path& runtime, const std::wst
         const UINT width = steps.front().color->width, height = steps.front().color->height;
         const winrt::com_ptr<ID3D12Resource> output = gpu.Texture(width, height, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         for (const Step& step : steps)
-            if (!api.evaluate(dlss5, texture(step.color), texture(step.depth), output.get(), &look, step.reset))
+        {
+            if (!api.evaluate(dlss5, texture(step.color), texture(step.depth), texture(step.motion), step.scaleX, step.scaleY, output.get(), &look,
+                              step.reset))
                 throw std::runtime_error(std::string("Dlss5Evaluate failed: ") + api.error(dlss5));
+            if (each)
+                each->push_back(gpu.Read(output.get()));
+        }
         Image result = gpu.Read(output.get());
         textures.clear();
         api.destroy(dlss5);
@@ -361,10 +396,74 @@ Difference Differ(const Image& a, const Image& b)
     return { sum / (count * 3), largest };
 }
 
+// The mean difference between each output and the one before it moved by the pan, over the second half of the pan, out
+// of 255. Where the history holds, each output is the last one moved, as the input is.
+double Restlessness(const std::vector<Image>& outputs, UINT x, UINT y)
+{
+    double sum = 0;
+    size_t count = 0;
+    for (size_t frame = outputs.size() / 2; frame < outputs.size(); ++frame)
+    {
+        const Image& now = outputs[frame];
+        const Image& before = outputs[frame - 1];
+        for (UINT row = y; row < now.height; ++row)
+            for (UINT column = x; column < now.width; ++column)
+                for (int channel = 0; channel < 3; ++channel)
+                {
+                    sum += std::abs(int(now.pixels[(size_t(row) * now.width + column) * 4 + channel]) -
+                                    int(before.pixels[(size_t(row - y) * now.width + column - x) * 4 + channel]));
+                    ++count;
+                }
+    }
+    return sum / count;
+}
+
+// The mean difference between neighbouring pixels, out of 255, which falls as a picture blurs.
+double Sharpness(const Image& image)
+{
+    double sum = 0;
+    for (UINT row = 0; row + 1 < image.height; ++row)
+        for (UINT column = 0; column + 1 < image.width; ++column)
+            for (int channel = 0; channel < 3; ++channel)
+            {
+                const int here = image.pixels[(size_t(row) * image.width + column) * 4 + channel];
+                sum += std::abs(here - int(image.pixels[(size_t(row) * image.width + column + 1) * 4 + channel])) +
+                       std::abs(here - int(image.pixels[(size_t(row + 1) * image.width + column) * 4 + channel]));
+            }
+    return sum / (double(image.width - 1) * (image.height - 1) * 6);
+}
+
+// Runs the pan with each kind of vector and says how far its last output is from a still picture's result, how restless
+// its outputs are and how sharp. The still result is the last picture of the pan evaluated as often with no motion,
+// which is what a pan whose history follows it exactly would give.
+void CheckSign(const Api& api, const std::filesystem::path& runtime, const std::wstring& data, const Dlss5Look& look, const std::vector<Image>& pan)
+{
+    const UINT width = pan.front().width, height = pan.front().height;
+    std::printf("\nA pan of %u, %u pixels a frame over %u frames at %ux%u, against the last picture held still:\n", kPanX, kPanY, kPanFrames, width,
+                height);
+    std::vector<Image> stillOutputs;
+    const Image still = Trial(api, runtime, data, look, std::vector<Step>(kPanFrames, Step{ &pan.back(), nullptr, false }), &stillOutputs);
+    const double stillSharpness = Sharpness(still);
+    std::printf("  %-24s restless %.3f, sharpness %.3f\n", "Held still", Restlessness(stillOutputs, 0, 0), stillSharpness);
+    const Image truth = Motion(width, height, -float(kPanX), -float(kPanY)), negated = Motion(width, height, float(kPanX), float(kPanY));
+    const std::pair<const char*, const Image*> kinds[] = { { "True vectors (-4, -2)", &truth }, { "Negated vectors (4, 2)", &negated },
+                                                           { "No vectors", nullptr } };
+    for (const auto& [name, motion] : kinds)
+    {
+        std::vector<Step> steps;
+        for (const Image& frame : pan)
+            steps.push_back({ &frame, nullptr, false, motion });
+        std::vector<Image> outputs;
+        const Difference difference = Differ(Trial(api, runtime, data, look, steps, &outputs), still);
+        std::printf("  %-24s from still mean %.3f, largest %d, restless %.3f, sharpness %.3f of still's\n", name, difference.mean, difference.largest,
+                    Restlessness(outputs, kPanX, kPanY), Sharpness(outputs.back()) / stillSharpness);
+    }
+}
+
 // Changes one input at a time and says whether the output changed more than between two runs of the same trial.
 // Returns how many inputs changed nothing.
 int CheckKeys(const Api& api, const std::filesystem::path& runtime, const std::wstring& data, const Image& input, const Image& cut,
-              const Dlss5Look& look, int frames)
+              const std::vector<Image>& pan, const Dlss5Look& look, int frames)
 {
     std::printf("\nEach input, changed alone, over %d frame(s) of the image on a new feature:\n", frames);
     const std::vector<Step> still(frames, Step{ &input, nullptr, false });
@@ -408,6 +507,37 @@ int CheckKeys(const Api& api, const std::filesystem::path& runtime, const std::w
     report("DLSSNR.DepthInverted", baseline, withDepth(still, &zero, &zero));
     report("DLSSNR.DepthInverted, then a cut", withDepth(cutting, nullptr, nullptr), withDepth(cutting, &zero, &zero));
 
+    // The pan, with its true vectors unless a row says otherwise. Its own noise is the threshold, since history that
+    // moves may vary more from run to run.
+    const UINT panWidth = pan.front().width, panHeight = pan.front().height;
+    const Image truth = Motion(panWidth, panHeight, -float(kPanX), -float(kPanY));
+    const Image halved = Motion(panWidth, panHeight, -float(kPanX) / 2, -float(kPanY) / 2);
+    const auto panning = [&](const Image* motion, const Image* depth, float scaleX = 1, float scaleY = 1) {
+        std::vector<Step> steps;
+        for (const Image& frame : pan)
+            steps.push_back({ &frame, depth, false, motion, scaleX, scaleY });
+        return Trial(api, runtime, data, look, steps);
+    };
+    const Image panned = panning(&truth, nullptr);
+    const Difference panNoise = Differ(panned, panning(&truth, nullptr));
+    std::printf("  %-33s mean %.3f, largest %d\n", "The same pan again", panNoise.mean, panNoise.largest);
+    const auto reportPan = [&](const char* key, const Image& a, const Image& b) {
+        const Difference difference = Differ(a, b);
+        const bool reached = difference.largest > panNoise.largest;
+        std::printf("  %-33s mean %.3f, largest %d: %s\n", key, difference.mean, difference.largest, reached ? "changes the output" : "NO EFFECT");
+        missing += !reached;
+    };
+    reportPan("DLSSNR.MVec", panned, panning(nullptr, nullptr));
+    reportPan("DLSSNR.MVecScaleX", panned, panning(&truth, nullptr, 0, 1));
+    reportPan("DLSSNR.MVecScaleY", panned, panning(&truth, nullptr, 1, 0));
+    const Difference units = Differ(panned, panning(&halved, nullptr, 2, 2));
+    std::printf("  %-33s mean %.3f, largest %d: %s\n", "Half the vectors at scale 2", units.mean, units.largest,
+                units.largest <= panNoise.largest ? "the same, so the scale multiplies them" : "different");
+    const Image panFloor = Depth(panWidth, panHeight, Shape::Floor), panMiddle = Depth(panWidth, panHeight, Shape::Middle),
+                panZero = Depth(panWidth, panHeight, Shape::Zero);
+    reportPan("DLSSNR.Depth, in the pan", panning(&truth, &panFloor), panning(&truth, &panMiddle));
+    reportPan("DLSSNR.DepthInverted, in the pan", panned, panning(&truth, &panZero));
+
     const Image kept = Trial(api, runtime, data, look, cutting);
     cutting.back().reset = true;
     const Image reset = Trial(api, runtime, data, look, cutting);
@@ -415,8 +545,8 @@ int CheckKeys(const Api& api, const std::filesystem::path& runtime, const std::w
     const Difference fresh = Differ(reset, Trial(api, runtime, data, look, { { &cut, nullptr, false } }));
     std::printf("  %-33s mean %.3f, largest %d: %s\n", "Reset against a new feature", fresh.mean, fresh.largest,
                 fresh.largest <= noise.largest ? "the same, so it drops the history" : "different, so some history is kept");
-    std::printf("  Not checked: DLSSNR.MVec, MVecScaleX and MVecScaleY, since the motion is all zero. Color, Output, their\n"
-                "  subrects, Width, Height, ScalingRatio and Enabled, since every output above needs them.\n");
+    std::printf("  Not checked: Color, Output, their subrects, Width, Height, ScalingRatio and Enabled, since every output above\n"
+                "  needs them.\n");
     return missing;
 }
 
@@ -675,7 +805,10 @@ int Main(int argc, wchar_t** argv)
     {
         const Image cut = Load(keys);
         const UINT width = std::min(input.width, cut.width), height = std::min(input.height, cut.height);
-        missing = CheckKeys(api, runtime, data, Crop(input, width, height), Crop(cut, width, height), look, frames);
+        // Each picture of the pan is a part of the image, smaller by how far the pan goes.
+        const std::vector<Image> pan = Pan(input, width - kPanX * (kPanFrames - 1), height - kPanY * (kPanFrames - 1));
+        CheckSign(api, runtime, data, look, pan);
+        missing = CheckKeys(api, runtime, data, Crop(input, width, height), Crop(cut, width, height), pan, look, frames);
         // A part of each, so the cut picture can also move a little.
         const UINT part = width - 4;
         missing += CheckAddon(library, api, runtime, data, Crop(input, part, height), Crop(cut, part, height), Crop(cut, part, height, 4),
