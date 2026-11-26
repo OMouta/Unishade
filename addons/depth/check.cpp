@@ -1,9 +1,12 @@
-// Runs a picture through the Depth add-on as Unishade does, without a window, and says how steady its depth is.
+// Runs a moving picture through the Depth add-on as Unishade does, without a window, and says how steady its depth is.
 // depth_check <Depth.dll> <add-on folder> <image> <output folder> [--size WxH] [--frames N] [--hold N] [--scroll X]
-//     [--fps N] [--detail N]
+//     [--fps N] [--detail N] [--part <image>] [--cut <image>] [--cut-at N] [--hud 1]
 // The picture is a part of the image, the size given, that moves across it by scroll pixels a frame for frames frames
-// and then stays for hold frames. The add-on folder holds the model and ONNX Runtime. The depth of the last moving
-// frame and of the last frame are written as PNG, with the normals effects would make of them.
+// and then stays for hold frames. With --part, the picture stays still and a rectangle from the other image moves
+// across it instead. With --cut, the picture comes from the other image from moving frame cut-at on. With --hud, still
+// bars and stripes like a game's HUD are drawn over every frame, and left out of the figures. The add-on folder holds
+// the model and ONNX Runtime. The depth of the last moving frame and of the last frame are written as PNG, with the
+// normals effects would make of them, and the figures of every frame to frames.csv.
 
 #include <unishade_addon.h>
 
@@ -28,9 +31,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace
@@ -40,6 +46,8 @@ using Clock = std::chrono::steady_clock;
 // As depth_shared.h maps the model's output to DEPTH.
 constexpr float kFarPlane = 1000.0f;
 constexpr float kNearest = 0.01f;
+// A background pixel the moving part covered in this many frames before is counted as just uncovered.
+constexpr int kWake = 8;
 
 void Log(const UnishadeHost*, UnishadeLogLevel, const char* text)
 {
@@ -86,33 +94,38 @@ std::vector<float> Closeness(const std::vector<float>& depth)
     return closeness;
 }
 
-// The mean difference between a and b moved shift pixels to the left, over the pixels both have, as a share of b's
-// mean there, so it says the same whatever the closeness is measured against.
-double Difference(const std::vector<float>& a, const std::vector<float>& b, int width, int height, int shift)
+struct Image
 {
-    double sum = 0, mean = 0;
-    for (int y = 0; y < height; ++y)
-        for (int x = std::max(0, -shift); x < std::min(width, width - shift); ++x)
-        {
-            sum += std::abs(a[size_t(y) * width + x] - b[size_t(y) * width + x + shift]);
-            mean += b[size_t(y) * width + x + shift];
-        }
-    return mean > 0 ? sum / mean : 0;
+    int width = 0;
+    int height = 0;
+    std::vector<uint8_t> rgba;
+};
+
+Image Load(const wchar_t* file)
+{
+    Image image;
+    int channels = 0;
+    stbi_uc* loaded = stbi_load(std::filesystem::path(file).string().c_str(), &image.width, &image.height, &channels, 4);
+    if (!loaded)
+        throw std::runtime_error(std::string("Could not read the image: ") + stbi_failure_reason());
+    image.rgba.assign(loaded, loaded + size_t(image.width) * image.height * 4);
+    stbi_image_free(loaded);
+    return image;
 }
 
-// How much closer everything in a is than in b moved shift pixels to the left: the middle one of the ratios, over a
-// part of the pixels both have. 1 when depth as a whole is the same in both.
-double Scale(const std::vector<float>& a, const std::vector<float>& b, int width, int height, int shift)
+// What a frame shows: which image the picture comes from and where, and where the moving part is, if there is one.
+struct Layout
 {
-    std::vector<float> ratios;
-    for (int y = 0; y < height; y += 4)
-        for (int x = std::max(0, -shift); x < std::min(width, width - shift); x += 4)
-            ratios.push_back(a[size_t(y) * width + x] / b[size_t(y) * width + x + shift]);
-    if (ratios.empty())
-        return 1;
-    std::nth_element(ratios.begin(), ratios.begin() + ratios.size() / 2, ratios.end());
-    return ratios[ratios.size() / 2];
-}
+    int offset = 0; // of the picture in its image
+    bool second = false;
+    int part = -1;  // the moving part's left edge in the picture
+};
+
+struct Rect
+{
+    int x, y, width, height;
+    bool Contains(int px, int py) const { return px >= x && px < x + width && py >= y && py < y + height; }
+};
 
 void SaveDepth(const std::vector<float>& depth, int width, int height, const std::filesystem::path& folder, const std::string& name)
 {
@@ -154,20 +167,44 @@ void SaveDepth(const std::vector<float>& depth, int width, int height, const std
     std::printf("Wrote %s.png and %s-normals.png\n", name.c_str(), name.c_str());
 }
 
+// The mean of the worst tenth of values, which is where the frames an estimate landed in show.
+double Worst(std::vector<double> values)
+{
+    if (values.empty())
+        return 0;
+    std::sort(values.begin(), values.end(), std::greater<>());
+    const size_t count = std::max<size_t>(1, values.size() / 10);
+    double sum = 0;
+    for (size_t i = 0; i < count; ++i)
+        sum += values[i];
+    return sum / count;
+}
+
+double Mean(const std::vector<double>& values)
+{
+    double sum = 0;
+    for (double value : values)
+        sum += value;
+    return values.empty() ? 0 : sum / values.size();
+}
+
 int Main(int argc, wchar_t** argv)
 {
     if (argc < 5)
     {
         std::printf("depth_check <Depth.dll> <add-on folder> <image> <output folder> [--size WxH] [--frames N] [--hold N] [--scroll X]\n"
-                    "    [--fps N] [--detail N]\n");
+                    "    [--fps N] [--detail N] [--part <image>] [--cut <image>] [--cut-at N] [--hud 1]\n");
         return 2;
     }
     const std::filesystem::path module = std::filesystem::absolute(argv[1]), output = argv[4];
     std::string folder = std::filesystem::absolute(argv[2]).string();
     if (folder.back() != '\\' && folder.back() != '/')
         folder += '\\';
-    int width = 1280, height = 720, frames = 120, hold = 60, scroll = 4, fps = 60;
+    int width = 1280, height = 720, frames = 120, hold = 60, scroll = 4, fps = 60, cutAt = -1;
     float detail = 1;
+    bool hud = false;
+    const wchar_t* partFile = nullptr;
+    const wchar_t* cutFile = nullptr;
     for (int index = 5; index + 1 < argc; index += 2)
     {
         const std::wstring option = argv[index];
@@ -187,22 +224,57 @@ int Main(int argc, wchar_t** argv)
             fps = std::max(1, _wtoi(value));
         else if (option == L"--detail")
             detail = static_cast<float>(_wtoi(value));
+        else if (option == L"--part")
+            partFile = value;
+        else if (option == L"--cut")
+            cutFile = value;
+        else if (option == L"--cut-at")
+            cutAt = _wtoi(value);
+        else if (option == L"--hud")
+            hud = _wtoi(value) != 0;
         else
             throw std::runtime_error("Unknown option.");
     }
 
-    int imageWidth = 0, imageHeight = 0, channels = 0;
-    stbi_uc* loaded = stbi_load(std::filesystem::path(argv[3]).string().c_str(), &imageWidth, &imageHeight, &channels, 4);
-    if (!loaded)
-        throw std::runtime_error(std::string("Could not read the image: ") + stbi_failure_reason());
-    std::vector<uint8_t> image(loaded, loaded + size_t(imageWidth) * imageHeight * 4);
-    stbi_image_free(loaded);
-    if (width > imageWidth || height > imageHeight)
-        throw std::runtime_error("The image is smaller than the picture.");
-    // The picture never leaves the image, so the scroll stops short where it would.
-    frames = scroll ? std::min(frames, (imageWidth - width) / std::abs(scroll) + 1) : frames;
-    std::printf("Picture %dx%d of %ls (%dx%d), %d frames moving %d pixels each, then %d still, at %d a second, detail %d\n", width, height, argv[3],
-                imageWidth, imageHeight, frames, scroll, hold, fps, static_cast<int>(detail));
+    const Image image = Load(argv[3]);
+    const std::optional<Image> other = partFile ? Load(partFile) : cutFile ? Load(cutFile) : std::optional<Image>();
+    if (width > image.width || height > image.height || (other && (width > other->width || height > other->height)))
+        throw std::runtime_error("An image is smaller than the picture.");
+    if (cutFile && cutAt < 1)
+        throw std::runtime_error("--cut needs --cut-at.");
+    // The moving part is a quarter of the picture wide and half as high, from the middle of the other image.
+    const Rect partRect{ 0, height / 4, width / 4, height / 2 };
+    // The picture and the part never leave their image, so the motion stops short where it would.
+    if (partFile)
+        frames = std::min(frames, (width - partRect.width) / std::max(1, std::abs(scroll)) + 1);
+    else if (scroll)
+        frames = std::min(frames, (std::min(image.width, other ? other->width : image.width) - width) / std::abs(scroll) + 1);
+    const int total = frames + hold;
+    std::vector<Layout> layouts(total);
+    for (int index = 0; index < total; ++index)
+    {
+        const int step = std::min(index, frames - 1);
+        Layout& layout = layouts[index];
+        if (partFile)
+            layout.part = scroll < 0 ? width - partRect.width + step * scroll : step * scroll;
+        else
+        {
+            layout.offset = step * scroll + (scroll < 0 ? image.width - width : 0);
+            layout.second = cutFile && index >= cutAt;
+        }
+    }
+    const std::vector<Rect> hudRects = hud ? std::vector<Rect>{ { 24, 24, 320, 28 }, { width - 260, height - 60, 236, 36 }, { width / 2 - 12, height / 2 - 12, 24, 24 } }
+                                           : std::vector<Rect>{};
+    const auto inHud = [&](int x, int y) {
+        for (const Rect& rect : hudRects)
+            if (rect.Contains(x, y))
+                return true;
+        return false;
+    };
+
+    std::printf("Picture %dx%d of %ls (%dx%d), %d frames moving %d pixels each, then %d still, at %d a second, detail %d%s%s%s\n", width, height,
+                argv[3], image.width, image.height, frames, scroll, hold, fps, static_cast<int>(detail), partFile ? ", a part moving over it" : "",
+                cutFile ? ", cut to another image" : "", hud ? ", with a HUD" : "");
     std::filesystem::create_directories(output);
 
     winrt::com_ptr<IDXGIFactory1> factory;
@@ -237,6 +309,7 @@ int Main(int argc, wchar_t** argv)
     winrt::com_ptr<ID3D11Texture2D> readable;
     winrt::check_hresult(device->CreateTexture2D(&staging, nullptr, readable.put()));
 
+    const auto loadStarted = Clock::now();
     const HMODULE library = LoadLibraryW(module.c_str());
     if (!library)
         throw std::runtime_error("Could not load " + module.string() + ": error " + std::to_string(GetLastError()));
@@ -256,38 +329,59 @@ int Main(int argc, wchar_t** argv)
     void* instance = addon->create(&host, error, sizeof(error));
     if (!instance)
         throw std::runtime_error(std::string("The add-on did not start: ") + error);
+    const double createMs = std::chrono::duration<double, std::milli>(Clock::now() - loadStarted).count();
 
     std::vector<std::array<float, 4>> settings(addon->settingCount);
     for (uint32_t i = 0; i < addon->settingCount; ++i)
         std::copy_n(addon->settings[i].defaultValue, 4, settings[i].data());
     settings[0][0] = detail;
 
-    const int total = frames + hold;
     std::vector<uint8_t> picture(size_t(width) * height * 4);
     std::vector<std::vector<float>> closeness(total);
     std::vector<float> lastMoving, last;
-    std::vector<int> offsets(total);
     uint64_t value = 0;
-    double callMs = 0, frameMs = 0, worstMs = 0;
+    double callMs = 0, frameMs = 0, worstMs = 0, firstCallsMs = 0;
+    std::vector<double> frameTimes, frameTime(total);
+    int warmFrames = 0;
     const auto start = Clock::now();
-    // The model takes seconds to load, so the picture stays where it starts until depth arrives and settles.
-    constexpr int kWarm = 30;
+    // The model takes seconds to load and the motion shaders seconds to compile, so the picture stays where it starts
+    // until depth arrives, and five seconds more for it to follow motion.
+    const int kWarm = 5 * fps;
     for (int index = 0, tick = 0, warm = 0; index < total; ++tick)
     {
         std::this_thread::sleep_until(start + tick * std::chrono::microseconds(1000000 / fps));
         if (tick > 60 * fps && warm < kWarm)
             throw std::runtime_error("The add-on wrote no depth in a minute.");
-        const int offset = offsets[index] = std::min(index, frames - 1) * scroll + (scroll < 0 ? imageWidth - width : 0);
+        const Layout& layout = layouts[index];
+        const Image& source = layout.second ? *other : image;
         for (int y = 0; y < height; ++y)
             for (int x = 0; x < width; ++x)
             {
-                const uint8_t* from = &image[(size_t(y) * imageWidth + x + offset) * 4];
+                const uint8_t* from = &source.rgba[(size_t(y) * source.width + x + layout.offset) * 4];
+                if (layout.part >= 0 && partRect.Contains(x - layout.part, y))
+                {
+                    const int px = x - layout.part + (other->width - partRect.width) / 2;
+                    const int py = y - partRect.y + (other->height - partRect.height) / 2;
+                    from = &other->rgba[(size_t(py) * other->width + px) * 4];
+                }
                 uint8_t* to = &picture[(size_t(y) * width + x) * 4];
                 to[0] = from[2];
                 to[1] = from[1];
                 to[2] = from[0];
                 to[3] = 255;
             }
+        // Bars with a border and stripes like lettering, the same in every frame.
+        for (const Rect& rect : hudRects)
+            for (int y = rect.y; y < rect.y + rect.height; ++y)
+                for (int x = rect.x; x < rect.x + rect.width; ++x)
+                {
+                    const bool border = y < rect.y + 3 || y >= rect.y + rect.height - 3 || x < rect.x + 3 || x >= rect.x + rect.width - 3;
+                    const bool stripe = ((x - rect.x) / 4) % 2 == 0;
+                    uint8_t* to = &picture[(size_t(y) * width + x) * 4];
+                    to[0] = to[1] = to[2] = border ? 20 : stripe ? 240 : 60;
+                    if (!border && !stripe)
+                        to[2] = 200;
+                }
         context->UpdateSubresource(color.texture.get(), 0, nullptr, picture.data(), width * 4, 0);
         winrt::check_hresult(context->Signal(fence.get(), ++value));
         context->Flush();
@@ -321,7 +415,11 @@ int Main(int argc, wchar_t** argv)
             callMs += std::chrono::duration<double, std::milli>(returned - called).count();
             frameMs += took;
             worstMs = std::max(worstMs, took);
+            frameTimes.push_back(took);
+            frameTime[index] = took;
         }
+        else if (tick < 10)
+            firstCallsMs = std::max(firstCallsMs, took);
 
         context->CopyResource(readable.get(), depth.texture.get());
         D3D11_MAPPED_SUBRESOURCE mapped{};
@@ -334,6 +432,7 @@ int Main(int argc, wchar_t** argv)
         {
             if (warm || *std::min_element(values.begin(), values.end()) < 1)
                 ++warm;
+            ++warmFrames;
             continue;
         }
         closeness[index] = Closeness(values);
@@ -346,25 +445,185 @@ int Main(int argc, wchar_t** argv)
     addon->destroy(instance);
     FreeLibrary(library);
 
-    // Depth takes a few estimates to follow the picture once it starts to move, so the first half of the moving frames
-    // does not count.
-    const int from = frames / 2;
-    double flicker = 0, late = 0, pulse = 0, off = 0;
-    for (int index = from; index < frames; ++index)
+    // Where a pixel of frame i shows in frame j, or -1 where it does not. Only the part or the picture moves, and only
+    // sideways.
+    const auto where = [&](int i, int j, int x, int y) {
+        if (inHud(x, y))
+            return -1;
+        const Layout& a = layouts[i];
+        const Layout& b = layouts[j];
+        int to = x;
+        if (a.part >= 0)
+        {
+            if (partRect.Contains(x - a.part, y))
+                to = x - a.part + b.part;
+            else if (partRect.Contains(x - b.part, y))
+                return -1;
+        }
+        else
+        {
+            if (a.second != b.second)
+                return -1;
+            to = x + a.offset - b.offset;
+        }
+        return to >= 0 && to < width && !inHud(to, y) ? to : -1;
+    };
+    // The background pixels of frame i that the part covered in one of the kWake frames before.
+    const auto uncovered = [&](int i, int x, int y) {
+        const Layout& a = layouts[i];
+        if (a.part < 0 || partRect.Contains(x - a.part, y))
+            return false;
+        for (int k = 1; k <= kWake && i - k >= 0; ++k)
+            if (partRect.Contains(x - layouts[i - k].part, y))
+                return true;
+        return false;
+    };
+    // The mean difference between frame i's closeness and frame j's where i's pixels show in j, as a share of j's mean
+    // there, so it says the same whatever the closeness is measured against. And the middle one of the ratios, which is
+    // 1 when depth as a whole is the same in both. Only the pixels select takes count.
+    struct Comparison
     {
-        // What is at x in this frame was scroll pixels to the right in the one before, and is where the picture came
-        // to rest in the last frame.
-        flicker += Difference(closeness[index], closeness[index - 1], width, height, scroll);
-        late += Difference(closeness[index], closeness[total - 1], width, height, offsets[index] - offsets[total - 1]);
-        pulse += std::abs(Scale(closeness[index], closeness[index - 1], width, height, scroll) - 1);
-        off += std::abs(Scale(closeness[index], closeness[total - 1], width, height, offsets[index] - offsets[total - 1]) - 1);
+        double difference = 0;
+        double scale = 0;
+        size_t pixels = 0;
+    };
+    const auto compare = [&](int i, int j, auto select) {
+        double sum = 0, mean = 0;
+        std::vector<float> ratios;
+        Comparison result;
+        for (int y = 0; y < height; ++y)
+            for (int x = 0; x < width; ++x)
+            {
+                if (!select(x, y))
+                    continue;
+                const int to = where(i, j, x, y);
+                if (to < 0)
+                    continue;
+                const float a = closeness[i][size_t(y) * width + x], b = closeness[j][size_t(y) * width + to];
+                sum += std::abs(a - b);
+                mean += b;
+                ++result.pixels;
+                if (x % 4 == 0 && y % 4 == 0)
+                    ratios.push_back(a / b);
+            }
+        result.difference = mean > 0 ? sum / mean : 0;
+        if (!ratios.empty())
+        {
+            std::nth_element(ratios.begin(), ratios.begin() + ratios.size() / 2, ratios.end());
+            result.scale = std::abs(ratios[ratios.size() / 2] - 1);
+        }
+        return result;
+    };
+    const auto all = [](int, int) { return true; };
+    // How many pixels frame i's depth trails its picture by, along the motion: the shift of the rest frame's depth, as
+    // a whole brought to the same scale, that matches it best. The moving part is seen differently against each part
+    // of the background, so this is only measured on a pan.
+    const int direction = partFile ? (scroll < 0 ? -1 : 1) : (scroll < 0 ? 1 : -1);
+    const auto trail = [&](int i) {
+        constexpr int kReach = 48;
+        std::optional<double> best;
+        int bestShift = 0;
+        for (int shift = -kReach; shift <= kReach; ++shift)
+        {
+            double a = 0, b = 0;
+            std::vector<std::pair<float, float>> pairs;
+            for (int y = 0; y < height; y += 4)
+                for (int x = 0; x < width; x += 4)
+                {
+                    if (partFile && !partRect.Contains(x - layouts[i].part, y))
+                        continue;
+                    const int at = where(i, total - 1, x, y);
+                    if (at < 0 || at + shift < 0 || at + shift >= width)
+                        continue;
+                    pairs.emplace_back(closeness[i][size_t(y) * width + x], closeness[total - 1][size_t(y) * width + at + shift]);
+                    a += pairs.back().first;
+                    b += pairs.back().second;
+                }
+            if (pairs.empty() || b <= 0)
+                continue;
+            const double scale = a / b;
+            double sum = 0;
+            for (const auto& [here, there] : pairs)
+                sum += std::abs(here - scale * there);
+            const double difference = sum / a;
+            if (!best || difference < *best)
+            {
+                best = difference;
+                bestShift = shift;
+            }
+        }
+        return bestShift * direction;
+    };
+
+    // Depth takes a few estimates to follow the picture once it starts to move, so the first half of the moving frames
+    // does not count, and nor do the frames after a cut, which have figures of their own.
+    const int from = frames / 2;
+    const int to = cutFile ? std::min(frames, cutAt) : frames;
+    std::vector<double> flicker, pulse, late, off, wake, part, lag;
+    FILE* csv = nullptr;
+    _wfopen_s(&csv, (output / "frames.csv").c_str(), L"w");
+    if (csv)
+        std::fprintf(csv, "frame,flicker,pulse,late,off,ms\n");
+    for (int index = 1; index < total; ++index)
+    {
+        const Comparison change = compare(index, index - 1, all);
+        const Comparison rest = compare(index, total - 1, all);
+        if (csv)
+            std::fprintf(csv, "%d,%.5f,%.5f,%.5f,%.5f,%.2f\n", index, change.difference, change.scale, rest.difference, rest.scale, frameTime[index]);
+        if (index < from || index >= to)
+            continue;
+        flicker.push_back(change.difference);
+        pulse.push_back(change.scale);
+        if (!partFile)
+            lag.push_back(trail(index));
+        if (rest.pixels)
+        {
+            late.push_back(rest.difference);
+            off.push_back(rest.scale);
+        }
+        if (partFile)
+        {
+            const Comparison opened = compare(index, total - 1, [&](int x, int y) { return uncovered(index, x, y); });
+            if (opened.pixels)
+                wake.push_back(opened.difference);
+            part.push_back(compare(index, total - 1, [&](int x, int y) { return partRect.Contains(x - layouts[index].part, y); }).difference);
+        }
     }
-    const int counted = std::max(1, frames - from);
-    std::printf("Frame to frame, depth changed by %.3f%% on average while the picture moved, and as a whole by %.3f%%.\n", 100 * flicker / counted,
-                100 * pulse / counted);
-    std::printf("It was %.3f%% from the depth the picture came to rest at, and as a whole %.3f%%.\n", 100 * late / counted, 100 * off / counted);
-    std::printf("A frame took the add-on %.2f ms on the processor and %.2f ms until the graphics card was done, %.2f ms at worst.\n",
-                callMs / total, frameMs / total, worstMs);
+    if (csv)
+        std::fclose(csv);
+    std::printf("Frame to frame, depth changed by %.3f%% on average while the picture moved (%.3f%% in the worst tenth of frames), and as a whole "
+                "by %.3f%% (%.3f%%).\n",
+                100 * Mean(flicker), 100 * Worst(flicker), 100 * Mean(pulse), 100 * Worst(pulse));
+    if (!late.empty())
+        std::printf("It was %.3f%% from the depth the picture came to rest at (%.3f%% at worst), and as a whole %.3f%% (%.3f%%).\n", 100 * Mean(late),
+                    100 * Worst(late), 100 * Mean(off), 100 * Worst(off));
+    if (!lag.empty())
+        std::printf("Depth trailed the picture by %.1f pixels on average, and %.0f at most.\n", Mean(lag), *std::max_element(lag.begin(), lag.end()));
+    if (partFile)
+        std::printf("On the moving part it was %.3f%% from rest, and %.3f%% where the part had just uncovered the background.\n", 100 * Mean(part),
+                    100 * Mean(wake));
+    if (cutFile)
+    {
+        // How far from the new scene's rest depth each frame after the cut was, in groups of frames.
+        const int groups[][2] = { { 0, 5 }, { 5, 10 }, { 10, 20 }, { 20, 40 } };
+        std::printf("After the cut, depth was from rest");
+        const char* separator = " ";
+        for (const auto& group : groups)
+        {
+            std::vector<double> values;
+            for (int index = cutAt + group[0]; index < std::min(cutAt + group[1], frames); ++index)
+                values.push_back(compare(index, total - 1, all).difference);
+            if (!values.empty())
+                std::printf("%s%.3f%% in frames %d to %d", std::exchange(separator, ", "), 100 * Mean(values), group[0] + 1, group[1]);
+        }
+        std::printf(".\n");
+    }
+    std::sort(frameTimes.begin(), frameTimes.end());
+    std::printf("A frame took the add-on %.2f ms on the processor and %.2f ms until the graphics card was done, %.2f ms in 99%% of frames and "
+                "%.2f ms at worst.\n",
+                callMs / total, frameMs / total, frameTimes[frameTimes.size() * 99 / 100], worstMs);
+    std::printf("Starting took %.0f ms, the slowest of the first frames %.0f ms, and depth came after %d frames.\n", createMs, firstCallsMs,
+                warmFrames - kWarm + 1);
     SaveDepth(lastMoving, width, height, output, "moving");
     SaveDepth(last, width, height, output, "still");
     return 0;
