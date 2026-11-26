@@ -153,9 +153,12 @@ private:
     winrt::com_ptr<ID3D12Fence> fence;
     winrt::com_ptr<ID3D12Resource> color;
     winrt::com_ptr<ID3D12Resource> output;
+    // Opened with the first frame of the generation that has it.
+    winrt::com_ptr<ID3D12Resource> depth;
     // What the last frame was evaluated with, so the same picture with the same look is not evaluated again.
     uint64_t picture = 0;
     Dlss5Look look{};
+    bool hadDepth = false;
 
     // For HDR pictures, made with the first one: the shaders, and the SDR picture DLSS5 gets and the one it makes.
     winrt::com_ptr<ID3D12RootSignature> rootSignature;
@@ -212,23 +215,28 @@ void Addon::Frame(const UnishadeFrame& frame)
         throw std::runtime_error("Unishade gave it no picture to change.");
     if (frame.generation != generation)
     {
-        color = output = nullptr;
+        color = output = depth = nullptr;
         fence = nullptr;
         given = changed = nullptr;
         winrt::check_hresult(device->OpenSharedHandle(frame.fence, IID_PPV_ARGS(fence.put())));
         winrt::check_hresult(device->OpenSharedHandle(frame.color.handle, IID_PPV_ARGS(color.put())));
         winrt::check_hresult(device->OpenSharedHandle(frame.output.handle, IID_PPV_ARGS(output.put())));
     }
+    // Unishade gives depth only while another add-on, such as Depth, wrote it for this picture.
+    const bool hasDepth = frame.depth.handle != nullptr;
+    if (hasDepth && !depth)
+        winrt::check_hresult(device->OpenSharedHandle(frame.depth.handle, IID_PPV_ARGS(depth.put())));
     const auto value = [&](int setting) { return frame.settings[setting][0]; };
     const Dlss5Look wanted{ static_cast<int>(value(kStyle)), value(kIntensity),       value(kLocalTone),
                             value(kLocalStructure),          value(kSkinStructure),   value(kAutoMask) != 0,
                             std::clamp(static_cast<int>(value(kPassCount)), 1, kMostPasses) };
-    const bool same = frame.generation == generation && frame.picture == picture && wanted.style == look.style &&
+    const bool same = frame.generation == generation && frame.picture == picture && hasDepth == hadDepth && wanted.style == look.style &&
                       wanted.intensity == look.intensity && wanted.localTone == look.localTone && wanted.localStructure == look.localStructure &&
                       wanted.skinStructure == look.skinStructure && wanted.autoMask == look.autoMask && wanted.passCount == look.passCount;
     generation = frame.generation;
     picture = frame.picture;
     look = wanted;
+    hadDepth = hasDepth;
 
     // Dlss5Evaluate waits for the graphics card itself, so the picture has to be there before it starts. The fence is
     // only set after that, since it cannot go back.
@@ -238,7 +246,7 @@ void Addon::Frame(const UnishadeFrame& frame)
     // The format follows the game's, and a change makes the images again, which changes the generation.
     if (!same && frame.color.format == UNISHADE_FORMAT_RGBA16_FLOAT)
         EvaluateHdr(frame.sdrWhite);
-    else if (!same && !Dlss5Evaluate(dlss5, color.get(), output.get(), &look))
+    else if (!same && !Dlss5Evaluate(dlss5, color.get(), hasDepth ? depth.get() : nullptr, output.get(), &look))
         throw std::runtime_error(Dlss5Error(dlss5));
     winrt::check_hresult(fence->Signal(frame.signal));
 }
@@ -266,7 +274,7 @@ void Addon::EvaluateHdr(float white)
                                                                  IID_PPV_ARGS(texture->put())));
     }
     Convert(0, { color.get(), nullptr, nullptr }, given.get(), white);
-    if (!Dlss5Evaluate(dlss5, given.get(), changed.get(), &look))
+    if (!Dlss5Evaluate(dlss5, given.get(), hadDepth ? depth.get() : nullptr, changed.get(), &look))
         throw std::runtime_error(Dlss5Error(dlss5));
     Convert(1, { color.get(), given.get(), changed.get() }, output.get(), white);
 }
@@ -419,7 +427,7 @@ void Destroy(void* addon)
 const UnishadeAddon kAddon = {
     sizeof(UnishadeAddon),
     UNISHADE_API_VERSION,
-    UNISHADE_WRITES_PICTURE | UNISHADE_TAKES_HDR,
+    UNISHADE_WRITES_PICTURE | UNISHADE_READS_DEPTH | UNISHADE_TAKES_HDR,
     static_cast<uint32_t>(std::size(kSettings)),
     kSettings,
     sizeof(UnishadeSetting),

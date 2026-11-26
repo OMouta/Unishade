@@ -165,10 +165,12 @@ struct Dlss5
     UINT height = 0;
     // Passes after the first take turns writing to these.
     std::array<winrt::com_ptr<ID3D12Resource>, 2> between;
-    // A captured picture has neither, so these say nothing moved and everything is as far. Without them the network
-    // does not hold its history steady, and details shimmer from frame to frame.
+    // A captured picture has no motion vectors, so this says nothing moved. Without it the network does not hold its
+    // history steady, and details shimmer from frame to frame.
     winrt::com_ptr<ID3D12Resource> motion;
-    winrt::com_ptr<ID3D12Resource> depth;
+    // Bound when no depth is given, since D3D12 rejects a null one. It holds 0 and is passed as inverted depth, so it
+    // says everything is at the far plane.
+    winrt::com_ptr<ID3D12Resource> noDepth;
     std::string error;
 
     ~Dlss5();
@@ -176,8 +178,8 @@ struct Dlss5
     void LoadRuntime(const wchar_t* path);
     void StartCore(const wchar_t* dataPath);
     void StartRuntime(const wchar_t* dataPath);
-    void Evaluate(ID3D12Resource* color, ID3D12Resource* output, const Dlss5Look& look);
-    void Record(ID3D12Resource* color, ID3D12Resource* output, const Dlss5Look& look);
+    void Evaluate(ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* output, const Dlss5Look& look);
+    void Record(ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* output, const Dlss5Look& look);
     void ReleaseFeature(Feature& feature);
     void ReleaseFeatures();
     void WaitForGpu();
@@ -313,7 +315,7 @@ void Dlss5::StartRuntime(const wchar_t* dataPath)
     Log("Started nvngx_dlssnr.dll");
 }
 
-void Dlss5::Evaluate(ID3D12Resource* color, ID3D12Resource* output, const Dlss5Look& look)
+void Dlss5::Evaluate(ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* output, const Dlss5Look& look)
 {
     if (!color || !output || color == output)
         Fail("Color and output have to be two textures.");
@@ -324,16 +326,24 @@ void Dlss5::Evaluate(ID3D12Resource* color, ID3D12Resource* output, const Dlss5L
         Fail("Color is %llux%u but output is %llux%u.", in.Width, in.Height, out.Width, out.Height);
     if (!(out.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS))
         Fail("Output does not allow unordered access.");
+    if (depth)
+    {
+        // A typeless depth format is what NGX is known to fail on as unsupported.
+        const D3D12_RESOURCE_DESC given = depth->GetDesc();
+        if (given.Width != out.Width || given.Height != out.Height || given.Format != DXGI_FORMAT_R32_FLOAT)
+            Fail("Depth is %llux%u in format %d, not %llux%u in R32_FLOAT.", given.Width, given.Height, static_cast<int>(given.Format), out.Width,
+                 out.Height);
+    }
 
     if (out.Width != width || out.Height != height)
     {
         ReleaseFeatures();
         between = {};
-        motion = depth = nullptr;
+        motion = noDepth = nullptr;
         width = out.Width;
         height = out.Height;
     }
-    for (const auto& [texture, format] : { std::pair{ &motion, DXGI_FORMAT_R16G16_FLOAT }, std::pair{ &depth, DXGI_FORMAT_R32_FLOAT } })
+    for (const auto& [texture, format] : { std::pair{ &motion, DXGI_FORMAT_R16G16_FLOAT }, std::pair{ &noDepth, DXGI_FORMAT_R32_FLOAT } })
     {
         if (*texture)
             continue;
@@ -366,7 +376,7 @@ void Dlss5::Evaluate(ID3D12Resource* color, ID3D12Resource* output, const Dlss5L
     Check(list->Reset(allocator.get(), nullptr), "ID3D12GraphicsCommandList::Reset");
     try
     {
-        Record(color, output, look);
+        Record(color, depth, output, look);
     }
     catch (...)
     {
@@ -384,14 +394,15 @@ void Dlss5::Evaluate(ID3D12Resource* color, ID3D12Resource* output, const Dlss5L
         feature.reset = false;
 }
 
-void Dlss5::Record(ID3D12Resource* color, ID3D12Resource* output, const Dlss5Look& look)
+void Dlss5::Record(ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* output, const Dlss5Look& look)
 {
     struct Tracked
     {
         ID3D12Resource* resource;
         D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
     };
-    std::array<Tracked, 4> tracked{ { { color }, { output }, { between[0].get() }, { between[1].get() } } };
+    // The module's own motion and depth stay shader resources, so only depth that is given is moved.
+    std::array<Tracked, 5> tracked{ { { color }, { output }, { between[0].get() }, { between[1].get() }, { depth } } };
     std::vector<D3D12_RESOURCE_BARRIER> barriers;
     // NGX reads its inputs as shader resources and writes its output through unordered access.
     const auto move = [&](ID3D12Resource* resource, D3D12_RESOURCE_STATES state) {
@@ -423,6 +434,8 @@ void Dlss5::Record(ID3D12Resource* color, ID3D12Resource* output, const Dlss5Loo
         ID3D12Resource* target = pass + 1 == look.passCount ? output : between[pass % 2].get();
         move(source, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         move(target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        if (depth)
+            move(depth, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         flush();
 
         // Names and types are the ones DLSS5ForUE5 passes. The DLL contains each name.
@@ -431,12 +444,13 @@ void Dlss5::Record(ID3D12Resource* color, ID3D12Resource* output, const Dlss5Loo
         setRect("DLSSNR.Color");
         setRect("DLSSNR.Output");
         parameters->Set("DLSSNR.MVec", motion.get());
-        parameters->Set("DLSSNR.Depth", depth.get());
+        parameters->Set("DLSSNR.Depth", depth ? depth : noDepth.get());
         setRect("DLSSNR.MVec");
         setRect("DLSSNR.Depth");
         parameters->Set("DLSSNR.MVecScaleX", 1.0f);
         parameters->Set("DLSSNR.MVecScaleY", 1.0f);
-        parameters->Set("DLSSNR.DepthInverted", 0);
+        // DLSS takes 0 as nearest unless this is set. Depth that is given is that way round, and noDepth is all 0.
+        parameters->Set("DLSSNR.DepthInverted", depth ? 0 : 1);
         parameters->Set("DLSSNR.Width", static_cast<unsigned>(width));
         parameters->Set("DLSSNR.Height", height);
         parameters->Set("DLSSNR.ScalingRatio", 1.0f);
@@ -538,13 +552,13 @@ ID3D12Device* Dlss5Device(Dlss5* dlss5)
     return dlss5->device.get();
 }
 
-bool Dlss5Evaluate(Dlss5* dlss5, ID3D12Resource* color, ID3D12Resource* output, const Dlss5Look* look)
+bool Dlss5Evaluate(Dlss5* dlss5, ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* output, const Dlss5Look* look)
 {
     try
     {
         if (!look)
             Fail("No look settings were given.");
-        dlss5->Evaluate(color, output, *look);
+        dlss5->Evaluate(color, depth, output, *look);
         dlss5->error.clear();
         return true;
     }

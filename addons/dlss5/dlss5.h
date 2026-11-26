@@ -47,10 +47,11 @@ DLSS5_API Dlss5* Dlss5Create(const wchar_t* runtimePath, const wchar_t* dataPath
 // The device the textures given to Dlss5Evaluate are made on.
 DLSS5_API ID3D12Device* Dlss5Device(Dlss5* dlss5);
 
-// Runs DLSS5 from color into output and waits for the GPU to finish. Both textures are on Dlss5Device's device, the
-// same size and in the COMMON state, which they are left in. Output allows unordered access. Color is only read.
-// A new size makes the feature again. Returns false with the reason in Dlss5Error.
-DLSS5_API bool Dlss5Evaluate(Dlss5* dlss5, ID3D12Resource* color, ID3D12Resource* output, const Dlss5Look* look);
+// Runs DLSS5 from color into output and waits for the GPU to finish. The textures are on Dlss5Device's device, the
+// same size and in the COMMON state, which they are left in. Output allows unordered access. Color and depth are only
+// read. Depth is R32_FLOAT, 0 nearest and 1 farthest, or null when there is none. A new size makes the feature
+// again. Returns false with the reason in Dlss5Error.
+DLSS5_API bool Dlss5Evaluate(Dlss5* dlss5, ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* output, const Dlss5Look* look);
 
 // Why the last Dlss5Evaluate failed.
 DLSS5_API const char* Dlss5Error(const Dlss5* dlss5);
