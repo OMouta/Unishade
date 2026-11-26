@@ -166,28 +166,24 @@ kernel void Resolve(constant Sizes& sizes [[buffer(0)]], device uint* keys [[buf
     state[0] = float4(anchor, 0.0f, 0.0f, 0.0f);
 }
 
-// The estimate's closeness at a point of the frame it was estimated from, in its pixels, divided by the anchor. The
-// output is upsampled with a joint bilateral filter, as Weight says, guided by the color of the pixel the point is in.
+// The estimate's closeness at a point of the frame it was estimated from, in its pixels, divided by the anchor, as
+// Upsample says.
 float EstimateAt(constant Sizes& sizes, device const float* result, device const half* halfResult, device const float4* state,
                  texture2d<float, access::read> source, texture2d<float, access::read> guide, float2 at)
 {
     float3 color = source.read(uint2(clamp(int2(floor(at)), int2(0), int2(sizes.SourceSize) - 1))).rgb;
     float2 position = at * float2(sizes.ModelSize) / float2(sizes.SourceSize) - 0.5f;
-    int2 corner = int2(floor(position)) - 1;
-    float sum = 0;
-    float weights = 0;
-    for (int y = 0; y < 4; ++y)
-        for (int x = 0; x < 4; ++x)
-        {
-            int2 texel = corner + int2(x, y);
-            float2 offset = float2(texel) - position;
-            texel = clamp(texel, int2(0), int2(sizes.ModelSize) - 1);
-            float3 difference = guide.read(uint2(texel)).rgb - color;
-            float weight = Weight(offset, difference);
-            sum += weight * Load(sizes, result, halfResult, uint(texel.y) * sizes.ModelSize.x + uint(texel.x));
-            weights += weight;
-        }
-    return sum / weights / max(state[0].x, 1e-6f);
+    int2 corner = int2(floor(position));
+    int2 last = int2(sizes.ModelSize) - 1;
+    uint2 a = uint2(clamp(corner, int2(0), last));
+    uint2 b = uint2(clamp(corner + int2(1, 0), int2(0), last));
+    uint2 c = uint2(clamp(corner + int2(0, 1), int2(0), last));
+    uint2 d = uint2(clamp(corner + int2(1, 1), int2(0), last));
+    uint width = sizes.ModelSize.x;
+    float4 values = float4(Load(sizes, result, halfResult, a.y * width + a.x), Load(sizes, result, halfResult, b.y * width + b.x),
+                           Load(sizes, result, halfResult, c.y * width + c.x), Load(sizes, result, halfResult, d.y * width + d.x));
+    float value = Upsample(values, guide.read(a).rgb, guide.read(b).rgb, guide.read(c).rgb, guide.read(d).rgb, color, position - float2(corner));
+    return value / max(state[0].x, 1e-6f);
 }
 
 // The history at a point of the frame before, in its pixels, as Reproject says.

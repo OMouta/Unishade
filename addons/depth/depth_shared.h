@@ -106,17 +106,35 @@ CONSTANT float FarPlane = 1000.0;
 // The model only knows how far things are relative to each other. What is at the anchor is put at this fraction of the
 // far plane, and anything more than 1 / Nearest times farther than it on the far plane.
 CONSTANT float Nearest = 0.01;
-// How far, in model pixels and in color, an output value reaches when upsampled.
-CONSTANT float SpatialSigma = 1.0;
-CONSTANT float ColorSigma = 0.1;
+// The four output values around a point are interpolated between unless they differ by more than this share of the
+// nearest one's closeness, which is a depth edge.
+CONSTANT float UpsampleSpread = 0.3;
 
-// How much an output value counts in the joint bilateral upsample: by how far it is, in model pixels, and by how close
-// the color it was estimated from is to this pixel's, so depth edges follow the frame's edges instead of blurring
-// across them. Values that match no color still count a little, by distance alone.
-float Weight(float2 offset, float3 difference)
+// The output's value at a point between four of its values, a to d in the order of the four corners from the top left
+// in rows, from the colors they were estimated from and the color of the pixel the point is in. On a surface the four
+// are interpolated between, and color plays no part, since a texture's colors would ripple the depth. At a depth edge
+// they split into the near and the far side, and the point takes the side whose color is closest to its pixel's,
+// interpolated over that side alone, so that no pixel is left floating between two surfaces.
+float Upsample(float4 values, float3 a, float3 b, float3 c, float3 d, float3 color, float2 fraction)
 {
-    return exp(-dot(offset, offset) / (2 * SpatialSigma * SpatialSigma)) *
-           (exp(-dot(difference, difference) / (2 * ColorSigma * ColorSigma)) + 1e-3f);
+    float4 weights = float4((1.0f - fraction.x) * (1.0f - fraction.y), fraction.x * (1.0f - fraction.y), (1.0f - fraction.x) * fraction.y,
+                            fraction.x * fraction.y);
+    float low = min(min(values.x, values.y), min(values.z, values.w));
+    float high = max(max(values.x, values.y), max(values.z, values.w));
+    if (high - low <= UpsampleSpread * high)
+        return dot(weights, values);
+    float middle = (low + high) * 0.5f;
+    float4 nearSide = step(float4(middle, middle, middle, middle), values);
+    float4 distances = float4(dot(a - color, a - color), dot(b - color, b - color), dot(c - color, c - color), dot(d - color, d - color));
+    // Each side's closest color. The other side's values are put out of reach.
+    float4 nearDistances = distances + (1.0f - nearSide) * 16.0f;
+    float4 farDistances = distances + nearSide * 16.0f;
+    float nearest = min(min(nearDistances.x, nearDistances.y), min(nearDistances.z, nearDistances.w));
+    float farthest = min(min(farDistances.x, farDistances.y), min(farDistances.z, farDistances.w));
+    float4 side = nearest <= farthest ? nearSide : 1.0f - nearSide;
+    // A point on the far side of its four can have no weight left on its side, so each value keeps a little.
+    float4 kept = (weights + 1e-3f) * side;
+    return dot(kept, values) / dot(kept, float4(1.0f, 1.0f, 1.0f, 1.0f));
 }
 
 // Depth follows the picture's motion between estimates: a history of closeness, at the picture's size, is moved along

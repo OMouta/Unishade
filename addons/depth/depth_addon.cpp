@@ -187,27 +187,22 @@ void Resolve()
     State[0] = float4(anchor, 0, 0, 0);
 }
 
-// The estimate's closeness at a point of the frame it was estimated from, in its pixels, divided by the anchor. The
-// output is upsampled with a joint bilateral filter, as Weight says, guided by the color of the pixel the point is in.
+// The estimate's closeness at a point of the frame it was estimated from, in its pixels, divided by the anchor, as
+// Upsample says.
 float EstimateAt(float2 at)
 {
     float3 color = Source.Load(int3(clamp(int2(floor(at)), 0, int2(SourceSize) - 1), 0)).rgb;
     float2 position = at * ModelSize / SourceSize - 0.5;
-    int2 corner = int2(floor(position)) - 1;
-    float sum = 0;
-    float weights = 0;
-    for (int y = 0; y < 4; ++y)
-        for (int x = 0; x < 4; ++x)
-        {
-            int2 texel = corner + int2(x, y);
-            float2 offset = texel - position;
-            texel = clamp(texel, 0, int2(ModelSize) - 1);
-            float3 difference = Guide.Load(int3(texel, 0)).rgb - color;
-            float weight = Weight(offset, difference);
-            sum += weight * Load(texel.y * ModelSize.x + texel.x);
-            weights += weight;
-        }
-    return sum / weights / max(Scaling[0].x, 1e-6);
+    int2 corner = int2(floor(position));
+    int2 last = int2(ModelSize) - 1;
+    int2 a = clamp(corner, 0, last);
+    int2 b = clamp(corner + int2(1, 0), 0, last);
+    int2 c = clamp(corner + int2(0, 1), 0, last);
+    int2 d = clamp(corner + int2(1, 1), 0, last);
+    float4 values = float4(Load(a.y * ModelSize.x + a.x), Load(b.y * ModelSize.x + b.x), Load(c.y * ModelSize.x + c.x), Load(d.y * ModelSize.x + d.x));
+    float value = Upsample(values, Guide.Load(int3(a, 0)).rgb, Guide.Load(int3(b, 0)).rgb, Guide.Load(int3(c, 0)).rgb, Guide.Load(int3(d, 0)).rgb,
+                           color, position - corner);
+    return value / max(Scaling[0].x, 1e-6);
 }
 
 // The history at a point of the frame before, in its pixels, as Reproject says.
