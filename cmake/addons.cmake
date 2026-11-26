@@ -59,6 +59,14 @@ if(WIN32)
     target_link_libraries(depth_check PRIVATE d3d11 dxgi windowsapp)
     add_dependencies(depth_check depth_addon)
 
+    # A program that runs the motion estimator on pictures moved by known amounts and says how far off it is, built on
+    # request: cmake --build build --config Release --target motion_check
+    add_executable(motion_check EXCLUDE_FROM_ALL addons/motion/check.cpp)
+    target_include_directories(motion_check PRIVATE addons "${STB_DIR}")
+    target_compile_definitions(motion_check PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(motion_check PRIVATE /W4 /permissive- /EHsc)
+    target_link_libraries(motion_check PRIVATE d3d11 d3dcompiler dxgi windowsapp)
+
     # DLSS5 calls NVIDIA's nvngx_dlssnr.dll directly. Unishade_nvngx.dll is also the DLSS5 add-on of the Vulkan host, which
     # takes nvngx_dlssnr.dll from its own folder. A program that runs an image through it is built on request:
     # cmake --build build --config Release --target dlss5_check
