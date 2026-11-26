@@ -109,12 +109,18 @@ CONSTANT float Nearest = 0.01;
 // The four output values around a point are interpolated between unless they differ by more than this share of the
 // nearest one's closeness, which is a depth edge.
 CONSTANT float UpsampleSpread = 0.3;
+// At a depth edge, how far apart the colors of its two sides must be for a pixel's color to say which side it is on.
+// Closer than this, as on a dark picture or where the sides are alike, grain and texture would decide it, so the
+// sides are interpolated between as on a surface, in proportion to how close they are.
+CONSTANT float SideContrast = 0.4;
 
 // The output's value at a point between four of its values, a to d in the order of the four corners from the top left
 // in rows, from the colors they were estimated from and the color of the pixel the point is in. On a surface the four
 // are interpolated between, and color plays no part, since a texture's colors would ripple the depth. At a depth edge
-// they split into the near and the far side, and the point takes the side whose color is closest to its pixel's,
-// interpolated over that side alone, so that no pixel is left floating between two surfaces.
+// they split into the near and the far side, each interpolated over its own values and colors, and the point takes
+// each side by where its pixel's color lies between the sides' colors, so that the edge follows the picture's. Taking
+// one side outright makes every pixel whose color is nearer the wrong side a speck of the other surface, and on a dark
+// picture, where all colors are near, specks that follow the grain and change with every estimate.
 float Upsample(float4 values, float3 a, float3 b, float3 c, float3 d, float3 color, float2 fraction)
 {
     float4 weights = float4((1.0f - fraction.x) * (1.0f - fraction.y), fraction.x * (1.0f - fraction.y), (1.0f - fraction.x) * fraction.y,
@@ -125,16 +131,21 @@ float Upsample(float4 values, float3 a, float3 b, float3 c, float3 d, float3 col
         return dot(weights, values);
     float middle = (low + high) * 0.5f;
     float4 nearSide = step(float4(middle, middle, middle, middle), values);
-    float4 distances = float4(dot(a - color, a - color), dot(b - color, b - color), dot(c - color, c - color), dot(d - color, d - color));
-    // Each side's closest color. The other side's values are put out of reach.
-    float4 nearDistances = distances + (1.0f - nearSide) * 16.0f;
-    float4 farDistances = distances + nearSide * 16.0f;
-    float nearest = min(min(nearDistances.x, nearDistances.y), min(nearDistances.z, nearDistances.w));
-    float farthest = min(min(farDistances.x, farDistances.y), min(farDistances.z, farDistances.w));
-    float4 side = nearest <= farthest ? nearSide : 1.0f - nearSide;
-    // A point on the far side of its four can have no weight left on its side, so each value keeps a little.
-    float4 kept = (weights + 1e-3f) * side;
-    return dot(kept, values) / dot(kept, float4(1.0f, 1.0f, 1.0f, 1.0f));
+    // A point on the far side of its four can have no weight left on a side, so each value keeps a little.
+    float4 nearWeights = (weights + 1e-3f) * nearSide;
+    float4 farWeights = (weights + 1e-3f) * (1.0f - nearSide);
+    float nearTotal = dot(nearWeights, float4(1.0f, 1.0f, 1.0f, 1.0f));
+    float farTotal = dot(farWeights, float4(1.0f, 1.0f, 1.0f, 1.0f));
+    float3 nearColor = (nearWeights.x * a + nearWeights.y * b + nearWeights.z * c + nearWeights.w * d) / nearTotal;
+    float3 farColor = (farWeights.x * a + farWeights.y * b + farWeights.z * c + farWeights.w * d) / farTotal;
+    float3 across = nearColor - farColor;
+    float apart = dot(across, across);
+    float byColor = saturate(dot(color - farColor, across) / max(apart, 1e-8f));
+    float byPlace = nearTotal / (nearTotal + farTotal);
+    float nearShare = byPlace + (byColor - byPlace) * saturate(sqrt(apart) / SideContrast);
+    float nearValue = dot(nearWeights, values) / nearTotal;
+    float farValue = dot(farWeights, values) / farTotal;
+    return farValue + (nearValue - farValue) * nearShare;
 }
 
 // Depth follows the picture's motion between estimates: a history of closeness, at the picture's size, is moved along
