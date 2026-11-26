@@ -174,7 +174,10 @@ void SaveDepth(const std::vector<float>& depth, int width, int height, const std
 
 // How depth looks to effects that differentiate it, which no real depth is at hand to compare with. A pixel is on an
 // edge where the closeness within kEdgeReach pixels across or down differs by more than kEdgeStep of the highest, and
-// floats when it lies more than kFloating of that difference from both sides, between two surfaces. Elsewhere a
+// floats when it lies more than kFloating of that difference from both sides, between two surfaces. An edge pixel is a
+// speck when it is an edge's step nearer or farther than at least three of the four next to it, a pixel of one surface
+// left in another. Floating counts soft edges and specks count edges that snap to the wrong side, and an upsample can
+// lower either by trading it for the other, so the two are read together, and with the normals. Elsewhere a
 // surface is smooth, and the share of neighbors with exactly the same depth says how much of it is in steps, and the
 // second differences say how much it ripples, which normals turn into embossing. Only sloped surfaces count, whose
 // depth changes somewhere within reach, since the model puts all of the sky at one value.
@@ -186,7 +189,7 @@ void Shape(const std::vector<float>& depth, int width, int height, const char* n
 {
     const std::vector<float> closeness = Closeness(depth);
     const auto at = [&](int x, int y) { return closeness[size_t(y) * width + x]; };
-    size_t edges = 0, floating = 0, slopes = 0, equal = 0;
+    size_t edges = 0, floating = 0, specks = 0, slopes = 0, equal = 0;
     double ripple = 0;
     for (int y = kEdgeReach; y < height - kEdgeReach; ++y)
         for (int x = kEdgeReach; x < width - kEdgeReach; ++x)
@@ -213,6 +216,11 @@ void Shape(const std::vector<float>& depth, int width, int height, const char* n
             {
                 ++edges;
                 floating += between;
+                int nearer = 0, farther = 0;
+                for (const float next : { at(x - 1, y), at(x + 1, y), at(x, y - 1), at(x, y + 1) })
+                    if (std::abs(value - next) > kEdgeStep * std::max(value, next))
+                        ++(value > next ? nearer : farther);
+                specks += nearer >= 3 || farther >= 3;
                 continue;
             }
             if (!sloped)
@@ -222,10 +230,11 @@ void Shape(const std::vector<float>& depth, int width, int height, const char* n
             equal += depth[index] == depth[index + 1];
             ripple += (std::abs(at(x - 1, y) - 2 * value + at(x + 1, y)) + std::abs(at(x, y - 1) - 2 * value + at(x, y + 1))) / value;
         }
-    std::printf("In the %s depth, %.2f%% of pixels are on an edge and %.2f%% of those float between its sides. Of the sloped ones, %.3f%% have "
-                "the same depth as the next, and they ripple by %.4f%%.\n",
+    std::printf("In the %s depth, %.2f%% of pixels are on an edge, %.2f%% of those float between its sides and %.2f%% are specks. Of the sloped "
+                "ones, %.3f%% have the same depth as the next, and they ripple by %.4f%%.\n",
                 name, 100.0 * edges / std::max<size_t>(1, (size_t(width) - 2 * kEdgeReach) * (height - 2 * kEdgeReach)),
-                100.0 * floating / std::max<size_t>(1, edges), 100.0 * equal / std::max<size_t>(1, slopes), 100 * ripple / std::max<size_t>(1, slopes));
+                100.0 * floating / std::max<size_t>(1, edges), 100.0 * specks / std::max<size_t>(1, edges), 100.0 * equal / std::max<size_t>(1, slopes),
+                100 * ripple / std::max<size_t>(1, slopes));
 }
 
 // The mean of the worst tenth of values, which is where the frames an estimate landed in show.
