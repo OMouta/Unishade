@@ -38,6 +38,11 @@ public:
     // vector and confidence is 0.
     winrt::com_ptr<ID3D11Buffer> keys;
 
+    // Compiles the shaders, which takes seconds, nearly all of it Search's and Refine's. It is done once for every
+    // estimator a program makes, each shader on a thread of its own, the first time this or the constructor runs. A
+    // caller that cannot wait that long calls this on another thread first.
+    static void Compile() { Code(); }
+
 private:
     enum Shader
     {
@@ -60,8 +65,6 @@ private:
         winrt::com_ptr<ID3D11UnorderedAccessView> motionTarget;
     };
 
-    // The compiled shaders. Compiling takes seconds, nearly all of it Search's and Refine's, so it is done once for
-    // every estimator a program makes, each shader on a thread of its own.
     static const std::array<std::vector<uint8_t>, kShaderCount>& Code();
     // Runs a shader with views in t0 to t5 and targets in u0 to u5, and unbinds them after.
     void Dispatch(ID3D11DeviceContext* context, Shader shader, ID3D11Buffer* constants, std::array<ID3D11ShaderResourceView*, 6> views,
