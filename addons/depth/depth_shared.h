@@ -39,11 +39,16 @@ inline float FitRelax(float seconds)
 
 // A trusted history takes each estimate in over about this long, and keeps the rest of itself, so one estimate's
 // flicker does not show whole. In seconds rather than estimates, since Detail and the graphics card make estimates
-// land from every frame to a few times a second.
+// land from every frame to a few times a second. An estimate that lands is the goal the history moves towards in every
+// frame until the next one lands, by the share of this the frame took: taken in at once, Ultra's estimate every fifth
+// frame moved depth by 1.5% to 2.6% in that frame against 0.08% in the frames between.
 constexpr float kHistorySeconds = 0.3f;
 // A picture that stopped changing is estimated again for this long, so the history settles on it rather than keeping
 // what the estimates during the motion left, such as where something moved away.
 constexpr auto kSettleTime = std::chrono::seconds(1);
+// After an estimate lands, the history moves towards it for this long while the picture stands still, which leaves
+// a 1500th of the way.
+constexpr auto kApproachTime = std::chrono::milliseconds(2200);
 
 inline float HistoryShare(float seconds)
 {

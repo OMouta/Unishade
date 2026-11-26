@@ -52,7 +52,7 @@ struct Sizes
     uint Restart; // whether this frame is the next estimate's, which the history's motion is counted from
     float Relax;  // how far this estimate's scale and shift move back towards none
     uint Show;    // whether the history holds depth yet, to write to DEPTH
-    float Share;  // how much of this estimate a trusted history takes
+    float Share;  // how far a trusted history moves towards its goal in this frame
     uint Moving;  // whether there is motion to follow yet
     int2 Offset;  // the whole pixels the estimate in flight sampled the frame offset by, as EstimateOffset says
 };
@@ -187,45 +187,55 @@ float EstimateAt(constant Sizes& sizes, device const float* result, device const
     return value / max(state[0].x, 1e-6f);
 }
 
-// The history at a point of the frame before, in its pixels, as Reproject says.
-float4 HistoryAt(texture2d<float, access::read> history, uint2 size, float2 at)
+// The history at a point of the frame before, in its pixels, as Reproject says, and its goal there, read the same way.
+float4 HistoryAt(texture2d<float, access::read> history, texture2d<float, access::read> goals, uint2 size, float2 at, thread float& goal)
 {
     int2 last = int2(size) - 1;
     float2 position = at - 0.5f;
     int2 corner = int2(floor(position));
     float2 fraction = position - float2(corner);
-    float4 a = history.read(uint2(clamp(corner, int2(0), last)));
-    float4 b = history.read(uint2(clamp(corner + int2(1, 0), int2(0), last)));
-    float4 c = history.read(uint2(clamp(corner + int2(0, 1), int2(0), last)));
-    float4 d = history.read(uint2(clamp(corner + int2(1, 1), int2(0), last)));
+    uint2 taps[4] = { uint2(clamp(corner, int2(0), last)), uint2(clamp(corner + int2(1, 0), int2(0), last)), uint2(clamp(corner + int2(0, 1), int2(0), last)),
+                      uint2(clamp(corner + int2(1, 1), int2(0), last)) };
+    float4 a = history.read(taps[0]);
+    float4 b = history.read(taps[1]);
+    float4 c = history.read(taps[2]);
+    float4 d = history.read(taps[3]);
+    float4 around = float4(goals.read(taps[0]).x, goals.read(taps[1]).x, goals.read(taps[2]).x, goals.read(taps[3]).x);
     float4 nearest = fraction.y < 0.5f ? (fraction.x < 0.5f ? a : b) : (fraction.x < 0.5f ? c : d);
+    float nearestGoal = fraction.y < 0.5f ? (fraction.x < 0.5f ? around.x : around.y) : (fraction.x < 0.5f ? around.z : around.w);
     float4 between = mix(mix(a, b, float4(fraction.x)), mix(c, d, float4(fraction.x)), float4(fraction.y));
-    return float4(Reproject(float4(a.x, b.x, c.x, d.x)) ? between.xyz : nearest.xyz, nearest.w);
+    bool reproject = Reproject(float4(a.x, b.x, c.x, d.x));
+    goal = reproject ? mix(mix(around.x, around.y, fraction.x), mix(around.z, around.w, fraction.x), fraction.y) : nearestGoal;
+    return float4(reproject ? between.xyz : nearest.xyz, nearest.w);
 }
 
-// Moves the history along the picture's motion. What a pixel was in the frame before is at its vector, and the motion
-// from there to the next estimate's frame adds up. A pixel the vector cannot be trusted for, such as one that came
-// into view, loses its history's trust, and the estimate's frame's view of it too. Without motion to follow yet, the
-// history stands still and trusts nothing.
+// Moves the history along the picture's motion, with its goal, and a trusted history towards its goal by Share. What a
+// pixel was in the frame before is at its vector, and the motion from there to the next estimate's frame adds up. A
+// pixel the vector cannot be trusted for, such as one that came into view, loses its history's trust, and the
+// estimate's frame's view of it too. Without motion to follow yet, the history stands still and trusts nothing.
 kernel void Warp(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [[buffer(0)]], texture2d<float, access::write> depth [[texture(2)]],
                  texture2d<float, access::read> motion [[texture(3)]], texture2d<float, access::read> confidence [[texture(4)]],
-                 texture2d<float, access::read> history [[texture(5)]], texture2d<float, access::write> historyTarget [[texture(6)]])
+                 texture2d<float, access::read> history [[texture(5)]], texture2d<float, access::write> historyTarget [[texture(6)]],
+                 texture2d<float, access::read> goals [[texture(7)]], texture2d<float, access::write> goalTarget [[texture(8)]])
 {
     if (any(id >= sizes.SourceSize))
         return;
     float2 shift = sizes.Moving != 0 ? motion.read(id).xy : float2(0.0f);
-    float4 before = HistoryAt(history, sizes.SourceSize, float2(id) + 0.5f + shift);
+    float goal;
+    float4 before = HistoryAt(history, goals, sizes.SourceSize, float2(id) + 0.5f + shift, goal);
     uint flags = sizes.Moving != 0 && confidence.read(id).x >= TrustedConfidence ? uint(before.w) : 0u;
+    float closeness = (flags & Trusted) != 0 ? mix(before.x, goal, sizes.Share) : before.x;
     float2 toEstimate = shift + before.yz;
     if (sizes.Restart != 0)
     {
         toEstimate = float2(0.0f);
         flags |= SeenByEstimate;
     }
-    historyTarget.write(float4(before.x, toEstimate, float(flags)), id);
+    historyTarget.write(float4(closeness, toEstimate, float(flags)), id);
+    goalTarget.write(float4(goal), id);
     // Unishade can make its images again at another size before the history follows.
     if (sizes.Show != 0 && all(id < uint2(depth.get_width(), depth.get_height())))
-        depth.write(float4(StoredDepth(before.x)), id);
+        depth.write(float4(StoredDepth(closeness)), id);
 }
 
 // Sums what Fit needs over every FitStep-th pixel the history and the estimate both see: the count, and the history's
@@ -288,24 +298,27 @@ kernel void Fit(constant Sizes& sizes [[buffer(0)]], device float4* state [[buff
     state[1] = Align(first, second.x, samples.x * samples.y, sizes.Relax);
 }
 
-// Blends the estimate, aligned to the history, into it where the estimate's frame saw the pixel: at once where the
-// history is not trusted, and by Share where it is. Where the estimate's frame did not see it, the history stays.
+// Makes the estimate, aligned to the history, its goal where the estimate's frame saw the pixel, and takes it at once
+// where the history is not trusted. Where the estimate's frame did not see it, the history and its goal stay.
 kernel void Accumulate(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [[buffer(0)]], device const float* result [[buffer(3)]],
                        device const half* halfResult [[buffer(4)]], device const float4* state [[buffer(6)]],
                        texture2d<float, access::read> source [[texture(0)]], texture2d<float, access::read> guide [[texture(1)]],
                        texture2d<float, access::write> depth [[texture(2)]], texture2d<float, access::read> history [[texture(5)]],
-                       texture2d<float, access::write> historyTarget [[texture(6)]])
+                       texture2d<float, access::write> historyTarget [[texture(6)]], texture2d<float, access::read> goals [[texture(7)]],
+                       texture2d<float, access::write> goalTarget [[texture(8)]])
 {
     if (any(id >= sizes.SourceSize))
         return;
     float4 before = history.read(id);
     uint flags = uint(before.w);
     float closeness = before.x;
+    float goal = goals.read(id).x;
     if ((flags & SeenByEstimate) != 0)
     {
         float4 fit = state[1];
-        float estimate = max(EstimateAt(sizes, result, halfResult, state, source, guide, float2(id) + 0.5f + before.yz) * fit.x + fit.y, 0.0f);
-        closeness = (flags & Trusted) != 0 ? mix(closeness, estimate, sizes.Share) : estimate;
+        goal = max(EstimateAt(sizes, result, halfResult, state, source, guide, float2(id) + 0.5f + before.yz) * fit.x + fit.y, 0.0f);
+        if ((flags & Trusted) == 0)
+            closeness = goal;
         flags |= Trusted;
     }
     float2 toEstimate = before.yz;
@@ -315,16 +328,38 @@ kernel void Accumulate(uint2 id [[thread_position_in_grid]], constant Sizes& siz
         flags |= SeenByEstimate;
     }
     historyTarget.write(float4(closeness, toEstimate, float(flags)), id);
+    goalTarget.write(float4(goal), id);
     // An estimate can land after Unishade made its images again at another size.
     if (all(id < uint2(depth.get_width(), depth.get_height())))
         depth.write(float4(StoredDepth(closeness)), id);
 }
 
-// Empties the history.
-kernel void Clear(uint2 id [[thread_position_in_grid]], texture2d<float, access::write> historyTarget [[texture(6)]])
+// Moves a trusted history towards its goal by Share where it stays.
+kernel void Approach(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [[buffer(0)]], texture2d<float, access::write> depth [[texture(2)]],
+                     texture2d<float, access::read> history [[texture(5)]], texture2d<float, access::write> historyTarget [[texture(6)]],
+                     texture2d<float, access::read> goals [[texture(7)]], texture2d<float, access::write> goalTarget [[texture(8)]])
+{
+    if (any(id >= sizes.SourceSize))
+        return;
+    float4 before = history.read(id);
+    float goal = goals.read(id).x;
+    if ((uint(before.w) & Trusted) != 0)
+        before.x = mix(before.x, goal, sizes.Share);
+    historyTarget.write(before, id);
+    goalTarget.write(float4(goal), id);
+    if (all(id < uint2(depth.get_width(), depth.get_height())))
+        depth.write(float4(StoredDepth(before.x)), id);
+}
+
+// Empties the history and its goal.
+kernel void Clear(uint2 id [[thread_position_in_grid]], texture2d<float, access::write> historyTarget [[texture(6)]],
+                  texture2d<float, access::write> goalTarget [[texture(8)]])
 {
     if (all(id < uint2(historyTarget.get_width(), historyTarget.get_height())))
+    {
         historyTarget.write(float4(0.0f), id);
+        goalTarget.write(float4(0.0f), id);
+    }
 }
 
 // Puts DEPTH at the far plane.
@@ -347,9 +382,10 @@ enum Kernel
     kAccumulate,
     kClear,
     kFar,
+    kApproach,
     kKernelCount,
 };
-constexpr const char* kKernelNames[] = { "Preprocess", "Range", "Histogram", "Resolve", "Warp", "Gather", "Fit", "Accumulate", "Clear", "Far" };
+constexpr const char* kKernelNames[] = { "Preprocess", "Range", "Histogram", "Resolve", "Warp", "Gather", "Fit", "Accumulate", "Clear", "Far", "Approach" };
 
 // As Sizes in the shaders.
 struct Sizes
@@ -386,6 +422,8 @@ private:
     void Far(id<MTLCommandBuffer> commands);
     void Follow(id<MTLCommandBuffer> commands, bool restart);
     void Publish(id<MTLCommandBuffer> commands, bool restart);
+    void Approach(id<MTLCommandBuffer> commands);
+    float ApproachShare();
     void Dispatch(id<MTLComputeCommandEncoder> encoder, Kernel kernel, NSUInteger threadsWide, NSUInteger threadsHigh, NSUInteger group);
     Sizes SizesFor(bool restart, float relax, float share) const;
     void LogState();
@@ -436,7 +474,11 @@ private:
     Clock::time_point changedAt{};
     // The history, as kShaders lays it out, in two textures each pass reads one of and writes the other.
     std::array<id<MTLTexture>, 2> history;
+    // The closeness each pixel of the history moves towards, in two textures as well.
+    std::array<id<MTLTexture>, 2> goals;
     size_t historyIndex = 0;
+    // When the history last moved towards its goal, for how far it moves in this frame.
+    std::optional<Clock::time_point> approachedAt;
     // Until the first frame that follows motion clears it.
     bool historyEmpty = false;
     // Whether the history holds an estimate yet.
@@ -672,6 +714,11 @@ void Depth::Resize(uint32_t frameWidth, uint32_t frameHeight, int longest)
         texture = nil;
         texture = CreateTexture(MTLPixelFormatRGBA32Float, frameWidth, frameHeight, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite);
     }
+    for (id<MTLTexture> __strong& texture : goals)
+    {
+        texture = nil;
+        texture = CreateTexture(MTLPixelFormatR32Float, frameWidth, frameHeight, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite);
+    }
     historyEmpty = true;
     showing = false;
     // Two float4 for each group of Gather.
@@ -760,9 +807,10 @@ void Depth::Follow(id<MTLCommandBuffer> commands, bool restart)
     {
         historyEmpty = false;
         [encoder setTexture:history[historyIndex] atIndex:6];
+        [encoder setTexture:goals[historyIndex] atIndex:8];
         Dispatch(encoder, kClear, sourceWidth, sourceHeight, 16);
     }
-    const Sizes values = SizesFor(restart || !estimator, 0, 0);
+    const Sizes values = SizesFor(restart || !estimator, 0, ApproachShare());
     [encoder setBytes:&values length:sizeof(values) atIndex:0];
     [encoder setTexture:depth atIndex:2];
     // Warp reads no motion before there is any, but every texture a kernel takes is bound.
@@ -770,6 +818,8 @@ void Depth::Follow(id<MTLCommandBuffer> commands, bool restart)
     [encoder setTexture:estimator ? estimator->confidence : history[historyIndex] atIndex:4];
     [encoder setTexture:history[historyIndex] atIndex:5];
     [encoder setTexture:history[1 - historyIndex] atIndex:6];
+    [encoder setTexture:goals[historyIndex] atIndex:7];
+    [encoder setTexture:goals[1 - historyIndex] atIndex:8];
     Dispatch(encoder, kWarp, sourceWidth, sourceHeight, 16);
     [encoder endEncoding];
     historyIndex = 1 - historyIndex;
@@ -781,7 +831,7 @@ void Depth::Publish(id<MTLCommandBuffer> commands, bool restart)
 {
     const auto now = Clock::now();
     const float seconds = publishedAt ? std::chrono::duration<float>(now - *publishedAt).count() : 0;
-    const Sizes values = SizesFor(restart || !estimator, publishedAt ? FitRelax(seconds) : 1, HistoryShare(seconds));
+    const Sizes values = SizesFor(restart || !estimator, publishedAt ? FitRelax(seconds) : 1, 0);
     publishedAt = now;
     const NSUInteger pixels = static_cast<NSUInteger>(width) * height;
     id<MTLComputeCommandEncoder> encoder = [commands computeCommandEncoder];
@@ -796,6 +846,8 @@ void Depth::Publish(id<MTLCommandBuffer> commands, bool restart)
     [encoder setTexture:depth atIndex:2];
     [encoder setTexture:history[historyIndex] atIndex:5];
     [encoder setTexture:history[1 - historyIndex] atIndex:6];
+    [encoder setTexture:goals[historyIndex] atIndex:7];
+    [encoder setTexture:goals[1 - historyIndex] atIndex:8];
     [encoder setComputePipelineState:pipelines[kRange]];
     [encoder dispatchThreadgroups:MTLSizeMake((pixels + 255) / 256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
     Dispatch(encoder, kHistogram, width, height, 16);
@@ -806,6 +858,34 @@ void Depth::Publish(id<MTLCommandBuffer> commands, bool restart)
     [encoder endEncoding];
     historyIndex = 1 - historyIndex;
     showing = true;
+}
+
+// How far the history moves towards its goal in this frame, by the time since it last did.
+float Depth::ApproachShare()
+{
+    const auto now = Clock::now();
+    const float share = approachedAt ? HistoryShare(std::chrono::duration<float>(now - *approachedAt).count()) : 0;
+    approachedAt = now;
+    return share;
+}
+
+// Moves the history towards its goal where the picture did not move, for long enough after an estimate landed for it
+// to arrive. Without it, a picture that stopped kept the depth the last moving frame left.
+void Depth::Approach(id<MTLCommandBuffer> commands)
+{
+    if (!showing || !publishedAt || Clock::now() - *publishedAt > kApproachTime)
+        return;
+    const Sizes values = SizesFor(false, 0, ApproachShare());
+    id<MTLComputeCommandEncoder> encoder = [commands computeCommandEncoder];
+    [encoder setBytes:&values length:sizeof(values) atIndex:0];
+    [encoder setTexture:depth atIndex:2];
+    [encoder setTexture:history[historyIndex] atIndex:5];
+    [encoder setTexture:history[1 - historyIndex] atIndex:6];
+    [encoder setTexture:goals[historyIndex] atIndex:7];
+    [encoder setTexture:goals[1 - historyIndex] atIndex:8];
+    Dispatch(encoder, kApproach, sourceWidth, sourceHeight, 16);
+    [encoder endEncoding];
+    historyIndex = 1 - historyIndex;
 }
 
 void Depth::LogState()
@@ -911,8 +991,13 @@ void Depth::Update(id<MTLCommandBuffer> commands, const UnishadeFrame& frame, bo
     // What the worker reads is only made again while it is idle. Depth still follows the picture meanwhile.
     if (busy)
     {
-        if (moved && frame.width == sourceWidth && frame.height == sourceHeight)
-            Follow(commands, false);
+        if (frame.width == sourceWidth && frame.height == sourceHeight)
+        {
+            if (moved)
+                Follow(commands, false);
+            else
+                Approach(commands);
+        }
         return;
     }
     // An estimate that lands after a resize is of the size before, so it is dropped.
@@ -928,7 +1013,8 @@ void Depth::Update(id<MTLCommandBuffer> commands, const UnishadeFrame& frame, bo
         CreateShared();
     const bool estimate = modelReady && (!lastInput || *lastInput != frame.picture || Clock::now() - changedAt < kSettleTime);
     // A picture that is estimated again without changing still has the history's motion counted from it.
-    if (moved || (estimate && !landed))
+    const bool follow = moved || (estimate && !landed);
+    if (follow)
         Follow(commands, estimate && !landed);
     if (landed)
     {
@@ -937,6 +1023,8 @@ void Depth::Update(id<MTLCommandBuffer> commands, const UnishadeFrame& frame, bo
         observedMs += std::chrono::duration<double, std::milli>(Clock::now() - requestedAt).count();
         submitMs += workerMs.load();
     }
+    if (!follow && !resized)
+        Approach(commands);
     if (!modelReady)
     {
         Request(false);
