@@ -62,6 +62,11 @@ CONSTANT float PixelTolerance = 0.15;
 // A pixel takes another vector than its own window's only if that brings a color this much closer to its own, so
 // that still pixels next to moving ones stay still.
 CONSTANT float ChoiceMargin = 0.02;
+// Where the four windows around a pixel have vectors no further apart than this in either direction, in picture
+// pixels, and are all still or all not, as on one surface, the pixel's vector is between theirs by where it lies
+// between them. Taking one of the four whole gave neighbours vectors as far apart as their windows', and where that was
+// half a pixel or more, as grain makes it, what follows the motion read one pixel twice and skipped the next.
+CONSTANT float EvenSpread = 1.0;
 // A vector costs this much more for each pixel of its level it is away from the level above's, so a window with
 // too little texture to tell vectors apart keeps the motion around it.
 CONSTANT float Smoothness = 0.002;
@@ -476,16 +481,26 @@ void Finish(uint3 id : SV_DispatchThreadID)
     int2 toward = int2((id.xy % scale) * 2 >= scale) * 2 - 1;
     int2 last = int2(finest) - 1;
     float3 color = Current.Load(int3(id.xy, 0)).rgb / White;
-    float4 chosen = Coarser.Load(int3(cell, 0));
-    float chosenDifference = Difference(color, id.xy, chosen.xy);
-    int2 others[3] = { int2(toward.x, 0), int2(0, toward.y), toward };
-    for (uint i = 0; i < 3; ++i)
+    float4 around[4] = { Coarser.Load(int3(cell, 0)), Coarser.Load(int3(clamp(cell + int2(toward.x, 0), 0, last), 0)),
+                         Coarser.Load(int3(clamp(cell + int2(0, toward.y), 0, last), 0)), Coarser.Load(int3(clamp(cell + toward, 0, last), 0)) };
+    float2 low = min(min(around[0].xy, around[1].xy), min(around[2].xy, around[3].xy));
+    float2 high = max(max(around[0].xy, around[1].xy), max(around[2].xy, around[3].xy));
+    float still = around[0].w + around[1].w + around[2].w + around[3].w;
+    bool even = all(high - low <= EvenSpread) && (still == 0 || still == 4);
+    float4 chosen = around[0];
+    if (even)
     {
-        float4 other = Coarser.Load(int3(clamp(cell + others[i], 0, last), 0));
-        float difference = Difference(color, id.xy, other.xy);
+        // How far q is from its own window's centre towards the others', as a share of the way.
+        float2 share = abs(float2(id.xy % scale) + 0.5 - Scale / 2) / Scale;
+        chosen = lerp(lerp(around[0], around[1], share.x), lerp(around[2], around[3], share.x), share.y);
+    }
+    float chosenDifference = Difference(color, id.xy, chosen.xy);
+    for (uint i = 1; i < 4 && !even; ++i)
+    {
+        float difference = Difference(color, id.xy, around[i].xy);
         if (difference + ChoiceMargin < chosenDifference)
         {
-            chosen = other;
+            chosen = around[i];
             chosenDifference = difference;
         }
     }

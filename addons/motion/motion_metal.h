@@ -352,16 +352,26 @@ kernel void Finish(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [
     int2 cell = int2(id / scale);
     int2 toward = select(int2(-1), int2(1), (id % scale) * 2u >= uint2(scale));
     float3 color = current.read(id).rgb / white;
-    float4 chosen = coarser.read(uint2(clamp(cell, int2(0), last)));
-    float chosenDifference = Difference(previous, sizes.PictureSize, white, color, id, chosen.xy);
-    int2 others[3] = { int2(toward.x, 0), int2(0, toward.y), toward };
-    for (uint i = 0; i < 3; ++i)
+    float4 around[4] = { coarser.read(uint2(clamp(cell, int2(0), last))), coarser.read(uint2(clamp(cell + int2(toward.x, 0), int2(0), last))),
+                         coarser.read(uint2(clamp(cell + int2(0, toward.y), int2(0), last))), coarser.read(uint2(clamp(cell + toward, int2(0), last))) };
+    float2 low = min(min(around[0].xy, around[1].xy), min(around[2].xy, around[3].xy));
+    float2 high = max(max(around[0].xy, around[1].xy), max(around[2].xy, around[3].xy));
+    float still = around[0].w + around[1].w + around[2].w + around[3].w;
+    bool even = all(high - low <= EvenSpread) && (still == 0.0f || still == 4.0f);
+    float4 chosen = around[0];
+    if (even)
     {
-        float4 other = coarser.read(uint2(clamp(cell + others[i], int2(0), last)));
-        float difference = Difference(previous, sizes.PictureSize, white, color, id, other.xy);
+        // How far q is from its own window's centre towards the others', as a share of the way.
+        float2 share = abs(float2(id % scale) + 0.5f - sizes.Scale / 2.0f) / sizes.Scale;
+        chosen = mix(mix(around[0], around[1], share.x), mix(around[2], around[3], share.x), share.y);
+    }
+    float chosenDifference = Difference(previous, sizes.PictureSize, white, color, id, chosen.xy);
+    for (uint i = 1; i < 4 && !even; ++i)
+    {
+        float difference = Difference(previous, sizes.PictureSize, white, color, id, around[i].xy);
         if (difference + ChoiceMargin < chosenDifference)
         {
-            chosen = other;
+            chosen = around[i];
             chosenDifference = difference;
         }
     }
