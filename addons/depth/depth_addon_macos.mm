@@ -662,7 +662,7 @@ void Depth::Resize(uint32_t frameWidth, uint32_t frameHeight, int longest)
     hasPrevious = false;
     estimator = nullptr;
     // The history is 32-bit floats, since the motion to the next estimate's frame adds up to hundreds of pixels.
-    for (id<MTLTexture>& texture : history)
+    for (id<MTLTexture> __strong& texture : history)
     {
         texture = nil;
         texture = CreateTexture(MTLPixelFormatRGBA32Float, frameWidth, frameHeight, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite);
