@@ -21,6 +21,7 @@ struct Addons::Exchange
 
     // In the picture's format: BGRA8, or R16G16B16A16_SFLOAT while hdr.
     Image color, output, depth;
+    Image motion; // R16G16_FLOAT, which only add-ons write and read
     Image after; // what add-ons that change the result write, apart from output, which add-ons before effects keep
     // While hdr: the picture in SDR, BGRA8, for add-ons that do not take HDR, drawn in convert first.
     Image sdr;
@@ -82,9 +83,10 @@ struct Addons::Exchange
         const bool half = format == VK_FORMAT_R16G16B16A16_SFLOAT;
         const int32_t bytes = half ? 8 : 4;
         const int32_t values[] = { int32_t(width), int32_t(height), bytes, int32_t(IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, size_t(width) * bytes)),
-                                   int32_t(format == VK_FORMAT_R32_SFLOAT ? kCVPixelFormatType_OneComponent32Float
-                                           : half                     ? kCVPixelFormatType_64RGBAHalf
-                                                                      : kCVPixelFormatType_32BGRA) };
+                                   int32_t(format == VK_FORMAT_R32_SFLOAT      ? kCVPixelFormatType_OneComponent32Float
+                                           : format == VK_FORMAT_R16G16_SFLOAT ? kCVPixelFormatType_TwoComponent16Half
+                                           : half                              ? kCVPixelFormatType_64RGBAHalf
+                                                                               : kCVPixelFormatType_32BGRA) };
         const void* keys[] = { kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement, kIOSurfaceBytesPerRow, kIOSurfacePixelFormat };
         const void* numbers[std::size(values)];
         for (size_t i = 0; i < std::size(values); ++i)
@@ -300,17 +302,17 @@ struct Addons::Exchange
 
     void Release()
     {
-        if (!color.handle && !output.handle && !depth.handle && !after.handle && !sdr.handle && !convert.framebuffer)
+        if (!color.handle && !output.handle && !depth.handle && !motion.handle && !after.handle && !sdr.handle && !convert.framebuffer)
             return;
         vkDeviceWaitIdle(gpu.device);
-        for (Image* image : { &color, &output, &depth, &after, &sdr })
+        for (Image* image : { &color, &output, &depth, &motion, &after, &sdr })
             Destroy(*image);
         backdrop::Destroy(convert);
         width = height = 0;
     }
 
     // A new size or format makes every image again.
-    void Prepare(uint32_t newWidth, uint32_t newHeight, bool newHdr, bool wantOutput, bool wantDepth, bool wantAfter, bool wantSdr)
+    void Prepare(uint32_t newWidth, uint32_t newHeight, bool newHdr, bool wantOutput, bool wantDepth, bool wantMotion, bool wantAfter, bool wantSdr)
     {
         if (newWidth != width || newHeight != height || newHdr != hdr)
         {
@@ -326,6 +328,8 @@ struct Addons::Exchange
             Create(output, format);
         if (wantDepth && !depth.handle)
             Create(depth, VK_FORMAT_R32_SFLOAT);
+        if (wantMotion && !motion.handle)
+            Create(motion, VK_FORMAT_R16G16_SFLOAT);
         if (wantAfter && !after.handle)
             Create(after, format);
         if (hdr && wantSdr && !sdr.handle)

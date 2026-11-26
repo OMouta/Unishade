@@ -285,6 +285,13 @@ bool HostSetIntValue(const UnishadeHost* host, uint32_t effect, uint32_t index, 
     return true;
 }
 
+// Frames. addon_frames.cpp reads and clears what this sets around each frame call.
+
+void HostWroteMotion(const UnishadeHost* host)
+{
+    ContextOf(host).wroteMotion = true;
+}
+
 // The controls an add-on draws, which UnishadeUi's functions add to its library's. UnishadeUi first, so the ui an
 // add-on passes back leads to it.
 struct UiContext
@@ -433,6 +440,7 @@ void addon::FillHost(UnishadeHost& host)
     host.getIntValue = HostGetIntValue;
     host.setValue = HostSetValue;
     host.setIntValue = HostSetIntValue;
+    host.wroteMotion = HostWroteMotion;
 }
 
 void addon::DrawControls(Addons::Library& library)

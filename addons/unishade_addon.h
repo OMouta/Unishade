@@ -65,11 +65,12 @@
 // picture effects get instead, and UNISHADE_WRITES_DEPTH a depth to write, which effects read as DEPTH. After effects,
 // UNISHADE_READS_RESULT gives it their result in color, before it shows and before screenshots read it, and
 // UNISHADE_WRITES_RESULT also an output to write what shows instead. UNISHADE_READS_DEPTH adds the depth another
-// add-on wrote to every call, where one did. An add-on that asks for both stages is called twice for the same picture,
-// and UnishadeFrame.stage says which call it is.
+// add-on wrote to every call, where one did. UNISHADE_WRITES_MOTION and UNISHADE_READS_MOTION do the same for the
+// picture's motion, so that one add-on estimates it and others use it. An add-on that asks for both stages is called
+// twice for the same picture, and UnishadeFrame.stage says which call it is.
 //
-// In each stage, add-ons that write depth go first, then those that only read, then those that write the picture or
-// the result, each of which gets the one before's output as color.
+// In each stage, add-ons that write depth or motion go first, then those that only read, then those that write the
+// picture or the result, each of which gets the one before's output as color.
 //
 // Frames are on the graphics card UnishadeHost.adapter names, in images the add-on opens with a device of its own
 // there. Open them again whenever the frame's generation changes.
@@ -143,6 +144,9 @@
 // Has Unishade read the keyboard and the mouse buttons for UnishadeHost.keyDown, while the game or the menu has them.
 // Reading them takes time on every frame, so only an add-on that asks gets them.
 #define UNISHADE_READS_KEYS 0x80u
+// As UnishadeFrame.motion and UnishadeHost.wroteMotion say. An older Unishade gives neither.
+#define UNISHADE_WRITES_MOTION 0x100u
+#define UNISHADE_READS_MOTION 0x200u
 
 #ifdef __cplusplus
 extern "C"
@@ -288,6 +292,13 @@ typedef struct UnishadeHost
     // save. min and max do not limit them. False when there is no such uniform.
     bool (*setValue)(const struct UnishadeHost* host, uint32_t effect, uint32_t uniform, const float* values, uint32_t count);
     bool (*setIntValue)(const struct UnishadeHost* host, uint32_t effect, uint32_t uniform, const int32_t* values, uint32_t count);
+
+    // Frames
+
+    // UNISHADE_WRITES_MOTION: says, from inside frame before effects, that the add-on wrote UnishadeFrame.motion for
+    // this picture. Add-ons that read motion only get it in a frame where the add-on that writes it said so, so one
+    // that cannot estimate yet, such as while its shaders compile, leaves them to estimate their own.
+    void (*wroteMotion)(const struct UnishadeHost* host);
 } UnishadeHost;
 
 typedef enum UnishadeSettingType
@@ -333,6 +344,9 @@ typedef enum UnishadeFormat
     // 0 for colors outside sRGB's. DXGI_FORMAT_R16G16B16A16_FLOAT, MTLPixelFormatRGBA16Float and
     // kCVPixelFormatType_64RGBAHalf, VK_FORMAT_R16G16B16A16_SFLOAT and DRM_FORMAT_ABGR16161616F.
     UNISHADE_FORMAT_RGBA16_FLOAT = 2,
+    // DXGI_FORMAT_R16G16_FLOAT, MTLPixelFormatRG16Float and kCVPixelFormatType_TwoComponent16Half,
+    // VK_FORMAT_R16G16_SFLOAT. There is no DRM format for it, so on Linux import it with Vulkan.
+    UNISHADE_FORMAT_R16G16_FLOAT = 3,
 } UnishadeFormat;
 
 typedef struct UnishadeImage
@@ -345,7 +359,7 @@ typedef struct UnishadeImage
 
 typedef enum UnishadeStage
 {
-    UNISHADE_STAGE_BEFORE_EFFECTS = 0, // for UNISHADE_READS_PICTURE, UNISHADE_WRITES_PICTURE and UNISHADE_WRITES_DEPTH
+    UNISHADE_STAGE_BEFORE_EFFECTS = 0, // for UNISHADE_READS_PICTURE, UNISHADE_WRITES_PICTURE, UNISHADE_WRITES_DEPTH and UNISHADE_WRITES_MOTION
     UNISHADE_STAGE_AFTER_EFFECTS = 1,  // for UNISHADE_READS_RESULT and UNISHADE_WRITES_RESULT
 } UnishadeStage;
 
@@ -369,7 +383,7 @@ typedef struct UnishadeFrame
     // images hold nothing yet.
     uint64_t generation;
     // Changes when the game's picture does. With the same picture and generation as the frame before, the add-on can
-    // skip its work before effects: Unishade keeps output and depth as they are. After effects it cannot, since
+    // skip its work before effects: Unishade keeps output, depth and motion as they are. After effects it cannot, since
     // effects can change their result in every frame.
     uint64_t picture;
     // The game's picture as effects get it, or after effects their result, BGRA8, or RGBA16_FLOAT as the comment at the
@@ -391,6 +405,11 @@ typedef struct UnishadeFrame
     // SDR white in an RGBA16_FLOAT color, in its units, such as 2.5 for 200 nits. 1 with BGRA8.
     float sdrWhite;
     double time; // seconds since Unishade started
+    // UNISHADE_WRITES_MOTION, before effects: R16G16_FLOAT to write, each pixel's vector to where it was in the picture
+    // before, in pixels: for a picture whose content moves 3 pixels to the right, (-3, 0). After a cut to another scene,
+    // every vector is 0. Then call UnishadeHost.wroteMotion. UNISHADE_READS_MOTION: what an add-on wrote for this
+    // picture, to read only, or nothing when none did.
+    UnishadeImage motion;
 } UnishadeFrame;
 
 // What update gets, once per pass of Unishade's main loop.

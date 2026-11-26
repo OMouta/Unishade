@@ -93,12 +93,12 @@ bool Addons::Frame(Surface& surface, const fx::Runtime::Source& source, uint64_t
     // Add-ons that do not take HDR get the picture as SDR while it is HDR.
     const auto getsSdr = [hdrPicture](const Addon* addon) { return hdrPicture && !TakesHdr(*addon->library->addon); };
     const auto anySdr = [&](const std::vector<Addon*>& list) { return std::any_of(list.begin(), list.end(), getsSdr); };
-    // In each stage, add-ons that write depth go first, so the ones that read it have it, then those that only read,
-    // then those that write the picture or the result.
+    // In each stage, add-ons that write depth or motion go first, so the ones that read them have them, then those
+    // that only read, then those that write the picture or the result.
     const auto order = [](std::vector<Addon*>& stage, uint32_t writes) {
         const auto rank = [writes](const Addon* addon) {
             const uint32_t flags = addon->library->addon->flags;
-            return flags & writes ? 2 : flags & UNISHADE_WRITES_DEPTH ? 0 : 1;
+            return flags & writes ? 2 : flags & (UNISHADE_WRITES_DEPTH | UNISHADE_WRITES_MOTION) ? 0 : 1;
         };
         std::stable_sort(stage.begin(), stage.end(), [&](const Addon* a, const Addon* b) { return rank(a) < rank(b); });
     };
@@ -115,7 +115,8 @@ bool Addons::Frame(Surface& surface, const fx::Runtime::Source& source, uint64_t
     try
     {
         exchange->Prepare(runtime->Width(), runtime->Height(), hdrPicture, flagged(before, UNISHADE_WRITES_PICTURE),
-                          flagged(before, UNISHADE_WRITES_DEPTH), flagged(after, UNISHADE_WRITES_RESULT), anySdr(running));
+                          flagged(before, UNISHADE_WRITES_DEPTH), flagged(before, UNISHADE_WRITES_MOTION), flagged(after, UNISHADE_WRITES_RESULT),
+                          anySdr(running));
     }
     catch (const std::exception& e)
     {
@@ -146,6 +147,7 @@ bool Addons::Frame(Surface& surface, const fx::Runtime::Source& source, uint64_t
     // while color holds it. An add-on that gets the picture as SDR only reads it, since the others sit out, and those
     // go before the ones that change it, so the SDR copy of the stage's picture is the picture it would get.
     bool depthWritten = false;
+    bool motionWritten = false;
     const auto run = [&](const std::vector<Addon*>& stage, UnishadeStage which, Exchange::Image& spare) {
         Exchange::Image* result = nullptr;
         for (Addon* addon : stage)
@@ -159,6 +161,9 @@ bool Addons::Frame(Surface& surface, const fx::Runtime::Source& source, uint64_t
             const bool writesDepth = which == UNISHADE_STAGE_BEFORE_EFFECTS && (flags & UNISHADE_WRITES_DEPTH);
             // Depth an add-on wrote for this picture, for one that reads it.
             const bool readsDepth = !writesDepth && depthWritten && (flags & UNISHADE_READS_DEPTH);
+            // And motion, which an add-on that writes it says it did in each frame.
+            const bool writesMotion = which == UNISHADE_STAGE_BEFORE_EFFECTS && (flags & UNISHADE_WRITES_MOTION);
+            const bool readsMotion = !writesMotion && motionWritten && (flags & UNISHADE_READS_MOTION);
             const bool sdr = getsSdr(addon);
             const UnishadeFormat format = exchange->hdr && !sdr ? UNISHADE_FORMAT_RGBA16_FLOAT : UNISHADE_FORMAT_BGRA8;
             Exchange::Image& in = result ? *result : exchange->color;
@@ -166,18 +171,21 @@ bool Addons::Frame(Surface& surface, const fx::Runtime::Source& source, uint64_t
             frame.color = { sdr ? exchange->sdr.handle : in.handle, format };
             frame.output = changes ? UnishadeImage{ out.handle, format } : UnishadeImage{};
             frame.depth = writesDepth || readsDepth ? UnishadeImage{ exchange->depth.handle, UNISHADE_FORMAT_R32_FLOAT } : UnishadeImage{};
+            frame.motion = writesMotion || readsMotion ? UnishadeImage{ exchange->motion.handle, UNISHADE_FORMAT_R16G16_FLOAT } : UnishadeImage{};
             frame.wait = exchange->value;
             frame.signal = exchange->value + 1;
             frame.settings = library.Values();
             frame.stage = which;
             frame.sdrWhite = format == UNISHADE_FORMAT_RGBA16_FLOAT ? white : 1;
             char error[512] = "";
+            library.context.wroteMotion = false;
             if (library.addon->frame(library.instance, &frame, error, sizeof(error)))
             {
                 exchange->value = frame.signal;
                 if (changes)
                     result = &out;
                 depthWritten |= writesDepth;
+                motionWritten |= writesMotion && library.context.wroteMotion;
             }
             else
             {

@@ -18,6 +18,8 @@ Flags in `UnishadeAddon.flags` say what the add-on wants. Unishade then calls it
 | `UNISHADE_WRITES_PICTURE` | That, and an `output` to write. Effects get it instead of the picture. |
 | `UNISHADE_WRITES_DEPTH` | A `depth` to write before effects, which effects read as `DEPTH` |
 | `UNISHADE_READS_DEPTH` | The depth another add-on wrote for this picture, where one did |
+| `UNISHADE_WRITES_MOTION` | A `motion` to write before effects, for add-ons that read it |
+| `UNISHADE_READS_MOTION` | The motion another add-on wrote for this picture, where one did |
 | `UNISHADE_READS_RESULT` | The picture after effects, in `color` |
 | `UNISHADE_WRITES_RESULT` | That, and an `output` to write. It shows instead. |
 | `UNISHADE_TAKES_HDR` | HDR pictures as they are. See [HDR](#hdr). |
@@ -26,7 +28,7 @@ An add-on that asks for both stages is called twice per picture. `frame->stage` 
 
 ## Order
 
-In each stage, add-ons that write depth go first, then those that only read, then those that write the picture or the result. Each add-on that writes gets the output of the one before it as its `color`.
+In each stage, add-ons that write depth or motion go first, then those that only read, then those that write the picture or the result. Each add-on that writes gets the output of the one before it as its `color`.
 
 ## UnishadeFrame
 
@@ -34,12 +36,19 @@ In each stage, add-ons that write depth go first, then those that only read, the
 | --- | --- |
 | `width`, `height` | The size of every image |
 | `generation` | Changes when Unishade makes the images again, such as when the game's window changes size. Open them again when it does. |
-| `picture` | Changes when the game's picture does. Before effects, an add-on can skip its work when this and `generation` are the same as last time. Unishade keeps `output` and `depth` as they were. |
+| `picture` | Changes when the game's picture does. Before effects, an add-on can skip its work when this and `generation` are the same as last time. Unishade keeps `output`, `depth` and `motion` as they were. |
 | `color` | What to read. Only read it. |
 | `output` | What to write, for an add-on that writes the picture or the result |
 | `depth` | Depth to write or to read, in `R32_FLOAT`: 0 nearest and 1 at the far plane |
+| `motion` | Motion to write or to read, in `R16G16_FLOAT`: each pixel's vector to where it was in the picture before, in pixels, and 0 everywhere after a cut to another scene |
 | `settings` | The add-on's [settings](/developers/settings/) |
 | `sdrWhite` | SDR white in an HDR `color`, in its units. 1 otherwise. |
+
+## Motion
+
+One add-on can estimate the picture's motion for every add-on that needs it. Depth does on Windows, and DLSS5 uses it. The add-on that writes `motion` calls `host->wroteMotion(host)` in each frame it wrote it, and only then do add-ons that read motion get it. One that cannot estimate yet, such as while it starts, does not call it, so the others get no `motion` and estimate their own.
+
+`motion` and `wroteMotion` are newer than the first version of the interface. Check for them with [`UNISHADE_HAS`](/developers/versions/) on the frame and the host.
 
 ## Opening the images
 

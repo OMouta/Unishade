@@ -13,7 +13,7 @@
 
 namespace addon
 {
-inline constexpr uint32_t kBeforeEffects = UNISHADE_READS_PICTURE | UNISHADE_WRITES_PICTURE | UNISHADE_WRITES_DEPTH;
+inline constexpr uint32_t kBeforeEffects = UNISHADE_READS_PICTURE | UNISHADE_WRITES_PICTURE | UNISHADE_WRITES_DEPTH | UNISHADE_WRITES_MOTION;
 inline constexpr uint32_t kAfterEffects = UNISHADE_READS_RESULT | UNISHADE_WRITES_RESULT;
 inline constexpr uint32_t kFrameFlags = kBeforeEffects | kAfterEffects;
 // What makes an add-on part of a preset's look.
@@ -42,6 +42,8 @@ struct HostContext
     std::string listedName, listedPath;
     UnishadeTechnique technique;
     UnishadeUniform uniform;
+    // The add-on called wroteMotion during its frame call.
+    bool wroteMotion;
 };
 
 // Sets the functions of a host, in addon_host.cpp.

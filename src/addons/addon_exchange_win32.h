@@ -23,6 +23,7 @@ struct Addons::Exchange
     uint64_t value = 0; // the fence's last value handed out
     // In the picture's format: BGRA8, or R16G16B16A16_SFLOAT while hdr.
     Image color, output, depth;
+    Image motion; // R16G16_FLOAT, which only add-ons write and read
     Image after; // what add-ons that change the result write, apart from output, which add-ons before effects keep
     // While hdr: the picture in SDR, BGRA8, for add-ons that do not take HDR. It is drawn in convert, since the images
     // add-ons share can only be copied.
@@ -222,17 +223,17 @@ struct Addons::Exchange
 
     void Release()
     {
-        if (!color.texture && !output.texture && !depth.texture && !after.texture && !sdr.texture && !convert.framebuffer)
+        if (!color.texture && !output.texture && !depth.texture && !motion.texture && !after.texture && !sdr.texture && !convert.framebuffer)
             return;
         vkDeviceWaitIdle(gpu.device);
-        for (Image* image : { &color, &output, &depth, &after, &sdr })
+        for (Image* image : { &color, &output, &depth, &motion, &after, &sdr })
             Destroy(*image);
         backdrop::Destroy(convert);
         width = height = 0;
     }
 
     // A new size or format makes every image again.
-    void Prepare(uint32_t newWidth, uint32_t newHeight, bool newHdr, bool wantOutput, bool wantDepth, bool wantAfter, bool wantSdr)
+    void Prepare(uint32_t newWidth, uint32_t newHeight, bool newHdr, bool wantOutput, bool wantDepth, bool wantMotion, bool wantAfter, bool wantSdr)
     {
         if (device && FAILED(device->GetDeviceRemovedReason()))
         {
@@ -265,6 +266,8 @@ struct Addons::Exchange
             Create(output, format, vulkanFormat);
         if (wantDepth && !depth.texture)
             Create(depth, DXGI_FORMAT_R32_FLOAT, VK_FORMAT_R32_SFLOAT);
+        if (wantMotion && !motion.texture)
+            Create(motion, DXGI_FORMAT_R16G16_FLOAT, VK_FORMAT_R16G16_SFLOAT);
         if (wantAfter && !after.texture)
             Create(after, format, vulkanFormat);
         if (hdr && wantSdr && !sdr.texture)
