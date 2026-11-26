@@ -17,8 +17,10 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace
@@ -271,27 +273,19 @@ void Addon::EvaluateHdr(float white)
 
 void Addon::CreateConverter()
 {
-    // Loaded here, so SDR pictures do not need it.
-    HMODULE compiler = LoadLibraryW(L"d3dcompiler_47.dll");
-    const auto compile = compiler ? reinterpret_cast<pD3DCompile>(GetProcAddress(compiler, "D3DCompile")) : nullptr;
+    // Loaded here, so SDR pictures do not need it. The compiled code and the errors are blobs it made, which call into
+    // it when they are released, so it is freed after them.
+    const std::unique_ptr<std::remove_pointer_t<HMODULE>, decltype(&FreeLibrary)> compiler(LoadLibraryW(L"d3dcompiler_47.dll"), FreeLibrary);
+    const auto compile = compiler ? reinterpret_cast<pD3DCompile>(GetProcAddress(compiler.get(), "D3DCompile")) : nullptr;
     if (!compile)
-    {
-        if (compiler)
-            FreeLibrary(compiler);
         throw std::runtime_error("HDR pictures need d3dcompiler_47.dll, which Windows could not load.");
-    }
     std::array<winrt::com_ptr<ID3DBlob>, 2> code;
     for (size_t i = 0; i < code.size(); ++i)
     {
         winrt::com_ptr<ID3DBlob> errors;
         if (FAILED(compile(kShaders, sizeof(kShaders) - 1, "dlss5", nullptr, nullptr, kEntryPoints[i], "cs_5_0", 0, 0, code[i].put(), errors.put())))
-        {
-            const std::string message = errors ? static_cast<const char*>(errors->GetBufferPointer()) : "The HDR shaders did not compile.";
-            FreeLibrary(compiler);
-            throw std::runtime_error(message);
-        }
+            throw std::runtime_error(errors ? static_cast<const char*>(errors->GetBufferPointer()) : "The HDR shaders did not compile.");
     }
-    FreeLibrary(compiler);
 
     // SDR white as a constant, then a table of the three textures read and the one written.
     const D3D12_DESCRIPTOR_RANGE ranges[] = { { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 0, 0 }, { D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 3 } };
