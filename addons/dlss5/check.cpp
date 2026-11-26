@@ -1,13 +1,16 @@
 // Runs an image through Unishade_nvngx.dll, writes the result as PNG and says how far it is from the input.
 // dlss5_check <nvngx_dlssnr.dll> <image> <output folder> [--module <dll>] [--frames N] [--passes N] [--style N]
 //     [--intensity X] [--local-tone X] [--local-structure X] [--skin-structure X] [--no-auto-mask] [--keys <image>]
+//     [--depth <Depth's folder>]
 // It also runs the top-left quarter of the image, so the feature is made again at a new size. With --keys it then
 // shows that each input Unishade_nvngx.dll sets reaches the network, since NGX ignores a parameter it does not know
 // without saying so: it runs the image with only that input changed and compares the outputs. Then it runs the add-on
 // as Unishade does, on the same picture twice, a cut, a small move and a pan. The image after --keys is the scene the
 // cut goes to. It returns 1 when an input changed nothing or the add-on did the wrong thing. With --keys it also runs a
 // pan with its true motion vectors, with them negated and with none, and says which is closest to a still picture's
-// result, since nothing NVIDIA published says which way round DLSS5 takes them.
+// result, since nothing NVIDIA published says which way round DLSS5 takes them. With --depth as well, it runs the
+// add-on again with the Depth add-on before it, Depth.dll from beside this program with its model in that folder, and
+// DLSS5 taking the motion Depth writes, then says what each add-on and both cost a frame with and without that.
 
 #include "dlss5.h"
 #include <unishade_addon.h>
@@ -27,6 +30,7 @@
 #pragma warning(pop)
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -34,8 +38,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace
@@ -556,6 +563,20 @@ void AddonLog(const UnishadeHost*, UnishadeLogLevel, const char* text)
     std::fflush(stdout);
 }
 
+void DepthLog(const UnishadeHost*, UnishadeLogLevel, const char* text)
+{
+    std::printf("[Depth] %s\n", text);
+    std::fflush(stdout);
+}
+
+// Whether the add-on called wroteMotion in its last frame call. Only one add-on runs at a time.
+bool wroteMotion = false;
+
+void WroteMotion(const UnishadeHost*)
+{
+    wroteMotion = true;
+}
+
 struct Shared
 {
     winrt::com_ptr<ID3D11Texture2D> texture;
@@ -582,106 +603,179 @@ Shared CreateShared(ID3D11Device* device, UINT width, UINT height, DXGI_FORMAT f
     return shared;
 }
 
-// Runs the add-on in the module as Unishade does, with depth, on a picture, the same picture again, a cut and a small
-// change, then a pan, and says whether it kept its output for the repeat, dropped the history at the cut only and
-// gave the pan motion that follows it. Returns how many of those it got wrong.
-int CheckAddon(HMODULE library, const Api& api, const std::filesystem::path& runtime, const std::wstring& data, const Image& first,
-               const Image& cut, const Image& nudged, const std::vector<Image>& pan, const Image& depthImage, const Dlss5Look& look)
+// An add-on in a module, started as Unishade starts it, with its settings at their defaults.
+struct Started
 {
-    std::printf("\nThe add-on, as Unishade runs it:\n");
-    const UINT width = first.width, height = first.height;
-    winrt::com_ptr<IDXGIFactory1> factory;
-    winrt::check_hresult(CreateDXGIFactory1(IID_PPV_ARGS(factory.put())));
-    winrt::com_ptr<IDXGIAdapter1> adapter;
-    DXGI_ADAPTER_DESC1 description{};
-    for (UINT index = 0; factory->EnumAdapters1(index, adapter.put()) == S_OK; ++index, adapter = nullptr)
-        if (SUCCEEDED(adapter->GetDesc1(&description)) && description.VendorId == 0x10DE && !(description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE))
-            break;
-    if (!adapter)
-        throw std::runtime_error("There is no NVIDIA graphics card.");
-    winrt::com_ptr<ID3D11Device> created;
-    winrt::com_ptr<ID3D11DeviceContext> createdContext;
-    winrt::check_hresult(D3D11CreateDevice(adapter.get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, created.put(), nullptr,
-                                           createdContext.put()));
-    const auto device = created.as<ID3D11Device5>();
-    const auto context = createdContext.as<ID3D11DeviceContext4>();
-    winrt::com_ptr<ID3D11Fence> fence;
-    winrt::check_hresult(device->CreateFence(0, D3D11_FENCE_FLAG_SHARED, IID_PPV_ARGS(fence.put())));
-    winrt::handle fenceHandle;
-    winrt::check_hresult(fence->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, fenceHandle.put()));
-    winrt::handle reached{ CreateEventW(nullptr, FALSE, FALSE, nullptr) };
-    const Shared color = CreateShared(device.get(), width, height, DXGI_FORMAT_B8G8R8A8_UNORM);
-    const Shared output = CreateShared(device.get(), width, height, DXGI_FORMAT_B8G8R8A8_UNORM);
-    const Shared depth = CreateShared(device.get(), width, height, DXGI_FORMAT_R32_FLOAT);
-    context->UpdateSubresource(depth.texture.get(), 0, nullptr, depthImage.pixels.data(), width * 4, 0);
-    D3D11_TEXTURE2D_DESC staging{};
-    output.texture->GetDesc(&staging);
-    staging.Usage = D3D11_USAGE_STAGING;
-    staging.BindFlags = 0;
-    staging.MiscFlags = 0;
-    staging.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    winrt::com_ptr<ID3D11Texture2D> readable;
-    winrt::check_hresult(device->CreateTexture2D(&staging, nullptr, readable.put()));
-
-    const auto getAddon = reinterpret_cast<UnishadeGetAddonFunction>(GetProcAddress(library, "UnishadeGetAddon"));
-    if (!getAddon)
-        throw std::runtime_error("The module is not an add-on.");
-    const UnishadeAddon* addon = getAddon();
-    if (!(addon->flags & UNISHADE_READS_DEPTH))
-        throw std::runtime_error("The add-on does not ask for depth.");
-    // The add-on's folder holds nvngx_dlssnr.dll, and its name ends in a separator, as Unishade gives it.
-    const std::string folder = runtime.parent_path().string() + "\\";
-    const std::string dataFolder = std::filesystem::path(data).string();
+    const UnishadeAddon* addon = nullptr;
+    void* instance = nullptr;
+    std::string folder, dataFolder;
     UnishadeHost host{};
-    host.size = sizeof(host);
-    host.version = UNISHADE_API_VERSION;
-    host.unishade = "check";
-    host.folder = folder.c_str();
-    host.dataFolder = dataFolder.c_str();
-    std::memcpy(host.adapter, &description.AdapterLuid, sizeof(LUID));
-    host.log = AddonLog;
-    char error[512] = "";
-    void* instance = addon->create(&host, error, sizeof(error));
-    if (!instance)
-        throw std::runtime_error(std::string("The add-on did not start: ") + error);
-    // Its settings are in the order of Dlss5Look.
-    std::vector<std::array<float, 4>> settings(addon->settingCount);
-    const float values[] = { float(look.style), look.intensity, look.localTone, look.localStructure, look.skinStructure, float(look.autoMask),
-                             float(look.passCount) };
-    for (uint32_t i = 0; i < addon->settingCount; ++i)
-        settings[i] = { values[i] };
+    std::vector<std::array<float, 4>> settings;
 
+    Started(HMODULE library, const std::string& addonFolder, const std::string& data, const LUID& adapter, decltype(UnishadeHost::log) log)
+        : folder(addonFolder), dataFolder(data)
+    {
+        const auto getAddon = reinterpret_cast<UnishadeGetAddonFunction>(GetProcAddress(library, "UnishadeGetAddon"));
+        if (!getAddon)
+            throw std::runtime_error("The module is not an add-on.");
+        addon = getAddon();
+        host.size = sizeof(host);
+        host.version = UNISHADE_API_VERSION;
+        host.unishade = "check";
+        host.folder = folder.c_str();
+        host.dataFolder = dataFolder.c_str();
+        std::memcpy(host.adapter, &adapter, sizeof(LUID));
+        host.log = log;
+        host.wroteMotion = WroteMotion;
+        char error[512] = "";
+        instance = addon->create(&host, error, sizeof(error));
+        if (!instance)
+            throw std::runtime_error(std::string("The add-on did not start: ") + error);
+        settings.resize(addon->settingCount);
+        for (uint32_t i = 0; i < addon->settingCount; ++i)
+            std::copy_n(addon->settings[i].defaultValue, 4, settings[i].data());
+    }
+    Started(const Started&) = delete;
+    Started& operator=(const Started&) = delete;
+    ~Started() { addon->destroy(instance); }
+};
+
+// Unishade's frames on the NVIDIA graphics card, with the DLSS5 add-on and, when given its module and folder, the Depth
+// add-on before it, called in the order Unishade calls them. DLSS5 always reads the depth the session was given, and
+// Depth writes depth of its own, so that what Depth estimates does not change DLSS5's output from one run to another.
+struct Session
+{
+    // Which add-ons a frame runs, and whether motion passes from Depth to DLSS5 as Unishade passes it. Without share,
+    // Depth gets no image to write motion to, as in a Unishade from before motion was shared.
+    struct Plan
+    {
+        bool depth = true;
+        bool dlss5 = true;
+        bool share = true;
+    };
+
+    UINT width, height;
+    winrt::com_ptr<ID3D11Device5> device;
+    winrt::com_ptr<ID3D11DeviceContext4> context;
+    winrt::com_ptr<ID3D11Fence> fence;
+    winrt::handle fenceHandle;
+    winrt::handle reached{ CreateEventW(nullptr, FALSE, FALSE, nullptr) };
+    Shared color, output, depth, depthWritten, motion;
+    winrt::com_ptr<ID3D11Texture2D> readable, readableDepth;
     uint64_t value = 0;
-    const auto run = [&](const Image& picture, uint64_t number) {
+    std::unique_ptr<Started> dlss5, depthAddon;
+    // How many frames DLSS5 was given motion in.
+    int givenMotion = 0;
+
+    Session(HMODULE library, const std::filesystem::path& runtime, const std::wstring& data, const Dlss5Look& look, UINT pictureWidth,
+            UINT pictureHeight, const Image& depthImage, HMODULE depthLibrary = nullptr, const std::string& depthFolder = {})
+        : width(pictureWidth), height(pictureHeight)
+    {
+        winrt::com_ptr<IDXGIFactory1> factory;
+        winrt::check_hresult(CreateDXGIFactory1(IID_PPV_ARGS(factory.put())));
+        winrt::com_ptr<IDXGIAdapter1> adapter;
+        DXGI_ADAPTER_DESC1 description{};
+        for (UINT index = 0; factory->EnumAdapters1(index, adapter.put()) == S_OK; ++index, adapter = nullptr)
+            if (SUCCEEDED(adapter->GetDesc1(&description)) && description.VendorId == 0x10DE && !(description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE))
+                break;
+        if (!adapter)
+            throw std::runtime_error("There is no NVIDIA graphics card.");
+        winrt::com_ptr<ID3D11Device> created;
+        winrt::com_ptr<ID3D11DeviceContext> createdContext;
+        winrt::check_hresult(D3D11CreateDevice(adapter.get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, created.put(),
+                                               nullptr, createdContext.put()));
+        device = created.as<ID3D11Device5>();
+        context = createdContext.as<ID3D11DeviceContext4>();
+        winrt::check_hresult(device->CreateFence(0, D3D11_FENCE_FLAG_SHARED, IID_PPV_ARGS(fence.put())));
+        winrt::check_hresult(fence->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, fenceHandle.put()));
+        color = CreateShared(device.get(), width, height, DXGI_FORMAT_B8G8R8A8_UNORM);
+        output = CreateShared(device.get(), width, height, DXGI_FORMAT_B8G8R8A8_UNORM);
+        depth = CreateShared(device.get(), width, height, DXGI_FORMAT_R32_FLOAT);
+        depthWritten = CreateShared(device.get(), width, height, DXGI_FORMAT_R32_FLOAT);
+        motion = CreateShared(device.get(), width, height, DXGI_FORMAT_R16G16_FLOAT);
+        context->UpdateSubresource(depth.texture.get(), 0, nullptr, depthImage.pixels.data(), width * 4, 0);
+        D3D11_TEXTURE2D_DESC staging{};
+        output.texture->GetDesc(&staging);
+        staging.Usage = D3D11_USAGE_STAGING;
+        staging.BindFlags = 0;
+        staging.MiscFlags = 0;
+        staging.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        winrt::check_hresult(device->CreateTexture2D(&staging, nullptr, readable.put()));
+        staging.Format = DXGI_FORMAT_R32_FLOAT;
+        winrt::check_hresult(device->CreateTexture2D(&staging, nullptr, readableDepth.put()));
+
+        if (depthLibrary)
+        {
+            depthAddon = std::make_unique<Started>(depthLibrary, depthFolder, depthFolder, description.AdapterLuid, DepthLog);
+            if (!(depthAddon->addon->flags & UNISHADE_WRITES_MOTION))
+                throw std::runtime_error("The Depth add-on does not write motion.");
+        }
+        // The add-on's folder holds nvngx_dlssnr.dll, and its name ends in a separator, as Unishade gives it.
+        dlss5 = std::make_unique<Started>(library, runtime.parent_path().string() + "\\", std::filesystem::path(data).string(), description.AdapterLuid,
+                                          AddonLog);
+        if (!(dlss5->addon->flags & UNISHADE_READS_DEPTH) || !(dlss5->addon->flags & UNISHADE_READS_MOTION))
+            throw std::runtime_error("The add-on does not ask for depth and motion.");
+        // Its settings are in the order of Dlss5Look.
+        const float values[] = { float(look.style), look.intensity, look.localTone, look.localStructure, look.skinStructure, float(look.autoMask),
+                                 float(look.passCount) };
+        for (uint32_t i = 0; i < dlss5->addon->settingCount; ++i)
+            dlss5->settings[i] = { values[i] };
+    }
+
+    // Has the add-ons work on a picture, and returns how long from the first call until the last one's work was done,
+    // which is how long Unishade waits for them, in milliseconds.
+    double Run(const Image& picture, uint64_t number, Plan plan)
+    {
         std::vector<uint8_t> pixels = picture.pixels;
         for (size_t pixel = 0; pixel < pixels.size(); pixel += 4)
             std::swap(pixels[pixel], pixels[pixel + 2]);
         context->UpdateSubresource(color.texture.get(), 0, nullptr, pixels.data(), width * 4, 0);
         winrt::check_hresult(context->Signal(fence.get(), ++value));
         context->Flush();
-        UnishadeFrame frame{};
-        frame.size = sizeof(frame);
-        frame.stage = UNISHADE_STAGE_BEFORE_EFFECTS;
-        frame.width = width;
-        frame.height = height;
-        frame.generation = 1;
-        frame.picture = number;
-        frame.color = { color.handle.get(), UNISHADE_FORMAT_BGRA8 };
-        frame.output = { output.handle.get(), UNISHADE_FORMAT_BGRA8 };
-        frame.depth = { depth.handle.get(), UNISHADE_FORMAT_R32_FLOAT };
-        frame.fence = fenceHandle.get();
-        frame.wait = value;
-        frame.signal = ++value;
-        frame.settings = reinterpret_cast<const float (*)[4]>(settings.data());
-        frame.sdrWhite = 1;
         const auto start = std::chrono::steady_clock::now();
-        if (!addon->frame(instance, &frame, error, sizeof(error)))
-            throw std::runtime_error(std::string("The add-on failed on a frame: ") + error);
+        const auto call = [&](Started& started, UnishadeImage outputImage, UnishadeImage depthImage, UnishadeImage motionImage) {
+            UnishadeFrame frame{};
+            frame.size = sizeof(frame);
+            frame.stage = UNISHADE_STAGE_BEFORE_EFFECTS;
+            frame.width = width;
+            frame.height = height;
+            frame.generation = 1;
+            frame.picture = number;
+            frame.color = { color.handle.get(), UNISHADE_FORMAT_BGRA8 };
+            frame.output = outputImage;
+            frame.depth = depthImage;
+            frame.motion = motionImage;
+            frame.fence = fenceHandle.get();
+            frame.wait = value;
+            frame.signal = ++value;
+            frame.settings = reinterpret_cast<const float (*)[4]>(started.settings.data());
+            frame.sdrWhite = 1;
+            char error[512] = "";
+            if (!started.addon->frame(started.instance, &frame, error, sizeof(error)))
+                throw std::runtime_error(std::string("An add-on failed on a frame: ") + error);
+        };
+        bool motionWritten = false;
+        if (plan.depth && depthAddon)
+        {
+            wroteMotion = false;
+            call(*depthAddon, {}, { depthWritten.handle.get(), UNISHADE_FORMAT_R32_FLOAT },
+                 plan.share ? UnishadeImage{ motion.handle.get(), UNISHADE_FORMAT_R16G16_FLOAT } : UnishadeImage{});
+            motionWritten = plan.share && wroteMotion;
+        }
+        if (plan.dlss5)
+        {
+            givenMotion += motionWritten;
+            call(*dlss5, { output.handle.get(), UNISHADE_FORMAT_BGRA8 }, { depth.handle.get(), UNISHADE_FORMAT_R32_FLOAT },
+                 motionWritten ? UnishadeImage{ motion.handle.get(), UNISHADE_FORMAT_R16G16_FLOAT } : UnishadeImage{});
+        }
         winrt::check_hresult(fence->SetEventOnCompletion(value, reached.get()));
         if (WaitForSingleObject(reached.get(), 5000) != WAIT_OBJECT_0)
-            throw std::runtime_error("The add-on did not signal the fence.");
-        std::printf("  Frame %llu took the add-on %.1f ms\n", static_cast<unsigned long long>(number),
-                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+            throw std::runtime_error("An add-on did not signal the fence.");
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    }
+
+    Image Output()
+    {
         context->CopyResource(readable.get(), output.texture.get());
         D3D11_MAPPED_SUBRESOURCE mapped{};
         winrt::check_hresult(context->Map(readable.get(), 0, D3D11_MAP_READ, 0, &mapped));
@@ -693,16 +787,80 @@ int CheckAddon(HMODULE library, const Api& api, const std::filesystem::path& run
         for (size_t pixel = 0; pixel < result.pixels.size(); pixel += 4)
             std::swap(result.pixels[pixel], result.pixels[pixel + 2]);
         return result;
+    }
+
+    // Runs Depth alone on the picture under new numbers until it writes depth, and motion where it is shared, as it does
+    // once its model is loaded and its shaders are compiled, and 60 frames more. Returns the number after the last it
+    // used.
+    uint64_t Warm(const Image& picture, uint64_t number, bool share)
+    {
+        const auto start = std::chrono::steady_clock::now();
+        std::optional<std::chrono::steady_clock::time_point> readyAt;
+        bool depthArrived = false;
+        for (int after = 0; after < 60; ++number)
+        {
+            if (std::chrono::steady_clock::now() - start > std::chrono::minutes(1))
+                throw std::runtime_error(depthArrived ? "The Depth add-on wrote no motion in a minute." : "The Depth add-on wrote no depth in a minute.");
+            Run(picture, number, { true, false, share });
+            if (!depthArrived)
+            {
+                context->CopyResource(readableDepth.get(), depthWritten.texture.get());
+                D3D11_MAPPED_SUBRESOURCE mapped{};
+                winrt::check_hresult(context->Map(readableDepth.get(), 0, D3D11_MAP_READ, 0, &mapped));
+                // Depth starts at the far plane everywhere, and the sky stays there.
+                for (UINT row = 0; row < height && !depthArrived; ++row)
+                {
+                    const float* values = reinterpret_cast<const float*>(static_cast<const uint8_t*>(mapped.pData) + size_t(row) * mapped.RowPitch);
+                    depthArrived = *std::min_element(values, values + width) < 1;
+                }
+                context->Unmap(readableDepth.get(), 0);
+            }
+            if (depthArrived && (wroteMotion || !share))
+            {
+                if (!readyAt)
+                    readyAt = std::chrono::steady_clock::now();
+                ++after;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(33));
+        }
+        std::printf("  Depth wrote depth%s after %.1f s\n", share ? " and motion" : "", std::chrono::duration<double>(*readyAt - start).count());
+        return number;
+    }
+};
+
+// Runs the add-on as Unishade does, with depth, on a picture, the same picture again, a cut and a small change, then a
+// pan, and says whether it kept its output for the repeat, dropped the history at the cut only and gave the pan motion
+// that follows it. With the Depth add-on, DLSS5 takes the motion Depth writes. Returns how many of those it got wrong.
+int CheckAddon(HMODULE library, const Api& api, const std::filesystem::path& runtime, const std::wstring& data, const Image& first,
+               const Image& cut, const Image& nudged, const std::vector<Image>& pan, const Image& depthImage, const Dlss5Look& look,
+               HMODULE depthLibrary, const std::string& depthFolder)
+{
+    std::printf(depthLibrary ? "\nThe add-on, as Unishade runs it, with the motion the Depth add-on writes:\n"
+                             : "\nThe add-on, as Unishade runs it, estimating motion itself:\n");
+    const UINT width = first.width, height = first.height;
+    // Unishade's DLSS5 add-on is let go of before the module runs on its own, since only one DLSS5 runs at a time.
+    auto session = std::make_unique<Session>(library, runtime, data, look, width, height, depthImage, depthLibrary, depthFolder);
+    // Numbers Depth's warming takes come after the ones below.
+    if (depthLibrary)
+        session->Warm(first, 1000, true);
+    const auto run = [&](const Image& picture, uint64_t number) {
+        const double took = session->Run(picture, number, {});
+        std::printf("  Frame %llu took the add-ons %.1f ms\n", static_cast<unsigned long long>(number), took);
+        return session->Output();
     };
     const Image once = run(first, 1), again = run(first, 2), afterCut = run(cut, 3), afterNudge = run(nudged, 4);
-    settings[1][0] = look.intensity > 0.5f ? 0.5f : 1.0f;
+    session->dlss5->settings[1][0] = look.intensity > 0.5f ? 0.5f : 1.0f;
     const Image otherLook = run(nudged, 5);
-    settings[1][0] = look.intensity;
+    session->dlss5->settings[1][0] = look.intensity;
     // The pan starts with a cut from the picture before, so its history starts there, as a new feature's does.
-    Image panned;
+    std::vector<Image> panned;
     for (size_t frame = 0; frame < pan.size(); ++frame)
-        panned = run(pan[frame], 6 + frame);
-    addon->destroy(instance);
+        panned.push_back(run(pan[frame], 6 + frame));
+    const int frames = 5 + static_cast<int>(pan.size());
+    if (depthLibrary)
+        std::printf("  DLSS5 was given Depth's motion in %d of %d frames\n", session->givenMotion, frames);
+    const int givenMotion = session->givenMotion;
+    session.reset();
 
     // The module on its own, for what the add-on should match.
     const Image twice = Trial(api, runtime, data, look, { { &first, &depthImage, false }, { &first, &depthImage, false } });
@@ -720,6 +878,11 @@ int CheckAddon(HMODULE library, const Api& api, const std::filesystem::path& run
     report("A cut, against a new feature", afterCut, freshCut, true, "the history is dropped");
     report("The cut picture moved 4 pixels, against new", afterNudge, freshNudge, false, "not a cut, so the history is kept");
     report("That picture again with another intensity", otherLook, afterNudge, false, "evaluated again");
+    if (depthLibrary && givenMotion != frames)
+    {
+        std::printf("  WRONG: DLSS5 was not given motion in every frame\n");
+        ++wrong;
+    }
 
     // The add-on estimates the pan's motion, so its result should be nearer the module's with the true vectors than
     // with none.
@@ -730,13 +893,65 @@ int CheckAddon(HMODULE library, const Api& api, const std::filesystem::path& run
         moving.push_back({ &frame, &depthImage, false, &truth });
         still.push_back({ &frame, &depthImage, false });
     }
-    const Difference toTruth = Differ(panned, Trial(api, runtime, data, look, moving));
-    const Difference toNone = Differ(panned, Trial(api, runtime, data, look, still));
+    const Difference toTruth = Differ(panned.back(), Trial(api, runtime, data, look, moving));
+    const Difference toNone = Differ(panned.back(), Trial(api, runtime, data, look, still));
     const bool follows = toTruth.mean < toNone.mean;
     std::printf("  %-44s mean %.3f, against none %.3f: %s\n", "A pan, against the true vectors", toTruth.mean, toNone.mean,
                 follows ? "its motion follows the pan" : "WRONG");
+    std::printf("  %-44s %.3f\n", "The pan's restlessness", Restlessness(panned, kPanX, kPanY));
     wrong += !follows;
     return wrong;
+}
+
+// Says how long Unishade waits for the add-ons in each frame of a pan that goes back and forth, with DLSS5 alone, Depth
+// alone with and without the copy of its motion it writes, both with each estimating motion itself, as before Depth
+// shared it, and both with DLSS5 taking Depth's.
+void CheckCost(HMODULE library, const std::filesystem::path& runtime, const std::wstring& data, const std::vector<Image>& pan, const Image& depthImage,
+               const Dlss5Look& look, HMODULE depthLibrary, const std::string& depthFolder)
+{
+    const UINT width = pan.front().width, height = pan.front().height;
+    std::printf("\nWhat the add-ons cost a frame at %ux%u, on a pan back and forth, a frame every 50 ms:\n", width, height);
+    // Every frame moves from the one before. The first round is not counted, since the feature is made then.
+    std::vector<const Image*> frames;
+    for (int round = 0; round < 6; ++round)
+        for (size_t i = 0; i + 1 < pan.size(); ++i)
+            frames.push_back(&pan[round % 2 ? pan.size() - 1 - i : i]);
+    const size_t skipped = pan.size() - 1;
+    const struct
+    {
+        const char* name;
+        Session::Plan plan;
+    } cases[] = {
+        { "DLSS5 alone, estimating itself", { false, true, false } },
+        { "Depth alone", { true, false, true } },
+        { "Depth alone, writing no motion", { true, false, false } },
+        { "Both, each estimating", { true, true, false } },
+        { "Both, DLSS5 taking Depth's", { true, true, true } },
+    };
+    for (const auto& [name, plan] : cases)
+    {
+        Session session(library, runtime, data, look, width, height, depthImage, plan.depth ? depthLibrary : nullptr, depthFolder);
+        uint64_t number = plan.depth ? session.Warm(*frames.front(), 1, plan.share) : 1;
+        std::vector<double> times;
+        auto next = std::chrono::steady_clock::now();
+        for (size_t i = 0; i < frames.size(); ++i)
+        {
+            std::this_thread::sleep_until(next);
+            next += std::chrono::milliseconds(50);
+            const double took = session.Run(*frames[i], number++, plan);
+            if (i >= skipped)
+                times.push_back(took);
+        }
+        double sum = 0;
+        for (double time : times)
+            sum += time;
+        std::sort(times.begin(), times.end());
+        std::printf("  %-32s mean %.2f ms, median %.2f ms, best %.2f ms over %zu frames", name, sum / times.size(), times[times.size() / 2],
+                    times.front(), times.size());
+        if (plan.dlss5 && plan.depth)
+            std::printf(", DLSS5 given motion in %d of %zu", session.givenMotion, frames.size());
+        std::printf("\n");
+    }
 }
 
 int Main(int argc, wchar_t** argv)
@@ -744,7 +959,8 @@ int Main(int argc, wchar_t** argv)
     if (argc < 4)
     {
         std::printf("dlss5_check <nvngx_dlssnr.dll> <image> <output folder> [--module <dll>] [--frames N] [--passes N] [--style N]\n"
-                    "    [--intensity X] [--local-tone X] [--local-structure X] [--skin-structure X] [--no-auto-mask] [--keys <image>]\n");
+                    "    [--intensity X] [--local-tone X] [--local-structure X] [--skin-structure X] [--no-auto-mask] [--keys <image>]\n"
+                    "    [--depth <Depth's folder>]\n");
         return 2;
     }
     // nvngx_dlssnr.dll does not log through the callback NGX is given, only to a file in the data folder and to the
@@ -758,6 +974,7 @@ int Main(int argc, wchar_t** argv)
     Dlss5Look look{ 0, 1.0f, 1.0f, 1.0f, 1.0f, true, 1 };
     int frames = 1;
     std::filesystem::path keys;
+    std::string depthFolder;
     for (int index = 4; index < argc; ++index)
     {
         const std::wstring option = argv[index];
@@ -787,6 +1004,8 @@ int Main(int argc, wchar_t** argv)
             look.skinStructure = static_cast<float>(_wtof(value));
         else if (option == L"--keys")
             keys = value;
+        else if (option == L"--depth")
+            depthFolder = (std::filesystem::absolute(value) / "").string();
         else
             throw std::runtime_error("Unknown option.");
     }
@@ -832,8 +1051,19 @@ int Main(int argc, wchar_t** argv)
         CheckSign(api, runtime, data, look, pan);
         missing = CheckKeys(api, runtime, data, Crop(input, width, height), Crop(cut, width, height), pan, look, frames);
         // The add-on gets pictures of the pan's size, so the cut picture can also move a little.
-        missing += CheckAddon(library, api, runtime, data, Crop(input, panWidth, panHeight), Crop(cut, panWidth, panHeight),
-                              Crop(cut, panWidth, panHeight, 4), pan, Depth(panWidth, panHeight, Shape::Floor), look);
+        const Image addonInput = Crop(input, panWidth, panHeight), addonCut = Crop(cut, panWidth, panHeight), nudged = Crop(cut, panWidth, panHeight, 4);
+        const Image floor = Depth(panWidth, panHeight, Shape::Floor);
+        missing += CheckAddon(library, api, runtime, data, addonInput, addonCut, nudged, pan, floor, look, nullptr, {});
+        if (!depthFolder.empty())
+        {
+            const std::filesystem::path depthModule = std::filesystem::path(exe).replace_filename(L"Depth.dll");
+            const HMODULE depthLibrary = LoadLibraryW(depthModule.c_str());
+            if (!depthLibrary)
+                throw std::runtime_error("Could not load " + depthModule.string() + ": error " + std::to_string(GetLastError()));
+            missing += CheckAddon(library, api, runtime, data, addonInput, addonCut, nudged, pan, floor, look, depthLibrary, depthFolder);
+            CheckCost(library, runtime, data, pan, floor, look, depthLibrary, depthFolder);
+            FreeLibrary(depthLibrary);
+        }
     }
     FreeLibrary(library);
     return missing ? 1 : 0;

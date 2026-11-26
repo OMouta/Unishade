@@ -91,7 +91,7 @@ if(WIN32)
     target_compile_definitions(dlss5_check PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(dlss5_check PRIVATE /W4 /permissive- /EHsc)
     target_link_libraries(dlss5_check PRIVATE d3d11 d3d12 dxgi windowsapp)
-    add_dependencies(dlss5_check Unishade_nvngx)
+    add_dependencies(dlss5_check Unishade_nvngx depth_addon)
 endif()
 
 # The official add-ons go into the program too: the list of their files, with the SHA-256 of the add-ons this build
