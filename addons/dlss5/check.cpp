@@ -1,11 +1,18 @@
 // Runs an image through Unishade_nvngx.dll, writes the result as PNG and says how far it is from the input.
 // dlss5_check <nvngx_dlssnr.dll> <image> <output folder> [--module <dll>] [--frames N] [--passes N] [--style N]
-//     [--intensity X] [--local-tone X] [--local-structure X] [--skin-structure X] [--no-auto-mask]
-// It also runs the top-left quarter of the image, so the feature is made again at a new size.
+//     [--intensity X] [--local-tone X] [--local-structure X] [--skin-structure X] [--no-auto-mask] [--keys <image>]
+// It also runs the top-left quarter of the image, so the feature is made again at a new size. With --keys it then
+// shows that each input Unishade_nvngx.dll sets reaches the network, since NGX ignores a parameter it does not know
+// without saying so: it runs the image with only that input changed and compares the outputs. Then it runs the add-on
+// as Unishade does, on the same picture twice, a cut and a small move. The image after --keys is the scene the cut
+// goes to. It returns 1 when an input changed nothing or the add-on did the wrong thing.
 
 #include "dlss5.h"
+#include <unishade_addon.h>
 
+#include <d3d11_4.h>
 #include <d3d12.h>
+#include <dxgi1_2.h>
 #include <winrt/base.h>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -21,6 +28,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -40,7 +48,8 @@ struct Api
 struct Image
 {
     UINT width = 0, height = 0;
-    std::vector<uint8_t> pixels; // RGBA, rows packed
+    std::vector<uint8_t> pixels; // four bytes for each pixel, rows packed
+    DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
 };
 
 void Print(const char* line)
@@ -101,7 +110,7 @@ struct Gpu
         Check(device->GetDeviceRemovedReason(), "The D3D12 device");
     }
 
-    winrt::com_ptr<ID3D12Resource> Texture(UINT width, UINT height, D3D12_RESOURCE_FLAGS flags)
+    winrt::com_ptr<ID3D12Resource> Texture(UINT width, UINT height, D3D12_RESOURCE_FLAGS flags, DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM)
     {
         const D3D12_HEAP_PROPERTIES heap{ D3D12_HEAP_TYPE_DEFAULT };
         D3D12_RESOURCE_DESC description{ D3D12_RESOURCE_DIMENSION_TEXTURE2D };
@@ -109,7 +118,7 @@ struct Gpu
         description.Height = height;
         description.DepthOrArraySize = 1;
         description.MipLevels = 1;
-        description.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        description.Format = format;
         description.SampleDesc.Count = 1;
         description.Flags = flags;
         winrt::com_ptr<ID3D12Resource> texture;
@@ -147,7 +156,7 @@ struct Gpu
 
     winrt::com_ptr<ID3D12Resource> Upload(const Image& image)
     {
-        winrt::com_ptr<ID3D12Resource> texture = Texture(image.width, image.height, D3D12_RESOURCE_FLAG_NONE);
+        winrt::com_ptr<ID3D12Resource> texture = Texture(image.width, image.height, D3D12_RESOURCE_FLAG_NONE, image.format);
         const D3D12_RESOURCE_DESC description = texture->GetDesc();
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
         UINT64 size = 0;
@@ -194,13 +203,26 @@ struct Gpu
     }
 };
 
-Image Crop(const Image& image, UINT width, UINT height)
+Image Crop(const Image& image, UINT width, UINT height, UINT left = 0)
 {
     Image crop{ width, height };
     crop.pixels.resize(size_t(width) * height * 4);
     for (UINT row = 0; row < height; ++row)
-        std::copy_n(image.pixels.data() + size_t(row) * image.width * 4, size_t(width) * 4, crop.pixels.data() + size_t(row) * width * 4);
+        std::copy_n(image.pixels.data() + (size_t(row) * image.width + left) * 4, size_t(width) * 4, crop.pixels.data() + size_t(row) * width * 4);
     return crop;
+}
+
+Image Load(const std::filesystem::path& path)
+{
+    int width = 0, height = 0, channels = 0;
+    stbi_uc* pixels = stbi_load(path.string().c_str(), &width, &height, &channels, 4);
+    if (!pixels)
+        throw std::runtime_error("Could not read " + path.string() + ": " + stbi_failure_reason());
+    Image image{ static_cast<UINT>(width), static_cast<UINT>(height) };
+    image.pixels.assign(pixels, pixels + size_t(width) * height * 4);
+    stbi_image_free(pixels);
+    std::printf("Read %s: %dx%d\n", path.string().c_str(), width, height);
+    return image;
 }
 
 void Save(const Image& image, const std::filesystem::path& path)
@@ -251,12 +273,327 @@ Image Run(const Api& api, Dlss5* dlss5, Gpu& gpu, const Image& input, const Dlss
     return result;
 }
 
+// Depth as Unishade gives it, 0 nearest and 1 at the far plane, non-linear for a far plane of 1000. A floor reaches
+// from near at the bottom to the far plane at the top. Middle is half as far as the far plane everywhere.
+enum class Shape
+{
+    Floor,
+    Middle,
+    Zero,
+};
+
+Image Depth(UINT width, UINT height, Shape shape)
+{
+    constexpr float kFarPlane = 1000;
+    Image depth{ width, height, std::vector<uint8_t>(size_t(width) * height * 4), DXGI_FORMAT_R32_FLOAT };
+    for (UINT row = 0; row < height; ++row)
+    {
+        const float distance = shape == Shape::Floor ? std::max(0.01f, 1.0f - float(row) / height) : 0.5f;
+        const float stored = shape == Shape::Zero ? 0.0f : distance * kFarPlane / (1 + distance * (kFarPlane - 1));
+        for (UINT column = 0; column < width; ++column)
+            std::memcpy(depth.pixels.data() + (size_t(row) * width + column) * 4, &stored, 4);
+    }
+    return depth;
+}
+
+struct Step
+{
+    const Image* color;
+    const Image* depth; // null for none
+    bool reset;
+};
+
+// Runs the steps on a DLSS5 of its own, so no trial gets another's history, and reads back the last output.
+Image Trial(const Api& api, const std::filesystem::path& runtime, const std::wstring& data, const Dlss5Look& look, const std::vector<Step>& steps)
+{
+    char error[1024] = "";
+    Dlss5* dlss5 = api.create(runtime.c_str(), data.c_str(), nullptr, error, sizeof(error));
+    if (!dlss5)
+        throw std::runtime_error(std::string("Dlss5Create failed: ") + error);
+    try
+    {
+        Gpu gpu(api.device(dlss5));
+        std::vector<std::pair<const Image*, winrt::com_ptr<ID3D12Resource>>> textures;
+        const auto texture = [&](const Image* image) -> ID3D12Resource* {
+            if (!image)
+                return nullptr;
+            for (const auto& [uploaded, resource] : textures)
+                if (uploaded == image)
+                    return resource.get();
+            textures.emplace_back(image, gpu.Upload(*image));
+            return textures.back().second.get();
+        };
+        const UINT width = steps.front().color->width, height = steps.front().color->height;
+        const winrt::com_ptr<ID3D12Resource> output = gpu.Texture(width, height, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        for (const Step& step : steps)
+            if (!api.evaluate(dlss5, texture(step.color), texture(step.depth), output.get(), &look, step.reset))
+                throw std::runtime_error(std::string("Dlss5Evaluate failed: ") + api.error(dlss5));
+        Image result = gpu.Read(output.get());
+        textures.clear();
+        api.destroy(dlss5);
+        return result;
+    }
+    catch (...)
+    {
+        api.destroy(dlss5);
+        throw;
+    }
+}
+
+struct Difference
+{
+    double mean; // over every channel but alpha, out of 255
+    int largest;
+};
+
+Difference Differ(const Image& a, const Image& b)
+{
+    double sum = 0;
+    int largest = 0;
+    const size_t count = size_t(a.width) * a.height;
+    for (size_t pixel = 0; pixel < count; ++pixel)
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            const int difference = std::abs(int(a.pixels[pixel * 4 + channel]) - int(b.pixels[pixel * 4 + channel]));
+            sum += difference;
+            largest = std::max(largest, difference);
+        }
+    return { sum / (count * 3), largest };
+}
+
+// Changes one input at a time and says whether the output changed more than between two runs of the same trial.
+// Returns how many inputs changed nothing.
+int CheckKeys(const Api& api, const std::filesystem::path& runtime, const std::wstring& data, const Image& input, const Image& cut,
+              const Dlss5Look& look, int frames)
+{
+    std::printf("\nEach input, changed alone, over %d frame(s) of the image on a new feature:\n", frames);
+    const std::vector<Step> still(frames, Step{ &input, nullptr, false });
+    const Image baseline = Trial(api, runtime, data, look, still);
+    const Difference noise = Differ(baseline, Trial(api, runtime, data, look, still));
+    std::printf("  %-33s mean %.3f, largest %d\n", "The same trial again", noise.mean, noise.largest);
+    int missing = 0;
+    const auto report = [&](const char* key, const Image& a, const Image& b) {
+        const Difference difference = Differ(a, b);
+        const bool reached = difference.largest > noise.largest;
+        std::printf("  %-33s mean %.3f, largest %d: %s\n", key, difference.mean, difference.largest, reached ? "changes the output" : "NO EFFECT");
+        missing += !reached;
+    };
+    const auto changed = [&](const char* key, auto change) {
+        Dlss5Look other = look;
+        change(other);
+        report(key, baseline, Trial(api, runtime, data, other, still));
+    };
+    changed("DLSSNR.Style", [](Dlss5Look& other) { other.style = other.style == 0 ? 1 : 0; });
+    changed("DLSSNR.Intensity", [](Dlss5Look& other) { other.intensity = other.intensity > 0.5f ? 0.5f : 1.0f; });
+    changed("DLSSNR.LocalToneStrength", [](Dlss5Look& other) { other.localTone = other.localTone > 0.5f ? 0.0f : 1.0f; });
+    changed("DLSSNR.LocalStructureStrength", [](Dlss5Look& other) { other.localStructure = other.localStructure > 0.5f ? 0.0f : 1.0f; });
+    changed("DLSSNR.SkinStructureStrength", [](Dlss5Look& other) { other.skinStructure = other.skinStructure > 0.5f ? 0.0f : 1.0f; });
+    changed("DLSSNR.UseAutoMask", [](Dlss5Look& other) { other.autoMask = !other.autoMask; });
+
+    std::vector<Step> cutting = still;
+    cutting.push_back({ &cut, nullptr, false });
+    // The last step can get other depth, as a scene whose depth changes gives it.
+    const auto withDepth = [&](std::vector<Step> steps, const Image* depth, const Image* last) {
+        for (Step& step : steps)
+            step.depth = depth;
+        steps.back().depth = last;
+        return Trial(api, runtime, data, look, steps);
+    };
+    const Image floor = Depth(input.width, input.height, Shape::Floor), middle = Depth(input.width, input.height, Shape::Middle),
+                zero = Depth(input.width, input.height, Shape::Zero);
+    report("DLSSNR.Depth", withDepth(still, &floor, &floor), withDepth(still, &middle, &middle));
+    report("DLSSNR.Depth, then a cut", withDepth(cutting, &floor, &floor), withDepth(cutting, &middle, &middle));
+    report("DLSSNR.Depth, changing", withDepth(still, &floor, &floor), withDepth(still, &floor, &middle));
+    // No depth binds a texture of 0 with DepthInverted set. Depth of 0 given binds the same values without it.
+    report("DLSSNR.DepthInverted", baseline, withDepth(still, &zero, &zero));
+    report("DLSSNR.DepthInverted, then a cut", withDepth(cutting, nullptr, nullptr), withDepth(cutting, &zero, &zero));
+
+    const Image kept = Trial(api, runtime, data, look, cutting);
+    cutting.back().reset = true;
+    const Image reset = Trial(api, runtime, data, look, cutting);
+    report("DLSSNR.Reset", kept, reset);
+    const Difference fresh = Differ(reset, Trial(api, runtime, data, look, { { &cut, nullptr, false } }));
+    std::printf("  %-33s mean %.3f, largest %d: %s\n", "Reset against a new feature", fresh.mean, fresh.largest,
+                fresh.largest <= noise.largest ? "the same, so it drops the history" : "different, so some history is kept");
+    std::printf("  Not checked: DLSSNR.MVec, MVecScaleX and MVecScaleY, since the motion is all zero. Color, Output, their\n"
+                "  subrects, Width, Height, ScalingRatio and Enabled, since every output above needs them.\n");
+    return missing;
+}
+
+void AddonLog(const UnishadeHost*, UnishadeLogLevel, const char* text)
+{
+    std::printf("[DLSS5] %s\n", text);
+    std::fflush(stdout);
+}
+
+struct Shared
+{
+    winrt::com_ptr<ID3D11Texture2D> texture;
+    winrt::handle handle;
+};
+
+Shared CreateShared(ID3D11Device* device, UINT width, UINT height, DXGI_FORMAT format)
+{
+    // As Unishade makes the images add-ons get.
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = width;
+    desc.Height = height;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = format;
+    desc.SampleDesc = { 1, 0 };
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS;
+    desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+    Shared shared;
+    winrt::check_hresult(device->CreateTexture2D(&desc, nullptr, shared.texture.put()));
+    winrt::check_hresult(shared.texture.as<IDXGIResource1>()->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
+                                                                                 nullptr, shared.handle.put()));
+    return shared;
+}
+
+// Runs the add-on in the module as Unishade does, with depth, on a picture, the same picture again, a cut and a small
+// change, and says whether it kept its output for the repeat and dropped the history at the cut only. Returns how
+// many of those it got wrong.
+int CheckAddon(HMODULE library, const Api& api, const std::filesystem::path& runtime, const std::wstring& data, const Image& first,
+               const Image& cut, const Image& nudged, const Image& depthImage, const Dlss5Look& look)
+{
+    std::printf("\nThe add-on, as Unishade runs it:\n");
+    const UINT width = first.width, height = first.height;
+    winrt::com_ptr<IDXGIFactory1> factory;
+    winrt::check_hresult(CreateDXGIFactory1(IID_PPV_ARGS(factory.put())));
+    winrt::com_ptr<IDXGIAdapter1> adapter;
+    DXGI_ADAPTER_DESC1 description{};
+    for (UINT index = 0; factory->EnumAdapters1(index, adapter.put()) == S_OK; ++index, adapter = nullptr)
+        if (SUCCEEDED(adapter->GetDesc1(&description)) && description.VendorId == 0x10DE && !(description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE))
+            break;
+    if (!adapter)
+        throw std::runtime_error("There is no NVIDIA graphics card.");
+    winrt::com_ptr<ID3D11Device> created;
+    winrt::com_ptr<ID3D11DeviceContext> createdContext;
+    winrt::check_hresult(D3D11CreateDevice(adapter.get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, created.put(), nullptr,
+                                           createdContext.put()));
+    const auto device = created.as<ID3D11Device5>();
+    const auto context = createdContext.as<ID3D11DeviceContext4>();
+    winrt::com_ptr<ID3D11Fence> fence;
+    winrt::check_hresult(device->CreateFence(0, D3D11_FENCE_FLAG_SHARED, IID_PPV_ARGS(fence.put())));
+    winrt::handle fenceHandle;
+    winrt::check_hresult(fence->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, fenceHandle.put()));
+    winrt::handle reached{ CreateEventW(nullptr, FALSE, FALSE, nullptr) };
+    const Shared color = CreateShared(device.get(), width, height, DXGI_FORMAT_B8G8R8A8_UNORM);
+    const Shared output = CreateShared(device.get(), width, height, DXGI_FORMAT_B8G8R8A8_UNORM);
+    const Shared depth = CreateShared(device.get(), width, height, DXGI_FORMAT_R32_FLOAT);
+    context->UpdateSubresource(depth.texture.get(), 0, nullptr, depthImage.pixels.data(), width * 4, 0);
+    D3D11_TEXTURE2D_DESC staging{};
+    output.texture->GetDesc(&staging);
+    staging.Usage = D3D11_USAGE_STAGING;
+    staging.BindFlags = 0;
+    staging.MiscFlags = 0;
+    staging.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    winrt::com_ptr<ID3D11Texture2D> readable;
+    winrt::check_hresult(device->CreateTexture2D(&staging, nullptr, readable.put()));
+
+    const auto getAddon = reinterpret_cast<UnishadeGetAddonFunction>(GetProcAddress(library, "UnishadeGetAddon"));
+    if (!getAddon)
+        throw std::runtime_error("The module is not an add-on.");
+    const UnishadeAddon* addon = getAddon();
+    if (!(addon->flags & UNISHADE_READS_DEPTH))
+        throw std::runtime_error("The add-on does not ask for depth.");
+    // The add-on's folder holds nvngx_dlssnr.dll, and its name ends in a separator, as Unishade gives it.
+    const std::string folder = runtime.parent_path().string() + "\\";
+    const std::string dataFolder = std::filesystem::path(data).string();
+    UnishadeHost host{};
+    host.size = sizeof(host);
+    host.version = UNISHADE_API_VERSION;
+    host.unishade = "check";
+    host.folder = folder.c_str();
+    host.dataFolder = dataFolder.c_str();
+    std::memcpy(host.adapter, &description.AdapterLuid, sizeof(LUID));
+    host.log = AddonLog;
+    char error[512] = "";
+    void* instance = addon->create(&host, error, sizeof(error));
+    if (!instance)
+        throw std::runtime_error(std::string("The add-on did not start: ") + error);
+    // Its settings are in the order of Dlss5Look.
+    std::vector<std::array<float, 4>> settings(addon->settingCount);
+    const float values[] = { float(look.style), look.intensity, look.localTone, look.localStructure, look.skinStructure, float(look.autoMask),
+                             float(look.passCount) };
+    for (uint32_t i = 0; i < addon->settingCount; ++i)
+        settings[i] = { values[i] };
+
+    uint64_t value = 0;
+    const auto run = [&](const Image& picture, uint64_t number) {
+        std::vector<uint8_t> pixels = picture.pixels;
+        for (size_t pixel = 0; pixel < pixels.size(); pixel += 4)
+            std::swap(pixels[pixel], pixels[pixel + 2]);
+        context->UpdateSubresource(color.texture.get(), 0, nullptr, pixels.data(), width * 4, 0);
+        winrt::check_hresult(context->Signal(fence.get(), ++value));
+        context->Flush();
+        UnishadeFrame frame{};
+        frame.size = sizeof(frame);
+        frame.stage = UNISHADE_STAGE_BEFORE_EFFECTS;
+        frame.width = width;
+        frame.height = height;
+        frame.generation = 1;
+        frame.picture = number;
+        frame.color = { color.handle.get(), UNISHADE_FORMAT_BGRA8 };
+        frame.output = { output.handle.get(), UNISHADE_FORMAT_BGRA8 };
+        frame.depth = { depth.handle.get(), UNISHADE_FORMAT_R32_FLOAT };
+        frame.fence = fenceHandle.get();
+        frame.wait = value;
+        frame.signal = ++value;
+        frame.settings = reinterpret_cast<const float (*)[4]>(settings.data());
+        frame.sdrWhite = 1;
+        const auto start = std::chrono::steady_clock::now();
+        if (!addon->frame(instance, &frame, error, sizeof(error)))
+            throw std::runtime_error(std::string("The add-on failed on a frame: ") + error);
+        winrt::check_hresult(fence->SetEventOnCompletion(value, reached.get()));
+        if (WaitForSingleObject(reached.get(), 5000) != WAIT_OBJECT_0)
+            throw std::runtime_error("The add-on did not signal the fence.");
+        std::printf("  Frame %llu took the add-on %.1f ms\n", static_cast<unsigned long long>(number),
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+        context->CopyResource(readable.get(), output.texture.get());
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        winrt::check_hresult(context->Map(readable.get(), 0, D3D11_MAP_READ, 0, &mapped));
+        Image result{ width, height, std::vector<uint8_t>(size_t(width) * height * 4) };
+        for (UINT row = 0; row < height; ++row)
+            std::memcpy(result.pixels.data() + size_t(row) * width * 4, static_cast<const uint8_t*>(mapped.pData) + size_t(row) * mapped.RowPitch,
+                        size_t(width) * 4);
+        context->Unmap(readable.get(), 0);
+        for (size_t pixel = 0; pixel < result.pixels.size(); pixel += 4)
+            std::swap(result.pixels[pixel], result.pixels[pixel + 2]);
+        return result;
+    };
+    const Image once = run(first, 1), again = run(first, 2), afterCut = run(cut, 3), afterNudge = run(nudged, 4);
+    settings[1][0] = look.intensity > 0.5f ? 0.5f : 1.0f;
+    const Image otherLook = run(nudged, 5);
+    addon->destroy(instance);
+
+    // The module on its own, for what the add-on should match.
+    const Image twice = Trial(api, runtime, data, look, { { &first, &depthImage, false }, { &first, &depthImage, false } });
+    const Image freshCut = Trial(api, runtime, data, look, { { &cut, &depthImage, false } });
+    const Image freshNudge = Trial(api, runtime, data, look, { { &nudged, &depthImage, false } });
+    int wrong = 0;
+    const auto report = [&](const char* what, const Image& a, const Image& b, bool same, const char* meaning) {
+        const Difference difference = Differ(a, b);
+        const bool right = same == (difference.largest == 0);
+        std::printf("  %-44s mean %.3f, largest %d: %s\n", what, difference.mean, difference.largest, right ? meaning : "WRONG");
+        wrong += !right;
+    };
+    report("Evaluating the same picture twice, against once", twice, once, false, "it changes, so a repeat would flicker");
+    report("The same picture under a new number", again, once, true, "the output is kept");
+    report("A cut, against a new feature", afterCut, freshCut, true, "the history is dropped");
+    report("The cut picture moved 4 pixels, against new", afterNudge, freshNudge, false, "not a cut, so the history is kept");
+    report("That picture again with another intensity", otherLook, afterNudge, false, "evaluated again");
+    return wrong;
+}
+
 int Main(int argc, wchar_t** argv)
 {
     if (argc < 4)
     {
         std::printf("dlss5_check <nvngx_dlssnr.dll> <image> <output folder> [--module <dll>] [--frames N] [--passes N] [--style N]\n"
-                    "    [--intensity X] [--local-tone X] [--local-structure X] [--skin-structure X] [--no-auto-mask]\n");
+                    "    [--intensity X] [--local-tone X] [--local-structure X] [--skin-structure X] [--no-auto-mask] [--keys <image>]\n");
         return 2;
     }
     // nvngx_dlssnr.dll does not log through the callback NGX is given, only to a file in the data folder and to the
@@ -269,6 +606,7 @@ int Main(int argc, wchar_t** argv)
     std::filesystem::path module = std::filesystem::path(exe).replace_filename(L"Unishade_nvngx.dll");
     Dlss5Look look{ 0, 1.0f, 1.0f, 1.0f, 1.0f, true, 1 };
     int frames = 1;
+    std::filesystem::path keys;
     for (int index = 4; index < argc; ++index)
     {
         const std::wstring option = argv[index];
@@ -296,22 +634,15 @@ int Main(int argc, wchar_t** argv)
             look.localStructure = static_cast<float>(_wtof(value));
         else if (option == L"--skin-structure")
             look.skinStructure = static_cast<float>(_wtof(value));
+        else if (option == L"--keys")
+            keys = value;
         else
             throw std::runtime_error("Unknown option.");
     }
     std::printf("Look: style %d, intensity %.2f, local tone %.2f, local structure %.2f, skin structure %.2f, auto mask %d, passes %d\n",
                 look.style, look.intensity, look.localTone, look.localStructure, look.skinStructure, look.autoMask, look.passCount);
 
-    Image input;
-    int width = 0, height = 0, channels = 0;
-    stbi_uc* pixels = stbi_load(std::filesystem::path(argv[2]).string().c_str(), &width, &height, &channels, 4);
-    if (!pixels)
-        throw std::runtime_error(std::string("Could not read the image: ") + stbi_failure_reason());
-    input.width = static_cast<UINT>(width);
-    input.height = static_cast<UINT>(height);
-    input.pixels.assign(pixels, pixels + size_t(width) * height * 4);
-    stbi_image_free(pixels);
-    std::printf("Read %ls: %dx%d\n", argv[2], width, height);
+    const Image input = Load(argv[2]);
     std::filesystem::create_directories(folder / "ngx");
     Save(input, folder / "input.png");
 
@@ -339,8 +670,19 @@ int Main(int argc, wchar_t** argv)
         Save(Run(api, dlss5, gpu, quarter, look, frames), folder / "quarter-output.png");
     }
     api.destroy(dlss5);
+    int missing = 0;
+    if (!keys.empty())
+    {
+        const Image cut = Load(keys);
+        const UINT width = std::min(input.width, cut.width), height = std::min(input.height, cut.height);
+        missing = CheckKeys(api, runtime, data, Crop(input, width, height), Crop(cut, width, height), look, frames);
+        // A part of each, so the cut picture can also move a little.
+        const UINT part = width - 4;
+        missing += CheckAddon(library, api, runtime, data, Crop(input, part, height), Crop(cut, part, height), Crop(cut, part, height, 4),
+                              Depth(part, height, Shape::Floor), look);
+    }
     FreeLibrary(library);
-    return 0;
+    return missing ? 1 : 0;
 }
 } // namespace
 

@@ -76,10 +76,10 @@ if(WIN32)
     target_link_libraries(Unishade_nvngx PRIVATE d3d12 dxgi windowsapp)
 
     add_executable(dlss5_check EXCLUDE_FROM_ALL addons/dlss5/check.cpp)
-    target_include_directories(dlss5_check PRIVATE "${STB_DIR}")
+    target_include_directories(dlss5_check PRIVATE addons "${STB_DIR}")
     target_compile_definitions(dlss5_check PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(dlss5_check PRIVATE /W4 /permissive- /EHsc)
-    target_link_libraries(dlss5_check PRIVATE d3d12 windowsapp)
+    target_link_libraries(dlss5_check PRIVATE d3d11 d3d12 dxgi windowsapp)
     add_dependencies(dlss5_check Unishade_nvngx)
 endif()
 
