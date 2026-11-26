@@ -1,13 +1,16 @@
 // Runs a moving picture through the Depth add-on as Unishade does, without a window, and says how steady its depth is
 // and how sharp its edges are.
 // depth_check <Depth.dll> <add-on folder> <image> <output folder> [--size WxH] [--frames N] [--hold N] [--scroll X]
-//     [--fps N] [--detail N] [--part <image>] [--cut <image>] [--cut-at N] [--hud 1]
+//     [--fps N] [--detail N] [--part <image>] [--cut <image>] [--cut-at N] [--hud 1] [--dark F] [--grain N]
 // The picture is a part of the image, the size given, that moves across it by scroll pixels a frame for frames frames
 // and then stays for hold frames. With --part, the picture stays still and a rectangle from the other image moves
 // across it instead. With --cut, the picture comes from the other image from moving frame cut-at on. With --hud, still
-// bars and stripes like a game's HUD are drawn over every frame, and left out of the figures. The add-on folder holds
-// the model and ONNX Runtime. The depth of the last moving frame and of the last frame are written as PNG, with the
-// normals effects would make of them, and the figures of every frame to frames.csv.
+// bars and stripes like a game's HUD are drawn over every frame, and left out of the figures. With --dark, the images
+// are made as dark and flat as a night scene: each value, from 0 to 1, is squared and multiplied by F. With --grain,
+// every frame gets noise of its own, with a deviation of N levels of 255, and the add-on is told the picture changed,
+// as a game's picture does even where nothing in it moves. The add-on folder holds the model and ONNX Runtime. The
+// depth of the last moving frame and of the last frame are written as PNG, with the normals effects would make of them,
+// and the figures of every frame to frames.csv.
 
 #include <unishade_addon.h>
 
@@ -34,6 +37,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -250,7 +254,7 @@ int Main(int argc, wchar_t** argv)
     if (argc < 5)
     {
         std::printf("depth_check <Depth.dll> <add-on folder> <image> <output folder> [--size WxH] [--frames N] [--hold N] [--scroll X]\n"
-                    "    [--fps N] [--detail N] [--part <image>] [--cut <image>] [--cut-at N] [--hud 1]\n");
+                    "    [--fps N] [--detail N] [--part <image>] [--cut <image>] [--cut-at N] [--hud 1] [--dark F] [--grain N]\n");
         return 2;
     }
     const std::filesystem::path module = std::filesystem::absolute(argv[1]), output = argv[4];
@@ -258,7 +262,7 @@ int Main(int argc, wchar_t** argv)
     if (folder.back() != '\\' && folder.back() != '/')
         folder += '\\';
     int width = 1280, height = 720, frames = 120, hold = 60, scroll = 4, fps = 60, cutAt = -1;
-    float detail = 1;
+    float detail = 1, dark = 0, grain = 0;
     bool hud = false;
     const wchar_t* partFile = nullptr;
     const wchar_t* cutFile = nullptr;
@@ -289,12 +293,26 @@ int Main(int argc, wchar_t** argv)
             cutAt = _wtoi(value);
         else if (option == L"--hud")
             hud = _wtoi(value) != 0;
+        else if (option == L"--dark")
+            dark = static_cast<float>(_wtof(value));
+        else if (option == L"--grain")
+            grain = static_cast<float>(_wtof(value));
         else
             throw std::runtime_error("Unknown option.");
     }
 
-    const Image image = Load(argv[3]);
-    const std::optional<Image> other = partFile ? Load(partFile) : cutFile ? Load(cutFile) : std::optional<Image>();
+    const auto darken = [&](Image loaded) {
+        if (dark > 0)
+            for (size_t i = 0; i < loaded.rgba.size(); ++i)
+                if (i % 4 != 3)
+                {
+                    const float v = loaded.rgba[i] / 255.0f;
+                    loaded.rgba[i] = static_cast<uint8_t>(std::lround(std::clamp(255 * dark * v * v, 0.0f, 255.0f)));
+                }
+        return loaded;
+    };
+    const Image image = darken(Load(argv[3]));
+    const std::optional<Image> other = partFile ? darken(Load(partFile)) : cutFile ? darken(Load(cutFile)) : std::optional<Image>();
     if (width > image.width || height > image.height || (other && (width > other->width || height > other->height)))
         throw std::runtime_error("An image is smaller than the picture.");
     if (cutFile && cutAt < 1)
@@ -332,6 +350,8 @@ int Main(int argc, wchar_t** argv)
     std::printf("Picture %dx%d of %ls (%dx%d), %d frames moving %d pixels each, then %d still, at %d a second, detail %d%s%s%s\n", width, height,
                 argv[3], image.width, image.height, frames, scroll, hold, fps, static_cast<int>(detail), partFile ? ", a part moving over it" : "",
                 cutFile ? ", cut to another image" : "", hud ? ", with a HUD" : "");
+    if (dark > 0 || grain > 0)
+        std::printf("Darkened by %.2f, with grain of %.1f levels\n", dark, grain);
     std::filesystem::create_directories(output);
 
     winrt::com_ptr<IDXGIFactory1> factory;
@@ -394,6 +414,18 @@ int Main(int argc, wchar_t** argv)
     settings[0][0] = detail;
 
     std::vector<uint8_t> picture(size_t(width) * height * 4);
+    // Drawing new noise for every frame would take longer than a frame, so each frame reads this from a place of its
+    // own instead.
+    constexpr size_t kGrainReach = 1 << 16;
+    std::vector<float> noise;
+    std::mt19937 random(1);
+    if (grain > 0)
+    {
+        std::normal_distribution<float> normal(0.0f, grain);
+        noise.resize(picture.size() + kGrainReach);
+        for (float& sample : noise)
+            sample = normal(random);
+    }
     std::vector<std::vector<float>> closeness(total);
     std::vector<float> lastMoving, last;
     uint64_t value = 0;
@@ -411,6 +443,7 @@ int Main(int argc, wchar_t** argv)
             throw std::runtime_error("The add-on wrote no depth in a minute.");
         const Layout& layout = layouts[index];
         const Image& source = layout.second ? *other : image;
+        const float* frameNoise = grain > 0 ? &noise[random() % kGrainReach] : nullptr;
         for (int y = 0; y < height; ++y)
             for (int x = 0; x < width; ++x)
             {
@@ -426,6 +459,9 @@ int Main(int argc, wchar_t** argv)
                 to[1] = from[1];
                 to[2] = from[0];
                 to[3] = 255;
+                if (frameNoise)
+                    for (int c = 0; c < 3; ++c)
+                        to[c] = static_cast<uint8_t>(std::clamp(std::lround(to[c] + frameNoise[(size_t(y) * width + x) * 4 + c]), 0l, 255l));
             }
         // Bars with a border and stripes like lettering, the same in every frame.
         for (const Rect& rect : hudRects)
@@ -449,8 +485,8 @@ int Main(int argc, wchar_t** argv)
         frame.width = width;
         frame.height = height;
         frame.generation = 1;
-        // The picture only stops changing once it stops moving.
-        frame.picture = static_cast<uint64_t>(std::min(index, frames - 1)) + 1;
+        // The picture only stops changing once it stops moving, unless its grain changes it.
+        frame.picture = grain > 0 ? static_cast<uint64_t>(tick) + 1 : static_cast<uint64_t>(std::min(index, frames - 1)) + 1;
         frame.color = { color.handle.get(), UNISHADE_FORMAT_BGRA8 };
         frame.depth = { depth.handle.get(), UNISHADE_FORMAT_R32_FLOAT };
         frame.fence = fenceHandle.get();
@@ -616,7 +652,23 @@ int Main(int argc, wchar_t** argv)
     // does not count, and nor do the frames after a cut, which have figures of their own.
     const int from = frames / 2;
     const int to = cutFile ? std::min(frames, cutAt) : frames;
-    std::vector<double> flicker, pulse, late, off, wake, part, lag;
+    std::vector<double> flicker, pulse, late, off, wake, part, lag, resting, jumps;
+    // At rest, a second after the picture stops, depth should only change as much as grain makes it. A pixel that jumps
+    // by an edge's step from one frame to the next is one that went from one side of an edge to the other, which
+    // effects show as edges that crawl.
+    const int settled = frames + fps;
+    const auto jumped = [&](int i) {
+        size_t count = 0, pixels = 0;
+        for (int y = 0; y < height; ++y)
+            for (int x = 0; x < width; ++x)
+                if (!inHud(x, y))
+                {
+                    const float a = closeness[i][size_t(y) * width + x], b = closeness[i - 1][size_t(y) * width + x];
+                    count += std::abs(a - b) > kEdgeStep * std::max(a, b);
+                    ++pixels;
+                }
+        return pixels ? double(count) / pixels : 0;
+    };
     FILE* csv = nullptr;
     _wfopen_s(&csv, (output / "frames.csv").c_str(), L"w");
     if (csv)
@@ -627,6 +679,11 @@ int Main(int argc, wchar_t** argv)
         const Comparison rest = compare(index, total - 1, all);
         if (csv)
             std::fprintf(csv, "%d,%.5f,%.5f,%.5f,%.5f,%.2f\n", index, change.difference, change.scale, rest.difference, rest.scale, frameTime[index]);
+        if (index > settled)
+        {
+            resting.push_back(change.difference);
+            jumps.push_back(jumped(index));
+        }
         if (index < from || index >= to)
             continue;
         flicker.push_back(change.difference);
@@ -654,6 +711,9 @@ int Main(int argc, wchar_t** argv)
     if (!late.empty())
         std::printf("It was %.3f%% from the depth the picture came to rest at (%.3f%% at worst), and as a whole %.3f%% (%.3f%%).\n", 100 * Mean(late),
                     100 * Worst(late), 100 * Mean(off), 100 * Worst(off));
+    if (!resting.empty())
+        std::printf("At rest, it changed by %.3f%% frame to frame (%.3f%%), and %.3f%% of pixels jumped by an edge's step (%.3f%%).\n",
+                    100 * Mean(resting), 100 * Worst(resting), 100 * Mean(jumps), 100 * Worst(jumps));
     if (!lag.empty())
         std::printf("Depth trailed the picture by %.1f pixels on average, and %.0f at most.\n", Mean(lag), *std::max_element(lag.begin(), lag.end()));
     if (partFile)
