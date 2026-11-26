@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cstdint>
+#include <future>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -59,6 +60,9 @@ private:
         winrt::com_ptr<ID3D11UnorderedAccessView> motionTarget;
     };
 
+    // The compiled shaders. Compiling takes seconds, nearly all of it Search's and Refine's, so it is done once for
+    // every estimator a program makes, each shader on a thread of its own.
+    static const std::array<std::vector<uint8_t>, kShaderCount>& Code();
     // Runs a shader with views in t0 to t5 and targets in u0 to u5, and unbinds them after.
     void Dispatch(ID3D11DeviceContext* context, Shader shader, ID3D11Buffer* constants, std::array<ID3D11ShaderResourceView*, 6> views,
                   std::array<ID3D11UnorderedAccessView*, 6> targets, UINT x, UINT y);
@@ -126,18 +130,34 @@ inline winrt::com_ptr<ID3D11Buffer> CreateConstants(ID3D11Device* device, const 
     return buffer;
 }
 
+inline const std::array<std::vector<uint8_t>, Estimator::kShaderCount>& Estimator::Code()
+{
+    static const std::array<std::vector<uint8_t>, kShaderCount> code = [] {
+        const std::string source = std::string("#define CONSTANT static const\n") + depth::kShaderShared + kShaderShared + kShaders;
+        const char* entryPoints[] = { "Reduce", "Downsample", "Resolve", "Search", "Refine", "Finish" };
+        std::array<std::future<std::vector<uint8_t>>, kShaderCount> compiling;
+        for (size_t i = 0; i < compiling.size(); ++i)
+            compiling[i] = std::async(std::launch::async, [&source, entryPoint = entryPoints[i]] {
+                winrt::com_ptr<ID3DBlob> blob, errors;
+                if (FAILED(D3DCompile(source.data(), source.size(), "motion", nullptr, nullptr, entryPoint, "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
+                                      blob.put(), errors.put())))
+                    throw std::runtime_error(errors ? static_cast<const char*>(errors->GetBufferPointer()) : "The motion shaders did not compile.");
+                const auto* bytes = static_cast<const uint8_t*>(blob->GetBufferPointer());
+                return std::vector<uint8_t>(bytes, bytes + blob->GetBufferSize());
+            });
+        std::array<std::vector<uint8_t>, kShaderCount> compiled;
+        for (size_t i = 0; i < compiled.size(); ++i)
+            compiled[i] = compiling[i].get();
+        return compiled;
+    }();
+    return code;
+}
+
 inline Estimator::Estimator(ID3D11Device* device, UINT width, UINT height)
 {
-    const std::string source = std::string("#define CONSTANT static const\n") + depth::kShaderShared + kShaderShared + kShaders;
-    const char* entryPoints[] = { "Reduce", "Downsample", "Resolve", "Search", "Refine", "Finish" };
+    const auto& code = Code();
     for (size_t i = 0; i < shaders.size(); ++i)
-    {
-        winrt::com_ptr<ID3DBlob> code, errors;
-        if (FAILED(D3DCompile(source.data(), source.size(), "motion", nullptr, nullptr, entryPoints[i], "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
-                              code.put(), errors.put())))
-            throw std::runtime_error(errors ? static_cast<const char*>(errors->GetBufferPointer()) : "The motion shaders did not compile.");
-        winrt::check_hresult(device->CreateComputeShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, shaders[i].put()));
-    }
+        winrt::check_hresult(device->CreateComputeShader(code[i].data(), code[i].size(), nullptr, shaders[i].put()));
 
     const auto createLuma = [&](Level& level) {
         const auto luma = CreateTexture(device, level.width, level.height, DXGI_FORMAT_R16G16_FLOAT);
