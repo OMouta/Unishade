@@ -94,6 +94,35 @@ kernel void Resolve(device uint* keys [[buffer(2)]])
             ++changed;
     }
     keys[MotionKeyCut] = changed >= CutSections ? 1u : 0u;
+
+    // The noise from the windows Refine counted, as in motion_shared.h.
+    uint costs[CostBins];
+    for (uint bin = 0; bin < CostBins; ++bin)
+        costs[bin] = 0;
+    uint total = 0;
+    for (uint i = 0; i < ContrastBins * CostBins; ++i)
+        total += keys[MotionKeyCosts + i];
+    uint plain = 0;
+    for (uint row = 0; row < ContrastBins && float(plain) < NoiseShare * float(total); ++row)
+        for (uint column = 0; column < CostBins; ++column)
+        {
+            uint count = keys[MotionKeyCosts + row * CostBins + column];
+            costs[column] += count;
+            plain += count;
+        }
+    float below = 0.0f;
+    for (uint column = 0; column < CostBins && plain > 0; ++column)
+    {
+        float count = float(costs[column]);
+        if (count > 0.0f && below + count >= 0.5f * float(plain))
+        {
+            keys[MotionKeyNoise] = as_type<uint>((float(column) + (0.5f * float(plain) - below) / count) * CostRange / float(CostBins));
+            break;
+        }
+        below += count;
+    }
+    for (uint j = 0; j < ContrastBins * CostBins; ++j)
+        keys[MotionKeyCosts + j] = 0;
 }
 
 // Where a window's taps are in the luma it is matched in: around origin, spacing apart, in pixels of that luma, each
@@ -139,15 +168,16 @@ struct Best
     float score;
 };
 
-// Keeps shift if it scores better than the best so far. Where the motion is even, most candidates are the best
-// already, and are not matched again.
-void Try(thread const float* window, texture2d<float> luma, int2 size, Grid grid, float scale, float2 shift, float2 expected, thread Best& best)
+// Keeps shift if it scores better than the best so far by more than margin, the share of the noise a level allows.
+// Where the motion is even, most candidates are the best already, and are not matched again.
+void Try(thread const float* window, texture2d<float> luma, int2 size, Grid grid, float scale, float margin, float2 shift, float2 expected,
+         thread Best& best)
 {
     if (all(shift == best.shift))
         return;
     float cost = Cost(window, luma, size, grid, shift / grid.texel);
     float score = cost + Smoothness * length(shift - expected) / scale;
-    if (score < best.score)
+    if (score + margin < best.score)
     {
         best.shift = shift;
         best.cost = cost;
@@ -157,7 +187,7 @@ void Try(thread const float* window, texture2d<float> luma, int2 size, Grid grid
 
 // The best vector for p at this level, the cost of none and the motion the level above expects at p, searched in
 // steps of step picture pixels around the best candidate. The expected motion is tried first, so it wins a tie.
-Best Match(thread const float* window, texture2d<float> luma, int2 size, Grid grid, int2 p, float step, constant Sizes& sizes,
+Best Match(thread const float* window, texture2d<float> luma, int2 size, Grid grid, float margin, int2 p, float step, constant Sizes& sizes,
            texture2d<float> coarser, texture2d<float> last, thread float& stillCost, thread float2& expected)
 {
     expected = float2(0.0f);
@@ -169,7 +199,7 @@ Best Match(thread const float* window, texture2d<float> luma, int2 size, Grid gr
         best.score = best.cost;
         for (int y = -CoarsestReach; y <= CoarsestReach; ++y)
             for (int x = -CoarsestReach; x <= CoarsestReach; ++x)
-                Try(window, luma, size, grid, sizes.Scale, float2(x, y) * sizes.Scale, expected, best);
+                Try(window, luma, size, grid, sizes.Scale, margin, float2(x, y) * sizes.Scale, expected, best);
     }
     else
     {
@@ -181,23 +211,23 @@ Best Match(thread const float* window, texture2d<float> luma, int2 size, Grid gr
         best.shift = expected;
         best.cost = Cost(window, luma, size, grid, expected / grid.texel);
         best.score = best.cost;
-        Try(window, luma, size, grid, sizes.Scale, coarser.read(uint2(clamp(parent + int2(toward.x, 0), int2(0), last2))).xy, expected, best);
-        Try(window, luma, size, grid, sizes.Scale, coarser.read(uint2(clamp(parent + int2(0, toward.y), int2(0), last2))).xy, expected, best);
-        Try(window, luma, size, grid, sizes.Scale, coarser.read(uint2(clamp(parent + toward, int2(0), last2))).xy, expected, best);
-        Try(window, luma, size, grid, sizes.Scale, float2(0.0f), expected, best);
+        Try(window, luma, size, grid, sizes.Scale, margin, coarser.read(uint2(clamp(parent + int2(toward.x, 0), int2(0), last2))).xy, expected, best);
+        Try(window, luma, size, grid, sizes.Scale, margin, coarser.read(uint2(clamp(parent + int2(0, toward.y), int2(0), last2))).xy, expected, best);
+        Try(window, luma, size, grid, sizes.Scale, margin, coarser.read(uint2(clamp(parent + toward, int2(0), last2))).xy, expected, best);
+        Try(window, luma, size, grid, sizes.Scale, margin, float2(0.0f), expected, best);
     }
     stillCost = Cost(window, luma, size, grid, float2(0.0f));
-    Try(window, luma, size, grid, sizes.Scale, last.read(min(uint2((float2(p) + 0.5f) * sizes.Scale), sizes.PictureSize - 1u)).xy, expected, best);
+    Try(window, luma, size, grid, sizes.Scale, margin, last.read(min(uint2((float2(p) + 0.5f) * sizes.Scale), sizes.PictureSize - 1u)).xy, expected, best);
     float2 centre = best.shift;
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)
             if (x != 0 || y != 0)
-                Try(window, luma, size, grid, sizes.Scale, centre + float2(x, y) * step, expected, best);
+                Try(window, luma, size, grid, sizes.Scale, margin, centre + float2(x, y) * step, expected, best);
     return best;
 }
 
-kernel void Search(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [[buffer(0)]], texture2d<float> luma [[texture(2)]],
-                   texture2d<float> coarser [[texture(4)]], texture2d<float> last [[texture(5)]],
+kernel void Search(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [[buffer(0)]], device const uint* keys [[buffer(2)]],
+                   texture2d<float> luma [[texture(2)]], texture2d<float> coarser [[texture(4)]], texture2d<float> last [[texture(5)]],
                    texture2d<float, access::write> motionTarget [[texture(6)]])
 {
     if (any(id >= sizes.Size))
@@ -206,22 +236,23 @@ kernel void Search(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [
     Grid grid = { int2(id), 1, sizes.Scale };
     float window[Side * Side];
     LoadWindow(luma, size, grid, window);
+    float margin = NoiseMargin * max(as_type<float>(keys[MotionKeyNoise]) - NoiseFloor, 0.0f) / sizes.Scale;
     float stillCost;
     float2 expected;
-    Best best = Match(window, luma, size, grid, int2(id), sizes.Scale, sizes, coarser, last, stillCost, expected);
+    Best best = Match(window, luma, size, grid, margin, int2(id), sizes.Scale, sizes, coarser, last, stillCost, expected);
     // Half a step more, so the level below starts within its own step of the motion.
     float2 centre = best.shift;
     float halfStep = sizes.Scale / 2.0f;
-    Try(window, luma, size, grid, sizes.Scale, centre + float2(halfStep, 0.0f), expected, best);
-    Try(window, luma, size, grid, sizes.Scale, centre - float2(halfStep, 0.0f), expected, best);
-    Try(window, luma, size, grid, sizes.Scale, centre + float2(0.0f, halfStep), expected, best);
-    Try(window, luma, size, grid, sizes.Scale, centre - float2(0.0f, halfStep), expected, best);
+    Try(window, luma, size, grid, sizes.Scale, margin, centre + float2(halfStep, 0.0f), expected, best);
+    Try(window, luma, size, grid, sizes.Scale, margin, centre - float2(halfStep, 0.0f), expected, best);
+    Try(window, luma, size, grid, sizes.Scale, margin, centre + float2(0.0f, halfStep), expected, best);
+    Try(window, luma, size, grid, sizes.Scale, margin, centre - float2(0.0f, halfStep), expected, best);
     motionTarget.write(float4(best.shift, best.cost, 0.0f), id);
 }
 
 // The finest level is matched in the luma at the picture's size, a level's pixel apart, so that a whole pixel of
 // motion matches exactly and a fraction of one is found between pixels of the picture rather than of a smaller one.
-kernel void Refine(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [[buffer(0)]], device const uint* keys [[buffer(2)]],
+kernel void Refine(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [[buffer(0)]], device atomic_uint* keys [[buffer(2)]],
                    texture2d<float> coarser [[texture(4)]], texture2d<float> last [[texture(5)]], texture2d<float, access::write> motionTarget [[texture(6)]],
                    texture2d<float> fine [[texture(7)]], texture2d<uint, access::read_write> stillCount [[texture(8)]])
 {
@@ -231,12 +262,14 @@ kernel void Refine(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [
     int2 size = int2(sizes.PictureSize);
     int spacing = int(sizes.Scale);
     Grid grid = { p * spacing, spacing, 1.0f };
-    bool cut = keys[MotionKeyCut] != 0;
+    bool cut = atomic_load_explicit(&keys[MotionKeyCut], memory_order_relaxed) != 0;
     float window[Side * Side];
     LoadWindow(fine, size, grid, window);
+    float noise = as_type<float>(atomic_load_explicit(&keys[MotionKeyNoise], memory_order_relaxed));
+    float margin = NoiseMargin * max(noise - NoiseFloor, 0.0f);
     float stillCost;
     float2 expected;
-    Best best = Match(window, fine, size, grid, p, 1.0f, sizes, coarser, last, stillCost, expected);
+    Best best = Match(window, fine, size, grid, margin, p, 1.0f, sizes, coarser, last, stillCost, expected);
     float2 shift = best.shift;
     float cost = best.cost;
 
@@ -264,7 +297,7 @@ kernel void Refine(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [
         offset = clamp(offset + Step(xx, xy, yy, mismatch) * float(grid.spacing), shift - 1.0f, shift + 1.0f);
     }
     float refinedCost = Cost(window, fine, size, grid, offset);
-    if (refinedCost < cost)
+    if (refinedCost + margin < cost)
     {
         shift = offset;
         cost = refinedCost;
@@ -285,7 +318,10 @@ kernel void Refine(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [
         for (int x = 1; x < Side - 1; ++x)
             contrast += abs(window[y * Side + x] - mean);
     contrast /= float((Side - 2) * (Side - 2));
-    float confidence = cut ? 0.0f : MatchConfidence(still ? stillCost : cost, contrast);
+    // A quarter of the windows is enough to measure the noise by, and keeps the counting cheap.
+    if (!cut && all((p & 1) == 0))
+        atomic_fetch_add_explicit(&keys[MotionKeyCosts + NoiseBin(contrast, cost)], 1u, memory_order_relaxed);
+    float confidence = cut ? 0.0f : MatchConfidence(still ? stillCost : cost, contrast, noise);
     motionTarget.write(float4(cut || still ? float2(0.0f) : shift, confidence, still ? 1.0f : 0.0f), id);
 }
 

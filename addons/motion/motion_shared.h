@@ -30,13 +30,31 @@ CONSTANT int CoarsestReach = 4;
 // texture and a plain sky in a fast one would stop.
 CONSTANT float StillCost = 0.004;
 CONSTANT float StillMargin = 0.0005;
+// A picture with grain, such as a game's at night, changes in every window from one picture to the next even where
+// nothing moved, so every vector matches about as well on a plain area, and a vector a fraction of a pixel off, whose
+// luma is read between pixels, averages the grain and matches best. The noise is the median cost of the plainest
+// NoiseShare of the finest level's windows in the estimate before, those whose luma varies least, since grain is all
+// their cost can be. A clean picture that moves by a fraction of a pixel matches a little worse on its textures, and
+// the costs of every window took that for noise: motion_check's slow pan stopped. The windows are counted by contrast
+// in ContrastBins steps of half an octave up to 1/16, and by cost in CostBins steps up to CostRange. A vector only
+// replaces the one tried before it, the motion expected from the level above first, if it matches better by more than
+// NoiseMargin times the noise beyond NoiseFloor, at each level that over how many picture pixels a level's pixel is
+// wide, since each level averages it. On a plain grainy area the expected motion stays, which is none on a still
+// picture. NoiseFloor is about what an 8-bit picture that moves by a fraction of a pixel differs by from rounding,
+// which matching has always taken: a margin for it stopped more of motion_check's slow pan.
+CONSTANT float NoiseShare = 0.1;
+CONSTANT float NoiseFloor = 0.001;
+CONSTANT uint ContrastBins = 16;
+CONSTANT uint CostBins = 64;
+CONSTANT float CostRange = 0.032;
+CONSTANT float NoiseMargin = 1.0;
 // A pixel is still once its window has not changed in this many estimates in a row. Deciding afresh each time makes
 // vectors that are almost zero alternate with zero.
 CONSTANT uint StillWins = 2;
 // The confidence falls from 1 to 0 as the luma that a window's vector brings from the previous picture differs from the
-// window's on average by up to this share of how much the window's own luma varies, plus ContrastFloor. Measured
-// against the window's contrast, a vector that is a fraction of a pixel off on a sharp texture keeps its confidence,
-// and a wrong vector on a faint texture, which brings luma nearly as faint, loses it.
+// window's on average, beyond the picture's noise, by up to this share of how much the window's own luma varies, plus
+// ContrastFloor. Measured against the window's contrast, a vector that is a fraction of a pixel off on a sharp texture
+// keeps its confidence, and a wrong vector on a faint texture, which brings luma nearly as faint, loses it.
 CONSTANT float MatchTolerance = 0.5;
 CONSTANT float ContrastFloor = 0.01;
 // And for each pixel of the picture, as the color its vector brings differs from its own by up to this in any channel.
@@ -50,10 +68,12 @@ CONSTANT float Smoothness = 0.002;
 // Keeps the sub-pixel step from growing without bound where a window has an edge in only one direction, or none.
 CONSTANT float Damping = 1e-5;
 // Where each count is in the keys, which are unsigned numbers: whether this is a cut, the sections' levels of the
-// current picture, and those of the previous one.
+// current picture, those of the previous one, the noise as a float's bits, and the count of the finest level's costs.
 CONSTANT uint MotionKeyCut = 0;
 CONSTANT uint MotionKeySections = 1;
 CONSTANT uint MotionKeyPrevious = 1 + 9 * SectionLevels;
+CONSTANT uint MotionKeyNoise = 1 + 18 * SectionLevels;
+CONSTANT uint MotionKeyCosts = 2 + 18 * SectionLevels;
 
 // The brightness a color is matched by, in units of SDR white.
 float Brightness(float3 color, float white)
@@ -67,9 +87,16 @@ uint Band(float brightness)
     return min(uint(brightness * SectionLevels), SectionLevels - 1);
 }
 
-float MatchConfidence(float cost, float contrast)
+float MatchConfidence(float cost, float contrast, float noise)
 {
-    return saturate(1 - cost / (MatchTolerance * (contrast + ContrastFloor)));
+    return saturate(1 - max(cost - noise, 0.0f) / (MatchTolerance * (contrast + ContrastFloor)));
+}
+
+// Where a window of the finest level is counted, for the noise.
+uint NoiseBin(float contrast, float cost)
+{
+    uint row = uint(clamp(2 * (log2(max(contrast, 1e-9f)) + 4) + ContrastBins - 1, 0.0f, float(ContrastBins - 1)));
+    return row * CostBins + min(uint(cost / CostRange * CostBins), CostBins - 1);
 }
 
 // The sub-pixel step that brings the window's luma closest to the previous picture's, from the sums of its gradient's
@@ -87,9 +114,9 @@ float2 Step(float xx, float xy, float yy, float2 mismatch)
 constexpr unsigned kFinestWidth = 1280;
 // The coarsest level is the first no wider than this, so the coarsest search reaches about as far on every size.
 constexpr unsigned kCoarsestWidth = 64;
-// As kShaders lays them out: whether it is a cut, then the levels of 9 sections of 2 pictures. 16 is
-// depth::kShaderShared's SectionLevels.
-constexpr unsigned kKeyCount = 1 + 2 * 9 * 16;
+// As kShaders lays them out: whether it is a cut, the levels of 9 sections of 2 pictures, the noise and the count of
+// the costs. 16 is depth::kShaderShared's SectionLevels, and 16 and 64 kShaderShared's ContrastBins and CostBins.
+constexpr unsigned kKeyCount = 2 + 2 * 9 * 16 + 16 * 64;
 
 // The Direct3D compute shaders, in the order they run for each estimate:
 // Reduce takes both pictures' luma and counts their brightness for the cut test.
@@ -192,8 +219,41 @@ void Resolve()
             ++changed;
     }
     Keys.Store(4 * MotionKeyCut, changed >= CutSections);
-}
 
+    // The noise from the windows Refine counted: the rows of the lowest contrast that hold NoiseShare of them, and the
+    // median of their costs between the bounds of its bin. An estimate that only looked for a cut counted none and
+    // leaves it as it was.
+    uint costs[CostBins];
+    for (uint bin = 0; bin < CostBins; ++bin)
+        costs[bin] = 0;
+    uint total = 0;
+    for (uint i = 0; i < ContrastBins * CostBins; ++i)
+        total += Keys.Load(4 * (MotionKeyCosts + i));
+    uint plain = 0;
+    for (uint row = 0; row < ContrastBins && float(plain) < NoiseShare * float(total); ++row)
+        for (uint column = 0; column < CostBins; ++column)
+        {
+            uint count = Keys.Load(4 * (MotionKeyCosts + row * CostBins + column));
+            costs[column] += count;
+            plain += count;
+        }
+    float below = 0;
+    for (uint column = 0; column < CostBins && plain > 0; ++column)
+    {
+        float count = float(costs[column]);
+        if (count > 0 && below + count >= 0.5 * float(plain))
+        {
+            Keys.Store(4 * MotionKeyNoise, asuint((float(column) + (0.5 * float(plain) - below) / count) * CostRange / CostBins));
+            break;
+        }
+        below += count;
+    }
+    for (uint j = 0; j < ContrastBins * CostBins; ++j)
+        Keys.Store(4 * (MotionKeyCosts + j), 0);
+}
+)"
+// The compiler takes a string of at most about 16 KB at once, so the shaders go on in another.
+                             R"(
 // Where a window's taps are in the luma it is matched in: around origin, spacing apart, in pixels of that luma, each
 // of which is texel picture pixels wide.
 struct Grid
@@ -237,15 +297,15 @@ struct Best
     float score;
 };
 
-// Keeps shift if it scores better than the best so far. Where the motion is even, most candidates are the best
-// already, and are not matched again.
-void Try(float window[Side * Side], Texture2D<float2> luma, int2 size, Grid grid, float2 shift, float2 expected, inout Best best)
+// Keeps shift if it scores better than the best so far by more than margin, the share of the noise a level allows.
+// Where the motion is even, most candidates are the best already, and are not matched again.
+void Try(float window[Side * Side], Texture2D<float2> luma, int2 size, Grid grid, float margin, float2 shift, float2 expected, inout Best best)
 {
     if (all(shift == best.shift))
         return;
     float cost = Cost(window, luma, size, grid, shift / grid.texel);
     float score = cost + Smoothness * length(shift - expected) / Scale;
-    if (score < best.score)
+    if (score + margin < best.score)
     {
         best.shift = shift;
         best.cost = cost;
@@ -255,7 +315,8 @@ void Try(float window[Side * Side], Texture2D<float2> luma, int2 size, Grid grid
 
 // The best vector for p at this level, the cost of none and the motion the level above expects at p, searched in
 // steps of step picture pixels around the best candidate. The expected motion is tried first, so it wins a tie.
-Best Match(float window[Side * Side], Texture2D<float2> luma, int2 size, Grid grid, int2 p, float step, out float stillCost, out float2 expected)
+Best Match(float window[Side * Side], Texture2D<float2> luma, int2 size, Grid grid, float margin, int2 p, float step, out float stillCost,
+           out float2 expected)
 {
     expected = 0;
     Best best;
@@ -265,7 +326,7 @@ Best Match(float window[Side * Side], Texture2D<float2> luma, int2 size, Grid gr
         best.cost = best.score = Cost(window, luma, size, grid, 0);
         for (int y = -CoarsestReach; y <= CoarsestReach; ++y)
             for (int x = -CoarsestReach; x <= CoarsestReach; ++x)
-                Try(window, luma, size, grid, float2(x, y) * Scale, expected, best);
+                Try(window, luma, size, grid, margin, float2(x, y) * Scale, expected, best);
     }
     else
     {
@@ -278,18 +339,18 @@ Best Match(float window[Side * Side], Texture2D<float2> luma, int2 size, Grid gr
         expected = Coarser.Load(int3(clamp(parent, 0, last), 0)).xy;
         best.shift = expected;
         best.cost = best.score = Cost(window, luma, size, grid, expected / grid.texel);
-        Try(window, luma, size, grid, Coarser.Load(int3(clamp(parent + int2(toward.x, 0), 0, last), 0)).xy, expected, best);
-        Try(window, luma, size, grid, Coarser.Load(int3(clamp(parent + int2(0, toward.y), 0, last), 0)).xy, expected, best);
-        Try(window, luma, size, grid, Coarser.Load(int3(clamp(parent + toward, 0, last), 0)).xy, expected, best);
-        Try(window, luma, size, grid, 0, expected, best);
+        Try(window, luma, size, grid, margin, Coarser.Load(int3(clamp(parent + int2(toward.x, 0), 0, last), 0)).xy, expected, best);
+        Try(window, luma, size, grid, margin, Coarser.Load(int3(clamp(parent + int2(0, toward.y), 0, last), 0)).xy, expected, best);
+        Try(window, luma, size, grid, margin, Coarser.Load(int3(clamp(parent + toward, 0, last), 0)).xy, expected, best);
+        Try(window, luma, size, grid, margin, 0, expected, best);
     }
     stillCost = Cost(window, luma, size, grid, 0);
-    Try(window, luma, size, grid, Last.Load(int3(min(uint2((float2(p) + 0.5) * Scale), PictureSize - 1), 0)), expected, best);
+    Try(window, luma, size, grid, margin, Last.Load(int3(min(uint2((float2(p) + 0.5) * Scale), PictureSize - 1), 0)), expected, best);
     float2 centre = best.shift;
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)
             if (x != 0 || y != 0)
-                Try(window, luma, size, grid, centre + float2(x, y) * step, expected, best);
+                Try(window, luma, size, grid, margin, centre + float2(x, y) * step, expected, best);
     return best;
 }
 
@@ -301,15 +362,16 @@ void Search(uint3 id : SV_DispatchThreadID)
     Grid grid = { int2(id.xy), 1, Scale };
     float window[Side * Side];
     LoadWindow(Level, int2(Size), grid, window);
+    float margin = NoiseMargin * max(asfloat(Keys.Load(4 * MotionKeyNoise)) - NoiseFloor, 0.0f) / Scale;
     float stillCost;
     float2 expected;
-    Best best = Match(window, Level, int2(Size), grid, int2(id.xy), Scale, stillCost, expected);
+    Best best = Match(window, Level, int2(Size), grid, margin, int2(id.xy), Scale, stillCost, expected);
     // Half a step more, so the level below starts within its own step of the motion.
     float2 centre = best.shift;
-    Try(window, Level, int2(Size), grid, centre + float2(Scale / 2, 0), expected, best);
-    Try(window, Level, int2(Size), grid, centre - float2(Scale / 2, 0), expected, best);
-    Try(window, Level, int2(Size), grid, centre + float2(0, Scale / 2), expected, best);
-    Try(window, Level, int2(Size), grid, centre - float2(0, Scale / 2), expected, best);
+    Try(window, Level, int2(Size), grid, margin, centre + float2(Scale / 2, 0), expected, best);
+    Try(window, Level, int2(Size), grid, margin, centre - float2(Scale / 2, 0), expected, best);
+    Try(window, Level, int2(Size), grid, margin, centre + float2(0, Scale / 2), expected, best);
+    Try(window, Level, int2(Size), grid, margin, centre - float2(0, Scale / 2), expected, best);
     MotionTarget[id.xy] = float4(best.shift, best.cost, 0);
 }
 
@@ -326,9 +388,11 @@ void Refine(uint3 id : SV_DispatchThreadID)
     bool cut = Keys.Load(4 * MotionKeyCut) != 0;
     float window[Side * Side];
     LoadWindow(Fine, size, grid, window);
+    float noise = asfloat(Keys.Load(4 * MotionKeyNoise));
+    float margin = NoiseMargin * max(noise - NoiseFloor, 0.0f);
     float stillCost;
     float2 expected;
-    Best best = Match(window, Fine, size, grid, p, 1, stillCost, expected);
+    Best best = Match(window, Fine, size, grid, margin, p, 1, stillCost, expected);
     float2 shift = best.shift;
     float cost = best.cost;
 
@@ -357,7 +421,7 @@ void Refine(uint3 id : SV_DispatchThreadID)
         offset = clamp(offset + Step(xx, xy, yy, mismatch) * grid.spacing, shift - 1, shift + 1);
     }
     float refinedCost = Cost(window, Fine, size, grid, offset);
-    if (refinedCost < cost)
+    if (refinedCost + margin < cost)
     {
         shift = offset;
         cost = refinedCost;
@@ -378,7 +442,10 @@ void Refine(uint3 id : SV_DispatchThreadID)
         [unroll] for (int x = 1; x < Side - 1; ++x)
             contrast += abs(window[y * Side + x] - mean);
     contrast /= (Side - 2) * (Side - 2);
-    float confidence = cut ? 0 : MatchConfidence(still ? stillCost : cost, contrast);
+    // A quarter of the windows is enough to measure the noise by, and keeps the counting cheap.
+    if (!cut && all((p & 1) == 0))
+        Keys.InterlockedAdd(4 * (MotionKeyCosts + NoiseBin(contrast, cost)), 1);
+    float confidence = cut ? 0 : MatchConfidence(still ? stillCost : cost, contrast, noise);
     MotionTarget[id.xy] = float4(cut || still ? float2(0, 0) : shift, confidence, still);
 }
 

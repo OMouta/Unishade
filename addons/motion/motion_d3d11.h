@@ -260,7 +260,7 @@ inline void Estimator::Estimate(ID3D11DeviceContext* context, ID3D11ShaderResour
         ID3D11ShaderResourceView* coarser = i + 1 < levels.size() ? levels[i + 1].motionView.get() : nullptr;
         if (i > finest)
             Dispatch(context, kSearch, level.constants.get(), { nullptr, nullptr, level.lumaView.get(), coarser, motionView.get() },
-                     { nullptr, level.motionTarget.get() }, groups(level.width, 8), groups(level.height, 8));
+                     { nullptr, level.motionTarget.get(), keysTarget.get() }, groups(level.width, 8), groups(level.height, 8));
         else
             Dispatch(context, kRefine, level.constants.get(), { nullptr, nullptr, nullptr, coarser, motionView.get(), picture.lumaView.get() },
                      { nullptr, level.motionTarget.get(), keysTarget.get(), stillTarget.get() }, groups(level.width, 8), groups(level.height, 8));
