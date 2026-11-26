@@ -1,4 +1,5 @@
-// Runs a moving picture through the Depth add-on as Unishade does, without a window, and says how steady its depth is.
+// Runs a moving picture through the Depth add-on as Unishade does, without a window, and says how steady its depth is
+// and how sharp its edges are.
 // depth_check <Depth.dll> <add-on folder> <image> <output folder> [--size WxH] [--frames N] [--hold N] [--scroll X]
 //     [--fps N] [--detail N] [--part <image>] [--cut <image>] [--cut-at N] [--hud 1]
 // The picture is a part of the image, the size given, that moves across it by scroll pixels a frame for frames frames
@@ -165,6 +166,62 @@ void SaveDepth(const std::vector<float>& depth, int width, int height, const std
     if (!stbi_write_png(path.string().c_str(), width, height, 3, normals.data(), width * 3))
         throw std::runtime_error("Could not write " + path.string());
     std::printf("Wrote %s.png and %s-normals.png\n", name.c_str(), name.c_str());
+}
+
+// How depth looks to effects that differentiate it, which no real depth is at hand to compare with. A pixel is on an
+// edge where the closeness within kEdgeReach pixels across or down differs by more than kEdgeStep of the highest, and
+// floats when it lies more than kFloating of that difference from both sides, between two surfaces. Elsewhere a
+// surface is smooth, and the share of neighbors with exactly the same depth says how much of it is in steps, and the
+// second differences say how much it ripples, which normals turn into embossing. Only sloped surfaces count, whose
+// depth changes somewhere within reach, since the model puts all of the sky at one value.
+constexpr int kEdgeReach = 3;
+constexpr float kEdgeStep = 0.25f;
+constexpr float kFloating = 0.2f;
+
+void Shape(const std::vector<float>& depth, int width, int height, const char* name)
+{
+    const std::vector<float> closeness = Closeness(depth);
+    const auto at = [&](int x, int y) { return closeness[size_t(y) * width + x]; };
+    size_t edges = 0, floating = 0, slopes = 0, equal = 0;
+    double ripple = 0;
+    for (int y = kEdgeReach; y < height - kEdgeReach; ++y)
+        for (int x = kEdgeReach; x < width - kEdgeReach; ++x)
+        {
+            const float value = at(x, y);
+            bool edge = false, between = false, sloped = false;
+            for (const auto& [dx, dy] : { std::pair{ 1, 0 }, std::pair{ 0, 1 } })
+            {
+                float low = value, high = value;
+                for (int k = -kEdgeReach; k <= kEdgeReach; ++k)
+                {
+                    low = std::min(low, at(x + k * dx, y + k * dy));
+                    high = std::max(high, at(x + k * dx, y + k * dy));
+                }
+                const float spread = high - low;
+                sloped |= spread > 0;
+                if (spread > kEdgeStep * high)
+                {
+                    edge = true;
+                    between |= value > low + kFloating * spread && value < high - kFloating * spread;
+                }
+            }
+            if (edge)
+            {
+                ++edges;
+                floating += between;
+                continue;
+            }
+            if (!sloped)
+                continue;
+            ++slopes;
+            const size_t index = size_t(y) * width + x;
+            equal += depth[index] == depth[index + 1];
+            ripple += (std::abs(at(x - 1, y) - 2 * value + at(x + 1, y)) + std::abs(at(x, y - 1) - 2 * value + at(x, y + 1))) / value;
+        }
+    std::printf("In the %s depth, %.2f%% of pixels are on an edge and %.2f%% of those float between its sides. Of the sloped ones, %.3f%% have "
+                "the same depth as the next, and they ripple by %.4f%%.\n",
+                name, 100.0 * edges / std::max<size_t>(1, (size_t(width) - 2 * kEdgeReach) * (height - 2 * kEdgeReach)),
+                100.0 * floating / std::max<size_t>(1, edges), 100.0 * equal / std::max<size_t>(1, slopes), 100 * ripple / std::max<size_t>(1, slopes));
 }
 
 // The mean of the worst tenth of values, which is where the frames an estimate landed in show.
@@ -624,6 +681,8 @@ int Main(int argc, wchar_t** argv)
                 callMs / total, frameMs / total, frameTimes[frameTimes.size() * 99 / 100], worstMs);
     std::printf("Starting took %.0f ms, the slowest of the first frames %.0f ms, and depth came after %d frames.\n", createMs, firstCallsMs,
                 warmFrames - kWarm + 1);
+    Shape(lastMoving, width, height, "moving");
+    Shape(last, width, height, "still");
     SaveDepth(lastMoving, width, height, output, "moving");
     SaveDepth(last, width, height, output, "still");
     return 0;
