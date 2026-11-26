@@ -27,6 +27,9 @@ public:
     // device can read as color. White is the value of SDR white in them. Leaves the results in motion, confidence and
     // keys, and the device's compute bindings empty.
     void Estimate(ID3D11DeviceContext* context, ID3D11ShaderResourceView* current, ID3D11ShaderResourceView* previous, float white);
+    // Only says whether it is a cut, in keys, as Estimate would for the same pictures, for a caller that has the motion
+    // from elsewhere. Leaves motion and confidence as they were.
+    void Cut(ID3D11DeviceContext* context, ID3D11ShaderResourceView* current, ID3D11ShaderResourceView* previous, float white);
 
     // Each pixel's vector to where it was in the previous picture, in pixels, as R16G16_FLOAT.
     winrt::com_ptr<ID3D11Texture2D> motion;
@@ -229,6 +232,15 @@ inline Estimator::Estimator(ID3D11Device* device, UINT width, UINT height)
     context->ClearUnorderedAccessViewUint(stillTarget.get(), zero);
     context->ClearUnorderedAccessViewUint(motionTarget.get(), zero);
     context->ClearUnorderedAccessViewUint(confidenceTarget.get(), zero);
+}
+
+inline void Estimator::Cut(ID3D11DeviceContext* context, ID3D11ShaderResourceView* current, ID3D11ShaderResourceView* previous, float white)
+{
+    const FrameConstants constants{ white };
+    context->UpdateSubresource(frame.get(), 0, nullptr, &constants, 0, 0);
+    Dispatch(context, kReduce, picture.constants.get(), { current, previous }, { picture.lumaTarget.get(), nullptr, keysTarget.get() },
+             (picture.width + 15) / 16, (picture.height + 15) / 16);
+    Dispatch(context, kResolve, picture.constants.get(), {}, { nullptr, nullptr, keysTarget.get() }, 1, 1);
 }
 
 inline void Estimator::Estimate(ID3D11DeviceContext* context, ID3D11ShaderResourceView* current, ID3D11ShaderResourceView* previous, float white)

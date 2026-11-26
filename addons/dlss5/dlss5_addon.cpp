@@ -6,9 +6,12 @@
 // creation flag. So an HDR picture is brought into an SDR one for it with a curve that can be undone, and what it
 // changed is brought back.
 //
-// A captured picture comes with no motion vectors, and DLSS5 holds its history steady only with them, so the add-on
-// estimates them from the picture DLSS5 gets and the one it got before. The estimator is motion_d3d11.h's, run through
-// Direct3D 11 on 12 on DLSS5's own device, so it reads those pictures and DLSS5 reads its vectors with no copy.
+// A captured picture comes with no motion vectors, and DLSS5 holds its history steady only with them. The Depth add-on
+// estimates the picture's motion for its own use and writes it for other add-ons, and DLSS5 takes it where it did. Where
+// it did not, such as with Depth off or still starting, the add-on estimates them itself from the picture DLSS5 gets and
+// the one it got before. The estimator is motion_d3d11.h's, run through Direct3D 11 on 12 on DLSS5's own device, so it
+// reads those pictures and DLSS5 reads its vectors with no copy. Whether the picture cut to another scene is told by
+// the estimator's own test either way, which only costs a pass over the picture.
 
 #include "dlss5.h"
 #include "motion/motion_d3d11.h"
@@ -192,8 +195,9 @@ private:
     // Says whether the picture DLSS5 gets is the same as the one before, and waits for it.
     bool Analyze(ID3D12Resource* sdr);
     // Estimates the motion from the picture before to sdr, keeps sdr for the next and waits for it. Returns whether it
-    // is a cut. The motion is lent to DLSS5's device in motion, which goes back with ReturnUnderlyingResource.
-    bool Estimate(ID3D12Resource* sdr, winrt::com_ptr<ID3D12Resource>& motion);
+    // is a cut. The motion is lent to DLSS5's device in motion, which goes back with ReturnUnderlyingResource. With
+    // shared, which says another add-on wrote the motion, it only tells the cut and lends nothing.
+    bool Estimate(ID3D12Resource* sdr, bool shared, winrt::com_ptr<ID3D12Resource>& motion);
     // Runs one of the shaders over target, reading up to three textures, and waits for it.
     void Convert(size_t shader, std::array<ID3D12Resource*, 3> inputs, ID3D12Resource* target, float white);
     void SetInputs(std::array<ID3D12Resource*, 3> inputs);
@@ -207,8 +211,9 @@ private:
     winrt::com_ptr<ID3D12Fence> fence;
     winrt::com_ptr<ID3D12Resource> color;
     winrt::com_ptr<ID3D12Resource> output;
-    // Opened with the first frame of the generation that has it.
+    // Opened with the first frame of the generation that has them.
     winrt::com_ptr<ID3D12Resource> depth;
+    winrt::com_ptr<ID3D12Resource> sharedMotion;
     // What the last frame was evaluated with, so the same picture with the same look is not evaluated again.
     uint64_t picture = 0;
     Dlss5Look look{};
@@ -285,7 +290,7 @@ void Addon::Frame(const UnishadeFrame& frame)
         throw std::runtime_error("Unishade gave it no picture to change.");
     if (frame.generation != generation)
     {
-        color = output = depth = nullptr;
+        color = output = depth = sharedMotion = nullptr;
         fence = nullptr;
         previous = counts = answers = given = changed = nullptr;
         estimator = nullptr;
@@ -300,6 +305,12 @@ void Addon::Frame(const UnishadeFrame& frame)
     const bool hasDepth = frame.depth.handle != nullptr;
     if (hasDepth && !depth)
         winrt::check_hresult(device->OpenSharedHandle(frame.depth.handle, IID_PPV_ARGS(depth.put())));
+    // And motion, only in the frames whose picture another add-on estimated it for. It is at the picture's size, and
+    // estimated from the picture before any add-on changed it, which in HDR is Unishade's SDR copy rather than the one
+    // made here. Their content moves the same, so the vectors are the ones this picture would give.
+    const bool hasMotion = UNISHADE_HAS(UnishadeFrame, &frame, motion) && frame.motion.handle != nullptr;
+    if (hasMotion && !sharedMotion)
+        winrt::check_hresult(device->OpenSharedHandle(frame.motion.handle, IID_PPV_ARGS(sharedMotion.put())));
     const auto value = [&](int setting) { return frame.settings[setting][0]; };
     const Dlss5Look wanted{ static_cast<int>(value(kStyle)), value(kIntensity),       value(kLocalTone),
                             value(kLocalStructure),          value(kSkinStructure),   value(kAutoMask) != 0,
@@ -341,15 +352,16 @@ void Addon::Frame(const UnishadeFrame& frame)
         // at the game's rate. Output still holds the last result, which shows again instead. Nothing moved, so the
         // picture is not estimated, and a new look gets no motion.
         const bool repeated = Analyze(sdr);
-        winrt::com_ptr<ID3D12Resource> motion;
-        const bool cut = !repeated && Estimate(sdr, motion);
+        winrt::com_ptr<ID3D12Resource> estimated;
+        const bool cut = !repeated && Estimate(sdr, hasMotion, estimated);
+        ID3D12Resource* motion = repeated ? nullptr : hasMotion ? sharedMotion.get() : estimated.get();
         if (!(sameLook && repeated))
         {
             // The vectors point from each pixel to where it was in the previous picture, in pixels, as DLSS5 takes them:
             // dlss5_check's pan holds steady with them and shimmers as much as with none when they are negated.
-            const bool evaluated = Dlss5Evaluate(dlss5, sdr, hasDepth ? depth.get() : nullptr, motion.get(), 1, 1,
-                                                 hdr ? changed.get() : output.get(), &look, cut || depthChanged);
-            if (motion)
+            const bool evaluated = Dlss5Evaluate(dlss5, sdr, hasDepth ? depth.get() : nullptr, motion, 1, 1, hdr ? changed.get() : output.get(), &look,
+                                                 cut || depthChanged);
+            if (estimated)
                 on12->ReturnUnderlyingResource(estimator->motion.get(), 0, nullptr, nullptr);
             if (!evaluated)
                 throw std::runtime_error(Dlss5Error(dlss5));
@@ -510,7 +522,7 @@ bool Addon::Analyze(ID3D12Resource* sdr)
     return repeated;
 }
 
-bool Addon::Estimate(ID3D12Resource* sdr, winrt::com_ptr<ID3D12Resource>& motion)
+bool Addon::Estimate(ID3D12Resource* sdr, bool shared, winrt::com_ptr<ID3D12Resource>& motion)
 {
     if (!estimator)
     {
@@ -534,7 +546,10 @@ bool Addon::Estimate(ID3D12Resource* sdr, winrt::com_ptr<ID3D12Resource>& motion
     ID3D11Resource* wrapped[] = { current11.get(), previous11.get() };
     on12->AcquireWrappedResources(wrapped, 2);
     // DLSS5's picture is SDR, so white is 1.
-    estimator->Estimate(context.get(), currentView.get(), previousView.get(), 1);
+    if (shared)
+        estimator->Cut(context.get(), currentView.get(), previousView.get(), 1);
+    else
+        estimator->Estimate(context.get(), currentView.get(), previousView.get(), 1);
     context->CopyResource(previous11.get(), current11.get());
     const D3D11_BOX first{ 0, 0, 0, 4, 1, 1 };
     context->CopySubresourceRegion(cutAnswer.get(), 0, 0, 0, 0, estimator->keys.get(), 0, &first);
@@ -544,7 +559,8 @@ bool Addon::Estimate(ID3D12Resource* sdr, winrt::com_ptr<ID3D12Resource>& motion
     winrt::check_hresult(context->Map(cutAnswer.get(), 0, D3D11_MAP_READ, 0, &mapped));
     const bool cut = *static_cast<const uint32_t*>(mapped.pData) != 0;
     context->Unmap(cutAnswer.get(), 0);
-    winrt::check_hresult(on12->UnwrapUnderlyingResource(estimator->motion.get(), queue.get(), IID_PPV_ARGS(motion.put())));
+    if (!shared)
+        winrt::check_hresult(on12->UnwrapUnderlyingResource(estimator->motion.get(), queue.get(), IID_PPV_ARGS(motion.put())));
     return cut;
 }
 
@@ -663,7 +679,7 @@ void Destroy(void* addon)
 const UnishadeAddon kAddon = {
     sizeof(UnishadeAddon),
     UNISHADE_API_VERSION,
-    UNISHADE_WRITES_PICTURE | UNISHADE_READS_DEPTH | UNISHADE_TAKES_HDR,
+    UNISHADE_WRITES_PICTURE | UNISHADE_READS_DEPTH | UNISHADE_READS_MOTION | UNISHADE_TAKES_HDR,
     static_cast<uint32_t>(std::size(kSettings)),
     kSettings,
     sizeof(UnishadeSetting),
