@@ -2,7 +2,8 @@
 // (depth_model.cpp) on a Direct3D 12 device of its own. Direct3D 11 on the same graphics card takes the frame Unishade
 // shares, makes the model's input from it and turns the model's output into DEPTH. The model runs on a worker thread
 // and can take longer than a frame: frames that arrive meanwhile are not estimated. Depth is kept as a history that
-// follows the picture's motion, from motion_d3d11.h, in every frame, and each estimate is blended into it.
+// follows the picture's motion, from motion_d3d11.h, in every frame, and each estimate is blended into it. That motion
+// is also written for other add-ons, such as DLSS5, so the picture's motion is estimated once.
 //
 // The files it needs are in its folder with it: depth-anything-v2-small.onnx, onnxruntime.dll and DirectML.dll.
 
@@ -417,6 +418,9 @@ private:
     winrt::com_ptr<ID3D11Texture2D> color;
     winrt::com_ptr<ID3D11Texture2D> depth;
     winrt::com_ptr<ID3D11UnorderedAccessView> depthTarget;
+    // Unishade's motion for other add-ons, when it gives one, and whether this frame's call wrote it.
+    winrt::com_ptr<ID3D11Texture2D> motion;
+    bool wroteMotion = false;
 
     int width = 0; // model input and output size, follows the frame's aspect ratio
     int height = 0;
@@ -944,7 +948,15 @@ void Depth::Follow(bool restart)
     }
     // The first frame has none before it, so it is compared with itself and has no motion.
     if (estimator)
+    {
         estimator->Estimate(context.get(), colorView.get(), hasPrevious ? previousView.get() : colorView.get(), 1);
+        // The estimator reads its last motion back in the next estimate, so it keeps its own and this is a copy.
+        if (motion)
+        {
+            context->CopyResource(motion.get(), estimator->motion.get());
+            wroteMotion = true;
+        }
+    }
     context->CopyResource(previous.get(), color.get());
     hasPrevious = true;
     UpdateSizes(0, 0, restart || !estimator);
@@ -999,12 +1011,15 @@ void Depth::Open(const UnishadeFrame& frame)
     colorView = nullptr;
     depth = nullptr;
     depthTarget = nullptr;
+    motion = nullptr;
     hostFence = nullptr;
     winrt::check_hresult(device->OpenSharedFence(frame.fence, IID_PPV_ARGS(hostFence.put())));
     winrt::check_hresult(device->OpenSharedResource1(frame.color.handle, IID_PPV_ARGS(color.put())));
     winrt::check_hresult(device->CreateShaderResourceView(color.get(), nullptr, colorView.put()));
     winrt::check_hresult(device->OpenSharedResource1(frame.depth.handle, IID_PPV_ARGS(depth.put())));
     winrt::check_hresult(device->CreateUnorderedAccessView(depth.get(), nullptr, depthTarget.put()));
+    if (UNISHADE_HAS(UnishadeFrame, &frame, motion) && frame.motion.handle && UNISHADE_HAS(UnishadeHost, &host, wroteMotion))
+        winrt::check_hresult(device->OpenSharedResource1(frame.motion.handle, IID_PPV_ARGS(motion.put())));
     generation = frame.generation;
     lastInput.reset();
 }
@@ -1022,9 +1037,12 @@ void Depth::Frame(const UnishadeFrame& frame)
         const float farPlane[4] = { 1, 1, 1, 1 };
         context->ClearUnorderedAccessViewFloat(depthTarget.get(), farPlane);
     }
+    wroteMotion = false;
     Update(frame.picture, LongestSide(frame), opened);
     winrt::check_hresult(context->Signal(hostFence.get(), frame.signal));
     context->Flush();
+    if (wroteMotion)
+        host.wroteMotion(&host);
 }
 
 // Moves depth along the picture's motion in every frame that changed, estimates depth for the frame on the worker and
@@ -1181,7 +1199,7 @@ void Destroy(void* addon)
 const UnishadeAddon kAddon = {
     sizeof(UnishadeAddon),
     UNISHADE_API_VERSION,
-    UNISHADE_WRITES_DEPTH,
+    UNISHADE_WRITES_DEPTH | UNISHADE_WRITES_MOTION,
     static_cast<uint32_t>(std::size(kSettings)),
     kSettings,
     sizeof(UnishadeSetting),
