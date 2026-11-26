@@ -3,7 +3,7 @@
 // Motion estimated from color alone, for the add-ons that have no motion vectors from the game: where each pixel of the
 // current picture was in the previous one, how sure that is, and whether the picture cut to another scene. The motion
 // is in picture pixels from current to previous: for a picture whose content moves 3 pixels to the right, a pixel's
-// vector is (-3, 0). motion_d3d11.h runs it on Direct3D 11.
+// vector is (-3, 0). motion_d3d11.h runs it on Direct3D 11 and motion_metal.h on Metal.
 //
 // Luma is matched in a pyramid, coarsest first, each level starting from the vectors of the one above, the last
 // estimate's and none. The finest level has a vector for every 2 by 2 pixels of the picture, or 4 by 4 on a picture
@@ -58,7 +58,7 @@ CONSTANT uint MotionKeyPrevious = 1 + 9 * SectionLevels;
 // The brightness a color is matched by, in units of SDR white.
 float Brightness(float3 color, float white)
 {
-    return max(dot(color, Luma), 0.0) / white;
+    return max(dot(color, Luma), 0.0f) / white;
 }
 
 // Which of the levels the cut test counts a brightness in.
@@ -81,6 +81,15 @@ float2 Step(float xx, float xy, float yy, float2 mismatch)
     return -float2(yy * mismatch.x - xy * mismatch.y, xx * mismatch.y - xy * mismatch.x) / (xx * yy - xy * xy);
 }
 )";
+
+// The finest level is the first no wider than this, half the picture's size up to 2560 pixels wide and a quarter
+// beyond, since Refine's time grows with its pixels and a 4K picture has enough of them at a quarter.
+constexpr unsigned kFinestWidth = 1280;
+// The coarsest level is the first no wider than this, so the coarsest search reaches about as far on every size.
+constexpr unsigned kCoarsestWidth = 64;
+// As kShaders lays them out: whether it is a cut, then the levels of 9 sections of 2 pictures. 16 is
+// depth::kShaderShared's SectionLevels.
+constexpr unsigned kKeyCount = 1 + 2 * 9 * 16;
 
 // The Direct3D compute shaders, in the order they run for each estimate:
 // Reduce takes both pictures' luma and counts their brightness for the cut test.

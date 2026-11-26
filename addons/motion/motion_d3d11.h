@@ -96,14 +96,6 @@ struct FrameConstants
     float white;
     float padding[3];
 };
-// The finest level is the first no wider than this, half the picture's size up to 2560 pixels wide and a quarter
-// beyond, since Refine's time grows with its pixels and a 4K picture has enough of them at a quarter.
-constexpr UINT kFinestWidth = 1280;
-// The coarsest level is the first no wider than this, so the coarsest search reaches about as far on every size.
-constexpr UINT kCoarsestWidth = 64;
-// As kShaders lays them out: whether it is a cut, then the levels of 9 sections of 2 pictures. 16 is
-// depth::kShaderShared's SectionLevels.
-constexpr UINT kKeyCount = 1 + 2 * 9 * 16;
 
 inline winrt::com_ptr<ID3D11Texture2D> CreateTexture(ID3D11Device* device, UINT width, UINT height, DXGI_FORMAT format)
 {
