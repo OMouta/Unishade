@@ -241,7 +241,7 @@ Image Run(const Api& api, Dlss5* dlss5, Gpu& gpu, const Image& input, const Dlss
     for (int frame = 1; frame <= frames; ++frame)
     {
         const auto start = std::chrono::steady_clock::now();
-        if (!api.evaluate(dlss5, color.get(), nullptr, output.get(), &look))
+        if (!api.evaluate(dlss5, color.get(), nullptr, output.get(), &look, false))
             throw std::runtime_error(std::string("Dlss5Evaluate failed: ") + api.error(dlss5));
         const auto took = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
         std::printf("Evaluated frame %d at %ux%u with %d pass(es) in %.1f ms\n", frame, input.width, input.height, look.passCount, took);

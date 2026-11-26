@@ -7,6 +7,7 @@
 // changed is brought back.
 
 #include "dlss5.h"
+#include "depth/depth_shared.h"
 #include <unishade_addon.h>
 
 #include <d3d12.h>
@@ -113,7 +114,90 @@ void ToHdr(uint3 id : SV_DispatchThreadID)
     Target[id.xy] = float4(picture.rgb + change * White, picture.a);
 }
 )";
-constexpr const char* kEntryPoints[] = { "ToSdr", "ToHdr" };
+// Compares the picture DLSS5 gets with the one it got before, to find a frame the game showed again and a cut to
+// another scene. A cut is told as the Depth add-on tells one, with the numbers depth_shared.h gives both.
+constexpr char kAnalysis[] = R"(
+Texture2D<float4> Picture : register(t0);  // what DLSS5 gets
+Texture2D<float4> Previous : register(t1); // what it got before
+RWByteAddressBuffer Counts : register(u0);
+
+// Where each count is in Counts: the pixels that differ from Previous, whether the picture is the same and whether it
+// is a cut, the sections' levels, and those of the picture before.
+static const uint CountDiffering = 0;
+static const uint CountRepeated = 1;
+static const uint CountCut = 2;
+static const uint CountSections = 3;
+static const uint CountPrevious = CountSections + 9 * SectionLevels;
+
+groupshared uint differing;
+groupshared uint levels[9 * SectionLevels];
+
+// Each group counts its own pixels first, since every pixel adding to the same few counts would make them wait.
+[numthreads(16, 16, 1)]
+void Count(uint3 id : SV_DispatchThreadID, uint index : SV_GroupIndex)
+{
+    if (index == 0)
+        differing = 0;
+    for (uint i = index; i < 9 * SectionLevels; i += 256)
+        levels[i] = 0;
+    GroupMemoryBarrierWithGroupSync();
+    uint2 size;
+    Picture.GetDimensions(size.x, size.y);
+    if (all(id.xy < size))
+    {
+        float3 color = Picture[id.xy].rgb;
+        if (any(color != Previous[id.xy].rgb))
+            InterlockedAdd(differing, 1);
+        uint2 cell = min(id.xy * 3 / size, 2);
+        uint level = min(uint(dot(color, Luma) * SectionLevels), SectionLevels - 1);
+        InterlockedAdd(levels[(cell.y * 3 + cell.x) * SectionLevels + level], 1);
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (index == 0 && differing > 0)
+        Counts.InterlockedAdd(4 * CountDiffering, differing);
+    for (uint j = index; j < 9 * SectionLevels; j += 256)
+        if (levels[j] > 0)
+            Counts.InterlockedAdd(4 * (CountSections + j), levels[j]);
+}
+
+// Turns the counts into the two answers, keeps the sections' for the next picture and leaves the rest zero.
+[numthreads(1, 1, 1)]
+void Resolve()
+{
+    uint changed = 0;
+    for (uint section = 0; section < 9; ++section)
+    {
+        uint pixels = 0;
+        uint moved = 0;
+        for (uint level = 0; level < SectionLevels; ++level)
+        {
+            uint index = section * SectionLevels + level;
+            uint count = Counts.Load(4 * (CountSections + index));
+            uint before = Counts.Load(4 * (CountPrevious + index));
+            pixels += count;
+            moved += max(count, before) - min(count, before);
+            Counts.Store(4 * (CountPrevious + index), count);
+            Counts.Store(4 * (CountSections + index), 0);
+        }
+        // Every pixel that left a level arrived at another, so each is counted twice.
+        changed += moved > 2 * CutShare * pixels;
+    }
+    Counts.Store(4 * CountRepeated, Counts.Load(4 * CountDiffering) == 0);
+    Counts.Store(4 * CountCut, changed >= CutSections);
+    Counts.Store(4 * CountDiffering, 0);
+}
+)";
+// As kAnalysis lays them out: the two answers start at the second number, and the levels of the 9 sections are counted
+// for this picture and the one before. 16 is depth_shared.h's SectionLevels.
+constexpr UINT kAnswers = 1;
+constexpr UINT kCounts = 3 + 2 * 9 * 16;
+
+struct Shader
+{
+    const char* source;
+    const char* entryPoint;
+};
+constexpr Shader kEntryPoints[] = { { kShaders, "ToSdr" }, { kShaders, "ToHdr" }, { kAnalysis, "Count" }, { kAnalysis, "Resolve" } };
 
 // For log lines from the module, whose callback has no context. Only one DLSS5 runs at a time.
 const UnishadeHost* logHost;
@@ -140,10 +224,20 @@ public:
     void Frame(const UnishadeFrame& frame);
 
 private:
-    void EvaluateHdr(float white);
-    void CreateConverter();
+    struct Change
+    {
+        bool repeated; // the same picture as the one before
+        bool cut;      // a cut to another scene
+    };
+
+    void CreateShaders();
+    winrt::com_ptr<ID3D12Resource> CreateTexture(ID3D12Resource* like, DXGI_FORMAT format, D3D12_RESOURCE_FLAGS flags);
+    // Compares the picture DLSS5 gets with the one before and keeps it for the next, and waits for it.
+    Change Analyze(ID3D12Resource* sdr);
     // Runs one of the shaders over target, reading up to three textures, and waits for it.
     void Convert(size_t shader, std::array<ID3D12Resource*, 3> inputs, ID3D12Resource* target, float white);
+    void SetInputs(std::array<ID3D12Resource*, 3> inputs);
+    void Run();
 
     Dlss5* dlss5 = nullptr;
     ID3D12Device* device = nullptr;
@@ -160,9 +254,9 @@ private:
     Dlss5Look look{};
     bool hadDepth = false;
 
-    // For HDR pictures, made with the first one: the shaders, and the SDR picture DLSS5 gets and the one it makes.
+    // Made with the first frame: the shaders and what they run with.
     winrt::com_ptr<ID3D12RootSignature> rootSignature;
-    std::array<winrt::com_ptr<ID3D12PipelineState>, 2> shaders;
+    std::array<winrt::com_ptr<ID3D12PipelineState>, std::size(kEntryPoints)> shaders;
     winrt::com_ptr<ID3D12DescriptorHeap> heap;
     winrt::com_ptr<ID3D12CommandQueue> queue;
     winrt::com_ptr<ID3D12CommandAllocator> allocator;
@@ -170,6 +264,11 @@ private:
     winrt::com_ptr<ID3D12Fence> done;
     uint64_t doneValue = 0;
     winrt::handle idle;
+    // For each generation: the picture DLSS5 got before and the counts it is compared by, and for HDR pictures the SDR
+    // picture DLSS5 gets and the one it makes.
+    winrt::com_ptr<ID3D12Resource> previous;
+    winrt::com_ptr<ID3D12Resource> counts;
+    winrt::com_ptr<ID3D12Resource> answers;
     winrt::com_ptr<ID3D12Resource> given;
     winrt::com_ptr<ID3D12Resource> changed;
 };
@@ -217,7 +316,7 @@ void Addon::Frame(const UnishadeFrame& frame)
     {
         color = output = depth = nullptr;
         fence = nullptr;
-        given = changed = nullptr;
+        previous = counts = answers = given = changed = nullptr;
         winrt::check_hresult(device->OpenSharedHandle(frame.fence, IID_PPV_ARGS(fence.put())));
         winrt::check_hresult(device->OpenSharedHandle(frame.color.handle, IID_PPV_ARGS(color.put())));
         winrt::check_hresult(device->OpenSharedHandle(frame.output.handle, IID_PPV_ARGS(output.put())));
@@ -230,9 +329,13 @@ void Addon::Frame(const UnishadeFrame& frame)
     const Dlss5Look wanted{ static_cast<int>(value(kStyle)), value(kIntensity),       value(kLocalTone),
                             value(kLocalStructure),          value(kSkinStructure),   value(kAutoMask) != 0,
                             std::clamp(static_cast<int>(value(kPassCount)), 1, kMostPasses) };
-    const bool same = frame.generation == generation && frame.picture == picture && hasDepth == hadDepth && wanted.style == look.style &&
-                      wanted.intensity == look.intensity && wanted.localTone == look.localTone && wanted.localStructure == look.localStructure &&
-                      wanted.skinStructure == look.skinStructure && wanted.autoMask == look.autoMask && wanted.passCount == look.passCount;
+    const bool sameLook = frame.generation == generation && hasDepth == hadDepth && wanted.style == look.style &&
+                          wanted.intensity == look.intensity && wanted.localTone == look.localTone &&
+                          wanted.localStructure == look.localStructure && wanted.skinStructure == look.skinStructure &&
+                          wanted.autoMask == look.autoMask && wanted.passCount == look.passCount;
+    const bool same = sameLook && frame.picture == picture;
+    // Depth coming or going changes what the feature's history was made with.
+    const bool depthChanged = frame.generation == generation && hasDepth != hadDepth;
     generation = frame.generation;
     picture = frame.picture;
     look = wanted;
@@ -243,56 +346,73 @@ void Addon::Frame(const UnishadeFrame& frame)
     winrt::check_hresult(fence->SetEventOnCompletion(frame.wait, event.get()));
     if (WaitForSingleObject(event.get(), 2000) != WAIT_OBJECT_0)
         throw std::runtime_error("Unishade's picture did not arrive.");
-    // The format follows the game's, and a change makes the images again, which changes the generation.
-    if (!same && frame.color.format == UNISHADE_FORMAT_RGBA16_FLOAT)
-        EvaluateHdr(frame.sdrWhite);
-    else if (!same && !Dlss5Evaluate(dlss5, color.get(), hasDepth ? depth.get() : nullptr, output.get(), &look))
-        throw std::runtime_error(Dlss5Error(dlss5));
+    if (!same)
+    {
+        if (!rootSignature)
+            CreateShaders();
+        // The format follows the game's, and a change makes the images again, which changes the generation.
+        const bool hdr = frame.color.format == UNISHADE_FORMAT_RGBA16_FLOAT;
+        if (hdr && !given)
+        {
+            // As Unishade's SDR pictures, which DLSS5 is known to take.
+            given = CreateTexture(color.get(), DXGI_FORMAT_B8G8R8A8_UNORM, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+            changed = CreateTexture(color.get(), DXGI_FORMAT_B8G8R8A8_UNORM, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        }
+        if (hdr)
+            Convert(0, { color.get(), nullptr, nullptr }, given.get(), frame.sdrWhite);
+        ID3D12Resource* sdr = hdr ? given.get() : color.get();
+        const Change change = Analyze(sdr);
+        // A game that shows each of its frames twice, such as at 30 frames a second on a 60 Hz screen, gives the same
+        // picture again under a new number. DLSS5 does not make the same result of it twice, so the result would flicker
+        // at the game's rate. Output still holds the last result, which shows again instead.
+        if (!(sameLook && change.repeated))
+        {
+            if (!Dlss5Evaluate(dlss5, sdr, hasDepth ? depth.get() : nullptr, hdr ? changed.get() : output.get(), &look,
+                               change.cut || depthChanged))
+                throw std::runtime_error(Dlss5Error(dlss5));
+            if (hdr)
+                Convert(1, { color.get(), given.get(), changed.get() }, output.get(), frame.sdrWhite);
+        }
+    }
     winrt::check_hresult(fence->Signal(frame.signal));
 }
 
-void Addon::EvaluateHdr(float white)
+winrt::com_ptr<ID3D12Resource> Addon::CreateTexture(ID3D12Resource* like, DXGI_FORMAT format, D3D12_RESOURCE_FLAGS flags)
 {
-    if (!rootSignature)
-        CreateConverter();
-    if (!given)
-    {
-        const D3D12_RESOURCE_DESC source = color->GetDesc();
-        D3D12_RESOURCE_DESC description{};
-        description.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        description.Width = source.Width;
-        description.Height = source.Height;
-        description.DepthOrArraySize = 1;
-        description.MipLevels = 1;
-        // As Unishade's SDR pictures, which DLSS5 is known to take.
-        description.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        description.SampleDesc = { 1, 0 };
-        description.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-        const D3D12_HEAP_PROPERTIES heapType{ D3D12_HEAP_TYPE_DEFAULT };
-        for (winrt::com_ptr<ID3D12Resource>* texture : { &given, &changed })
-            winrt::check_hresult(device->CreateCommittedResource(&heapType, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_COMMON, nullptr,
-                                                                 IID_PPV_ARGS(texture->put())));
-    }
-    Convert(0, { color.get(), nullptr, nullptr }, given.get(), white);
-    if (!Dlss5Evaluate(dlss5, given.get(), hadDepth ? depth.get() : nullptr, changed.get(), &look))
-        throw std::runtime_error(Dlss5Error(dlss5));
-    Convert(1, { color.get(), given.get(), changed.get() }, output.get(), white);
+    const D3D12_RESOURCE_DESC source = like->GetDesc();
+    D3D12_RESOURCE_DESC description{};
+    description.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    description.Width = source.Width;
+    description.Height = source.Height;
+    description.DepthOrArraySize = 1;
+    description.MipLevels = 1;
+    description.Format = format;
+    description.SampleDesc = { 1, 0 };
+    description.Flags = flags;
+    const D3D12_HEAP_PROPERTIES heapType{ D3D12_HEAP_TYPE_DEFAULT };
+    winrt::com_ptr<ID3D12Resource> texture;
+    winrt::check_hresult(device->CreateCommittedResource(&heapType, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_COMMON, nullptr,
+                                                         IID_PPV_ARGS(texture.put())));
+    return texture;
 }
 
-void Addon::CreateConverter()
+void Addon::CreateShaders()
 {
-    // Loaded here, so SDR pictures do not need it. The compiled code and the errors are blobs it made, which call into
-    // it when they are released, so it is freed after them.
+    // Loaded when first needed, so a system without it gets a message saying so. The compiled code and the errors are
+    // blobs it made, which call into it when they are released, so it is freed after them.
     const std::unique_ptr<std::remove_pointer_t<HMODULE>, decltype(&FreeLibrary)> compiler(LoadLibraryW(L"d3dcompiler_47.dll"), FreeLibrary);
     const auto compile = compiler ? reinterpret_cast<pD3DCompile>(GetProcAddress(compiler.get(), "D3DCompile")) : nullptr;
     if (!compile)
-        throw std::runtime_error("HDR pictures need d3dcompiler_47.dll, which Windows could not load.");
-    std::array<winrt::com_ptr<ID3DBlob>, 2> code;
+        throw std::runtime_error("DLSS5 needs d3dcompiler_47.dll, which Windows could not load.");
+    const std::string analysis = std::string("#define CONSTANT static const\n") + depth::kShaderShared + kAnalysis;
+    std::array<winrt::com_ptr<ID3DBlob>, std::size(kEntryPoints)> code;
     for (size_t i = 0; i < code.size(); ++i)
     {
+        const std::string source = kEntryPoints[i].source == kAnalysis ? analysis : kShaders;
         winrt::com_ptr<ID3DBlob> errors;
-        if (FAILED(compile(kShaders, sizeof(kShaders) - 1, "dlss5", nullptr, nullptr, kEntryPoints[i], "cs_5_0", 0, 0, code[i].put(), errors.put())))
-            throw std::runtime_error(errors ? static_cast<const char*>(errors->GetBufferPointer()) : "The HDR shaders did not compile.");
+        if (FAILED(compile(source.data(), source.size(), "dlss5", nullptr, nullptr, kEntryPoints[i].entryPoint, "cs_5_0", 0, 0, code[i].put(),
+                           errors.put())))
+            throw std::runtime_error(errors ? static_cast<const char*>(errors->GetBufferPointer()) : "DLSS5's shaders did not compile.");
     }
 
     // SDR white as a constant, then a table of the three textures read and the one written.
@@ -325,7 +445,88 @@ void Addon::CreateConverter()
     idle.attach(CreateEventW(nullptr, FALSE, FALSE, nullptr));
 }
 
-void Addon::Convert(size_t shader, std::array<ID3D12Resource*, 3> inputs, ID3D12Resource* target, float white)
+Addon::Change Addon::Analyze(ID3D12Resource* sdr)
+{
+    if (!previous)
+    {
+        // Zero, so the first picture differs from it.
+        previous = CreateTexture(sdr, sdr->GetDesc().Format, D3D12_RESOURCE_FLAG_NONE);
+        D3D12_RESOURCE_DESC description{ D3D12_RESOURCE_DIMENSION_BUFFER };
+        description.Width = kCounts * 4;
+        description.Height = 1;
+        description.DepthOrArraySize = 1;
+        description.MipLevels = 1;
+        description.SampleDesc = { 1, 0 };
+        description.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        description.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        const D3D12_HEAP_PROPERTIES gpuHeap{ D3D12_HEAP_TYPE_DEFAULT }, readHeap{ D3D12_HEAP_TYPE_READBACK };
+        winrt::check_hresult(device->CreateCommittedResource(&gpuHeap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_COMMON, nullptr,
+                                                             IID_PPV_ARGS(counts.put())));
+        description.Width = 2 * 4;
+        description.Flags = D3D12_RESOURCE_FLAG_NONE;
+        winrt::check_hresult(device->CreateCommittedResource(&readHeap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                             IID_PPV_ARGS(answers.put())));
+    }
+    SetInputs({ sdr, previous.get(), nullptr });
+    D3D12_UNORDERED_ACCESS_VIEW_DESC access{};
+    access.Format = DXGI_FORMAT_R32_TYPELESS;
+    access.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    access.Buffer.NumElements = kCounts;
+    access.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+    const UINT step = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    const D3D12_CPU_DESCRIPTOR_HANDLE start = heap->GetCPUDescriptorHandleForHeapStart();
+    device->CreateUnorderedAccessView(counts.get(), nullptr, &access, D3D12_CPU_DESCRIPTOR_HANDLE{ start.ptr + 3 * step });
+
+    std::vector<D3D12_RESOURCE_BARRIER> barriers;
+    const auto move = [&](ID3D12Resource* resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
+        D3D12_RESOURCE_BARRIER barrier{ D3D12_RESOURCE_BARRIER_TYPE_TRANSITION };
+        barrier.Transition = { resource, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, before, after };
+        barriers.push_back(barrier);
+    };
+    const auto flush = [&] {
+        list->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+        barriers.clear();
+    };
+    constexpr D3D12_RESOURCE_STATES read = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    winrt::check_hresult(allocator->Reset());
+    winrt::check_hresult(list->Reset(allocator.get(), shaders[2].get()));
+    move(sdr, D3D12_RESOURCE_STATE_COMMON, read);
+    move(previous.get(), D3D12_RESOURCE_STATE_COMMON, read);
+    move(counts.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    flush();
+    ID3D12DescriptorHeap* heaps[] = { heap.get() };
+    list->SetDescriptorHeaps(1, heaps);
+    list->SetComputeRootSignature(rootSignature.get());
+    list->SetComputeRootDescriptorTable(1, heap->GetGPUDescriptorHandleForHeapStart());
+    const D3D12_RESOURCE_DESC size = sdr->GetDesc();
+    list->Dispatch(static_cast<UINT>((size.Width + 15) / 16), (size.Height + 15) / 16, 1);
+    D3D12_RESOURCE_BARRIER counted{ D3D12_RESOURCE_BARRIER_TYPE_UAV };
+    counted.UAV.pResource = counts.get();
+    list->ResourceBarrier(1, &counted);
+    list->SetPipelineState(shaders[3].get());
+    list->Dispatch(1, 1, 1);
+    move(counts.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    move(sdr, read, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    move(previous.get(), read, D3D12_RESOURCE_STATE_COPY_DEST);
+    flush();
+    list->CopyBufferRegion(answers.get(), 0, counts.get(), kAnswers * 4, 2 * 4);
+    list->CopyResource(previous.get(), sdr);
+    move(counts.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
+    move(sdr, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
+    move(previous.get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
+    flush();
+    Run();
+
+    uint32_t* mapped = nullptr;
+    const D3D12_RANGE range{ 0, 2 * 4 };
+    winrt::check_hresult(answers->Map(0, &range, reinterpret_cast<void**>(&mapped)));
+    const Change change{ mapped[0] != 0, mapped[1] != 0 };
+    const D3D12_RANGE written{};
+    answers->Unmap(0, &written);
+    return change;
+}
+
+void Addon::SetInputs(std::array<ID3D12Resource*, 3> inputs)
 {
     // The previous run is done, so the views can be written again.
     const UINT step = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -340,6 +541,13 @@ void Addon::Convert(size_t shader, std::array<ID3D12Resource*, 3> inputs, ID3D12
         view.Texture2D.MipLevels = 1;
         device->CreateShaderResourceView(inputs[i], &view, D3D12_CPU_DESCRIPTOR_HANDLE{ start.ptr + i * step });
     }
+}
+
+void Addon::Convert(size_t shader, std::array<ID3D12Resource*, 3> inputs, ID3D12Resource* target, float white)
+{
+    SetInputs(inputs);
+    const UINT step = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    const D3D12_CPU_DESCRIPTOR_HANDLE start = heap->GetCPUDescriptorHandleForHeapStart();
     const D3D12_RESOURCE_DESC size = target->GetDesc();
     D3D12_UNORDERED_ACCESS_VIEW_DESC access{};
     access.Format = size.Format;
@@ -370,6 +578,12 @@ void Addon::Convert(size_t shader, std::array<ID3D12Resource*, 3> inputs, ID3D12
     for (D3D12_RESOURCE_BARRIER& barrier : barriers)
         std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
     list->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+    Run();
+}
+
+// Closes the list, runs it and waits for it.
+void Addon::Run()
+{
     winrt::check_hresult(list->Close());
     ID3D12CommandList* lists[] = { list.get() };
     queue->ExecuteCommandLists(1, lists);

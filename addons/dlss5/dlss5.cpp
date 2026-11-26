@@ -178,7 +178,7 @@ struct Dlss5
     void LoadRuntime(const wchar_t* path);
     void StartCore(const wchar_t* dataPath);
     void StartRuntime(const wchar_t* dataPath);
-    void Evaluate(ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* output, const Dlss5Look& look);
+    void Evaluate(ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* output, const Dlss5Look& look, bool reset);
     void Record(ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* output, const Dlss5Look& look);
     void ReleaseFeature(Feature& feature);
     void ReleaseFeatures();
@@ -315,7 +315,7 @@ void Dlss5::StartRuntime(const wchar_t* dataPath)
     Log("Started nvngx_dlssnr.dll");
 }
 
-void Dlss5::Evaluate(ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* output, const Dlss5Look& look)
+void Dlss5::Evaluate(ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* output, const Dlss5Look& look, bool reset)
 {
     if (!color || !output || color == output)
         Fail("Color and output have to be two textures.");
@@ -371,6 +371,10 @@ void Dlss5::Evaluate(ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resourc
         Check(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_COMMON, nullptr,
                                               IID_PPV_ARGS(between[index].put())), "CreateCommittedResource");
     }
+
+    if (reset)
+        for (Feature& feature : features)
+            feature.reset = true;
 
     Check(allocator->Reset(), "ID3D12CommandAllocator::Reset");
     Check(list->Reset(allocator.get(), nullptr), "ID3D12GraphicsCommandList::Reset");
@@ -552,13 +556,13 @@ ID3D12Device* Dlss5Device(Dlss5* dlss5)
     return dlss5->device.get();
 }
 
-bool Dlss5Evaluate(Dlss5* dlss5, ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* output, const Dlss5Look* look)
+bool Dlss5Evaluate(Dlss5* dlss5, ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* output, const Dlss5Look* look, bool reset)
 {
     try
     {
         if (!look)
             Fail("No look settings were given.");
-        dlss5->Evaluate(color, depth, output, *look);
+        dlss5->Evaluate(color, depth, output, *look, reset);
         dlss5->error.clear();
         return true;
     }
