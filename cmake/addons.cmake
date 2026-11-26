@@ -81,7 +81,10 @@ if(WIN32)
     target_compile_definitions(Unishade_nvngx PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX UNISHADE_DLSS5_EXPORTS)
     target_compile_definitions(Unishade_nvngx PRIVATE UNISHADE_VERSION="${PROJECT_VERSION}")
     target_compile_options(Unishade_nvngx PRIVATE /W4 /permissive- /EHsc)
-    target_link_libraries(Unishade_nvngx PRIVATE d3d12 dxgi windowsapp)
+    # d3dcompiler_47.dll loads when first called, so a system without it gets the add-on's message rather than a module
+    # that does not load.
+    target_link_libraries(Unishade_nvngx PRIVATE d3d11 d3d12 d3dcompiler delayimp dxgi windowsapp)
+    target_link_options(Unishade_nvngx PRIVATE /DELAYLOAD:d3dcompiler_47.dll)
 
     add_executable(dlss5_check EXCLUDE_FROM_ALL addons/dlss5/check.cpp)
     target_include_directories(dlss5_check PRIVATE addons "${STB_DIR}")

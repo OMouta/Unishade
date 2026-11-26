@@ -4,8 +4,8 @@
 // It also runs the top-left quarter of the image, so the feature is made again at a new size. With --keys it then
 // shows that each input Unishade_nvngx.dll sets reaches the network, since NGX ignores a parameter it does not know
 // without saying so: it runs the image with only that input changed and compares the outputs. Then it runs the add-on
-// as Unishade does, on the same picture twice, a cut and a small move. The image after --keys is the scene the cut
-// goes to. It returns 1 when an input changed nothing or the add-on did the wrong thing. With --keys it also runs a
+// as Unishade does, on the same picture twice, a cut, a small move and a pan. The image after --keys is the scene the
+// cut goes to. It returns 1 when an input changed nothing or the add-on did the wrong thing. With --keys it also runs a
 // pan with its true motion vectors, with them negated and with none, and says which is closest to a still picture's
 // result, since nothing NVIDIA published says which way round DLSS5 takes them.
 
@@ -583,10 +583,10 @@ Shared CreateShared(ID3D11Device* device, UINT width, UINT height, DXGI_FORMAT f
 }
 
 // Runs the add-on in the module as Unishade does, with depth, on a picture, the same picture again, a cut and a small
-// change, and says whether it kept its output for the repeat and dropped the history at the cut only. Returns how
-// many of those it got wrong.
+// change, then a pan, and says whether it kept its output for the repeat, dropped the history at the cut only and
+// gave the pan motion that follows it. Returns how many of those it got wrong.
 int CheckAddon(HMODULE library, const Api& api, const std::filesystem::path& runtime, const std::wstring& data, const Image& first,
-               const Image& cut, const Image& nudged, const Image& depthImage, const Dlss5Look& look)
+               const Image& cut, const Image& nudged, const std::vector<Image>& pan, const Image& depthImage, const Dlss5Look& look)
 {
     std::printf("\nThe add-on, as Unishade runs it:\n");
     const UINT width = first.width, height = first.height;
@@ -697,6 +697,11 @@ int CheckAddon(HMODULE library, const Api& api, const std::filesystem::path& run
     const Image once = run(first, 1), again = run(first, 2), afterCut = run(cut, 3), afterNudge = run(nudged, 4);
     settings[1][0] = look.intensity > 0.5f ? 0.5f : 1.0f;
     const Image otherLook = run(nudged, 5);
+    settings[1][0] = look.intensity;
+    // The pan starts with a cut from the picture before, so its history starts there, as a new feature's does.
+    Image panned;
+    for (size_t frame = 0; frame < pan.size(); ++frame)
+        panned = run(pan[frame], 6 + frame);
     addon->destroy(instance);
 
     // The module on its own, for what the add-on should match.
@@ -715,6 +720,22 @@ int CheckAddon(HMODULE library, const Api& api, const std::filesystem::path& run
     report("A cut, against a new feature", afterCut, freshCut, true, "the history is dropped");
     report("The cut picture moved 4 pixels, against new", afterNudge, freshNudge, false, "not a cut, so the history is kept");
     report("That picture again with another intensity", otherLook, afterNudge, false, "evaluated again");
+
+    // The add-on estimates the pan's motion, so its result should be nearer the module's with the true vectors than
+    // with none.
+    const Image truth = Motion(width, height, -float(kPanX), -float(kPanY));
+    std::vector<Step> moving, still;
+    for (const Image& frame : pan)
+    {
+        moving.push_back({ &frame, &depthImage, false, &truth });
+        still.push_back({ &frame, &depthImage, false });
+    }
+    const Difference toTruth = Differ(panned, Trial(api, runtime, data, look, moving));
+    const Difference toNone = Differ(panned, Trial(api, runtime, data, look, still));
+    const bool follows = toTruth.mean < toNone.mean;
+    std::printf("  %-44s mean %.3f, against none %.3f: %s\n", "A pan, against the true vectors", toTruth.mean, toNone.mean,
+                follows ? "its motion follows the pan" : "WRONG");
+    wrong += !follows;
     return wrong;
 }
 
@@ -806,13 +827,13 @@ int Main(int argc, wchar_t** argv)
         const Image cut = Load(keys);
         const UINT width = std::min(input.width, cut.width), height = std::min(input.height, cut.height);
         // Each picture of the pan is a part of the image, smaller by how far the pan goes.
-        const std::vector<Image> pan = Pan(input, width - kPanX * (kPanFrames - 1), height - kPanY * (kPanFrames - 1));
+        const UINT panWidth = width - kPanX * (kPanFrames - 1), panHeight = height - kPanY * (kPanFrames - 1);
+        const std::vector<Image> pan = Pan(input, panWidth, panHeight);
         CheckSign(api, runtime, data, look, pan);
         missing = CheckKeys(api, runtime, data, Crop(input, width, height), Crop(cut, width, height), pan, look, frames);
-        // A part of each, so the cut picture can also move a little.
-        const UINT part = width - 4;
-        missing += CheckAddon(library, api, runtime, data, Crop(input, part, height), Crop(cut, part, height), Crop(cut, part, height, 4),
-                              Depth(part, height, Shape::Floor), look);
+        // The add-on gets pictures of the pan's size, so the cut picture can also move a little.
+        missing += CheckAddon(library, api, runtime, data, Crop(input, panWidth, panHeight), Crop(cut, panWidth, panHeight),
+                              Crop(cut, panWidth, panHeight, 4), pan, Depth(panWidth, panHeight, Shape::Floor), look);
     }
     FreeLibrary(library);
     return missing ? 1 : 0;
