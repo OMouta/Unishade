@@ -60,6 +60,7 @@ cbuffer Sizes : register(b0)
     float Relax;      // how far this estimate's scale and shift move back towards none
     uint Show;        // whether the history holds depth yet, to write to DEPTH
     float Share;      // how much of this estimate a trusted history takes
+    int2 Offset;      // the whole pixels the estimate in flight sampled the frame offset by, as EstimateOffset says
 };
 Texture2D<float4> Source : register(t0);
 Texture2D<float> Result : register(t1);
@@ -87,15 +88,15 @@ float Load(uint index)
     return Result.Load(int3(index % OutputWidth, index / OutputWidth, 0));
 }
 
-// Box-filters the frame down to the model size and writes planar, ImageNet-normalized RGB, and the colors themselves
+// Box-filters the frame, from the estimate's offset, down to the model size and writes planar, ImageNet-normalized RGB, and the colors themselves
 // for EstimateAt.
 [numthreads(16, 16, 1)]
 void Preprocess(uint3 id : SV_DispatchThreadID)
 {
     if (any(id.xy >= ModelSize))
         return;
-    uint2 begin = id.xy * SourceSize / ModelSize;
-    uint2 end = max((id.xy + 1) * SourceSize / ModelSize, begin + 1);
+    uint2 begin = min(id.xy * SourceSize / ModelSize + uint2(Offset), SourceSize - 1);
+    uint2 end = max(min((id.xy + 1) * SourceSize / ModelSize + uint2(Offset), SourceSize), begin + 1);
     float3 sum = 0;
     for (uint y = begin.y; y < end.y; ++y)
         for (uint x = begin.x; x < end.x; ++x)
@@ -193,7 +194,7 @@ void Resolve()
 float EstimateAt(float2 at)
 {
     float3 color = Source.Load(int3(clamp(int2(floor(at)), 0, int2(SourceSize) - 1), 0)).rgb;
-    float2 position = at * ModelSize / SourceSize - 0.5;
+    float2 position = (at - Offset) * ModelSize / SourceSize - 0.5;
     int2 corner = int2(floor(position));
     int2 last = int2(ModelSize) - 1;
     int2 a = clamp(corner, 0, last);
@@ -356,7 +357,7 @@ struct Sizes
     float relax;
     UINT show;
     float share;
-    UINT unused[2];
+    INT offset[2];
 };
 
 std::wstring Wide(const char* text)
@@ -428,6 +429,9 @@ private:
     UINT sourceWidth = 0;
     UINT sourceHeight = 0;
     std::optional<uint64_t> lastInput;
+    // How many estimates were asked for, and the offset the one in flight samples the frame by.
+    unsigned requests = 0;
+    Offset offset;
     // When the last estimate became DEPTH, or nothing before the first.
     std::optional<Clock::time_point> publishedAt;
     Clock::time_point requestedAt{};
@@ -931,7 +935,7 @@ void Depth::CreateShared()
 void Depth::UpdateSizes(float relax, float share, bool restart)
 {
     const Sizes values{ { sourceWidth, sourceHeight }, { static_cast<UINT>(width), static_cast<UINT>(height) }, kRowBytes / (halfInput ? 2 : 4),
-                        kRowBytes / (halfOutput ? 2 : 4), restart, relax, showing, share };
+                        kRowBytes / (halfOutput ? 2 : 4), restart, relax, showing, share, { offset.x, offset.y } };
     context->UpdateSubresource(sizes.get(), 0, nullptr, &values, 0, 0);
 }
 
@@ -1141,6 +1145,8 @@ void Depth::Update(uint64_t picture, int longest, bool opened)
     if (!estimate)
         return;
 
+    offset = EstimateOffset(++requests, sourceWidth, sourceHeight, width, height);
+    UpdateSizes(0, 0, false);
     context->CopyResource(frameCopy.get(), color.get());
     Dispatch(kPreprocess, { frameView.get() }, { inputTarget.get(), nullptr, nullptr, nullptr, guideTarget.get() }, (width + 15) / 16,
              (height + 15) / 16);

@@ -54,6 +54,7 @@ struct Sizes
     uint Show;    // whether the history holds depth yet, to write to DEPTH
     float Share;  // how much of this estimate a trusted history takes
     uint Moving;  // whether there is motion to follow yet
+    int2 Offset;  // the whole pixels the estimate in flight sampled the frame offset by, as EstimateOffset says
 };
 
 float Load(constant Sizes& sizes, device const float* result, device const half* halfResult, uint index)
@@ -61,7 +62,7 @@ float Load(constant Sizes& sizes, device const float* result, device const half*
     return sizes.HalfOutput ? float(halfResult[index]) : result[index];
 }
 
-// Box-filters the frame down to the model size and writes planar, ImageNet-normalized RGB, and the colors themselves
+// Box-filters the frame, from the estimate's offset, down to the model size and writes planar, ImageNet-normalized RGB, and the colors themselves
 // for EstimateAt.
 kernel void Preprocess(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [[buffer(0)]], device float* input [[buffer(1)]],
                        device half* halfInput [[buffer(2)]], texture2d<float, access::read> source [[texture(0)]],
@@ -69,8 +70,8 @@ kernel void Preprocess(uint2 id [[thread_position_in_grid]], constant Sizes& siz
 {
     if (any(id >= sizes.ModelSize))
         return;
-    uint2 begin = id * sizes.SourceSize / sizes.ModelSize;
-    uint2 end = max((id + 1u) * sizes.SourceSize / sizes.ModelSize, begin + 1u);
+    uint2 begin = min(id * sizes.SourceSize / sizes.ModelSize + uint2(sizes.Offset), sizes.SourceSize - 1u);
+    uint2 end = max(min((id + 1u) * sizes.SourceSize / sizes.ModelSize + uint2(sizes.Offset), sizes.SourceSize), begin + 1u);
     float3 sum = float3(0);
     for (uint y = begin.y; y < end.y; ++y)
         for (uint x = begin.x; x < end.x; ++x)
@@ -172,7 +173,7 @@ float EstimateAt(constant Sizes& sizes, device const float* result, device const
                  texture2d<float, access::read> source, texture2d<float, access::read> guide, float2 at)
 {
     float3 color = source.read(uint2(clamp(int2(floor(at)), int2(0), int2(sizes.SourceSize) - 1))).rgb;
-    float2 position = at * float2(sizes.ModelSize) / float2(sizes.SourceSize) - 0.5f;
+    float2 position = (at - float2(sizes.Offset)) * float2(sizes.ModelSize) / float2(sizes.SourceSize) - 0.5f;
     int2 corner = int2(floor(position));
     int2 last = int2(sizes.ModelSize) - 1;
     uint2 a = uint2(clamp(corner, int2(0), last));
@@ -362,7 +363,8 @@ struct Sizes
     uint32_t show;
     float share;
     uint32_t moving;
-    uint32_t unused; // Metal rounds the struct up to a multiple of its uint2's 8 bytes
+    uint32_t unused; // Metal puts Offset, an int2, at a multiple of 8 bytes
+    int32_t offset[2];
 };
 
 class Depth
@@ -411,6 +413,9 @@ private:
     uint32_t sourceWidth = 0;
     uint32_t sourceHeight = 0;
     std::optional<uint64_t> lastInput;
+    // How many estimates were asked for, and the offset the one in flight samples the frame by.
+    unsigned requests = 0;
+    Offset offset;
     // When the last estimate became DEPTH, or nothing before the first.
     std::optional<Clock::time_point> publishedAt;
     // The frame's work made the model's input, which the worker gets once the work is done.
@@ -704,7 +709,7 @@ void Depth::CreateShared()
 Sizes Depth::SizesFor(bool restart, float relax, float share) const
 {
     return { { sourceWidth, sourceHeight }, { static_cast<uint32_t>(width), static_cast<uint32_t>(height) }, halfInput, halfOutput, restart, relax,
-             showing, share, estimator != nullptr };
+             showing, share, estimator != nullptr, 0, { offset.x, offset.y } };
 }
 
 void Depth::Dispatch(id<MTLComputeCommandEncoder> encoder, Kernel kernel, NSUInteger threadsWide, NSUInteger threadsHigh, NSUInteger group)
@@ -944,6 +949,7 @@ void Depth::Update(id<MTLCommandBuffer> commands, const UnishadeFrame& frame, bo
     [blit copyFromTexture:color sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(sourceWidth, sourceHeight, 1)
                 toTexture:frameCopy destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
     [blit endEncoding];
+    offset = EstimateOffset(++requests, sourceWidth, sourceHeight, width, height);
     const Sizes values = SizesFor(false, 0, 0);
     id<MTLComputeCommandEncoder> encoder = [commands computeCommandEncoder];
     [encoder setBytes:&values length:sizeof(values) atIndex:0];

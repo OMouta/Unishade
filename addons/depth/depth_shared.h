@@ -50,6 +50,32 @@ inline float HistoryShare(float seconds)
     return 1 - std::exp(-std::max(seconds, 0.0f) / kHistorySeconds);
 }
 
+// How many whole pixels across and down the index-th estimate samples the frame from where the first did. The model's
+// picture is smaller than the frame, so its output depends on where its pixels fall on the frame's. In a sideways pan
+// every estimate fell at a new place across but the same place down, and blending them into the history averaged
+// away what that changed across and kept it down, which the normals showed as short horizontal dashes. The offsets
+// step through a model pixel evenly in both directions, and each estimate is read back with its own.
+struct Offset
+{
+    int x = 0;
+    int y = 0;
+};
+
+inline Offset EstimateOffset(unsigned index, uint32_t frameWidth, uint32_t frameHeight, int modelWidth, int modelHeight)
+{
+    const auto halton = [](unsigned i, unsigned base) {
+        float fraction = 1, result = 0;
+        for (; i; i /= base)
+        {
+            fraction /= base;
+            result += fraction * (i % base);
+        }
+        return result;
+    };
+    return { static_cast<int>(halton(index, 2) * std::ceil(static_cast<float>(frameWidth) / modelWidth)),
+             static_cast<int>(halton(index, 3) * std::ceil(static_cast<float>(frameHeight) / modelHeight)) };
+}
+
 inline const UnishadeSetting kSettings[] = {
     { "Detail", "Detail", UNISHADE_SETTING_CHOICE, { 1 }, 0, 3, "Ultra\0High\0Medium\0Low\0",
       "Depth is estimated from a smaller picture. Lower is faster, and effects that use depth lose fine detail." },
