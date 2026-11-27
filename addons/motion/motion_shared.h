@@ -12,13 +12,17 @@
 // follows it creep. Each pixel of the picture then takes the vector of the nearest finest pixels that brings its color
 // from the previous picture best, and the confidence falls where none does, as where something came into view.
 
-#include "depth/depth_shared.h"
-
 namespace motion
 {
-// The shader text both Direct3D and Metal take once CONSTANT is defined. It follows depth::kShaderShared, whose cut
-// test is the one used here.
+// The shader text both Direct3D and Metal take once CONSTANT is defined.
 constexpr char kShaderShared[] = R"(
+// A cut to another scene is told from the picture's brightness: each of 3 by 3 sections counts its pixels by
+// brightness, in this many levels, and a cut is when at least CutSections of them have CutShare of their pixels at
+// another level than in the picture before. A score or a map that changes only reaches the sections it is in.
+CONSTANT uint SectionLevels = 16;
+CONSTANT uint CutSections = 7;
+CONSTANT float CutShare = 0.3;
+CONSTANT float3 Luma = float3(0.299, 0.587, 0.114);
 // Luma is matched over a window this many taps to each side of a pixel, a pixel of its level apart.
 CONSTANT int Radius = 2;
 // The coarsest level searches every offset this many of its pixels to each side. It is 33 to 64 pixels wide, so that
@@ -127,7 +131,7 @@ constexpr unsigned kFinestWidth = 1280;
 // The coarsest level is the first no wider than this, so the coarsest search reaches about as far on every size.
 constexpr unsigned kCoarsestWidth = 64;
 // As kShaders lays them out: whether it is a cut, the levels of 9 sections of 2 pictures, the noise and the count of
-// the costs. 16 is depth::kShaderShared's SectionLevels, and 16 and 64 kShaderShared's ContrastBins and CostBins.
+// the costs. 16 is kShaderShared's SectionLevels and ContrastBins, and 64 its CostBins.
 constexpr unsigned kKeyCount = 2 + 2 * 9 * 16 + 16 * 64;
 
 // The Direct3D compute shaders, in the order they run for each estimate:

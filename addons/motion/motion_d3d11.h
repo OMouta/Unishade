@@ -138,7 +138,7 @@ inline winrt::com_ptr<ID3D11Buffer> CreateConstants(ID3D11Device* device, const 
 inline const std::array<std::vector<uint8_t>, Estimator::kShaderCount>& Estimator::Code()
 {
     static const std::array<std::vector<uint8_t>, kShaderCount> code = [] {
-        const std::string source = std::string("#define CONSTANT static const\n") + depth::kShaderShared + kShaderShared + kShaders;
+        const std::string source = std::string("#define CONSTANT static const\n") + kShaderShared + kShaders;
         const char* entryPoints[] = { "Reduce", "Downsample", "Resolve", "Search", "Refine", "Gather", "Spread", "Fill", "Settle", "Finish" };
         std::array<std::future<std::vector<uint8_t>>, kShaderCount> compiling;
         for (size_t i = 0; i < compiling.size(); ++i)

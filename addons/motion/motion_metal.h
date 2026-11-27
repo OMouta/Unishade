@@ -16,7 +16,7 @@
 
 namespace motion
 {
-// They follow depth::kShaderShared and kShaderShared. Each pass gets its Sizes at buffer 0, SDR white at buffer 1 and
+// They follow kShaderShared. Each pass gets its Sizes at buffer 0, SDR white at buffer 1 and
 // the keys at buffer 2. The textures are at the indices kTexture names.
 constexpr char kMetalShaders[] = R"(
 struct Sizes
@@ -521,8 +521,8 @@ public:
         // A thread of its own has no autorelease pool of its own.
         @autoreleasepool
         {
-            const std::string source = std::string("#include <metal_stdlib>\nusing namespace metal;\n#define CONSTANT constant\n") + depth::kShaderShared +
-                                       kShaderShared + kMetalShaders;
+            const std::string source = std::string("#include <metal_stdlib>\nusing namespace metal;\n#define CONSTANT constant\n") + kShaderShared +
+                                       kMetalShaders;
             NSError* error = nil;
             id<MTLLibrary> library = [device newLibraryWithSource:[NSString stringWithUTF8String:source.c_str()] options:nil error:&error];
             if (!library)
