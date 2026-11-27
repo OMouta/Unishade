@@ -6,12 +6,11 @@
 // creation flag. So an HDR picture is brought into an SDR one for it with a curve that can be undone, and what it
 // changed is brought back.
 //
-// A captured picture comes with no motion vectors, and DLSS5 holds its history steady only with them. The Depth add-on
-// estimates the picture's motion for its own use and writes it for other add-ons, and DLSS5 takes it where it did. Where
-// it did not, such as with Depth off or still starting, the add-on estimates them itself from the picture DLSS5 gets and
-// the one it got before. The estimator is motion_d3d11.h's, run through Direct3D 11 on 12 on DLSS5's own device, so it
-// reads those pictures and DLSS5 reads its vectors with no copy. Whether the picture cut to another scene is told by
-// the estimator's own test either way, which only costs a pass over the picture.
+// A captured picture comes with no motion vectors, and DLSS5 holds its history steady only with them. DLSS5 takes the
+// motion another add-on wrote for the picture, where one did. Where none did, the add-on estimates them itself from the
+// picture DLSS5 gets and the one it got before. The estimator is motion_d3d11.h's, run through Direct3D 11 on 12 on
+// DLSS5's own device, so it reads those pictures and DLSS5 reads its vectors with no copy. Whether the picture cut to
+// another scene is told by the estimator's own test either way, which only costs a pass over the picture.
 
 #include "dlss5.h"
 #include "motion/motion_d3d11.h"

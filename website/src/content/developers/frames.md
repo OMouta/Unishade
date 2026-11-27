@@ -46,7 +46,7 @@ In each stage, add-ons that write depth or motion go first, then those that only
 
 ## Motion
 
-One add-on can estimate the picture's motion for every add-on that needs it. Depth does on Windows, and DLSS5 uses it. The add-on that writes `motion` calls `host->wroteMotion(host)` in each frame it wrote it, and only then do add-ons that read motion get it. One that cannot estimate yet, such as while it starts, does not call it, so the others get no `motion` and estimate their own.
+One add-on can estimate the picture's motion for every add-on that needs it. DLSS5 uses it where one did. The add-on that writes `motion` calls `host->wroteMotion(host)` in each frame it wrote it, and only then do add-ons that read motion get it. One that cannot estimate yet, such as while it starts, does not call it, so the others get no `motion` and estimate their own.
 
 `motion` and `wroteMotion` are newer than the first version of the interface. Check for them with [`UNISHADE_HAS`](/developers/versions/) on the frame and the host.
 
