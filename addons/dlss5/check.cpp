@@ -10,7 +10,8 @@
 // pan with its true motion vectors, with them negated and with none, and says which is closest to a still picture's
 // result, since nothing NVIDIA published says which way round DLSS5 takes them. With --depth as well, it runs the
 // add-on again with the Depth add-on before it, Depth.dll from beside this program with its model in that folder, and
-// DLSS5 taking the motion Depth writes, then says what each add-on and both cost a frame with and without that.
+// DLSS5 taking the motion Depth writes where it writes any and estimating its own where it does not, then says what
+// each add-on and both cost a frame.
 
 #include "dlss5.h"
 #include <unishade_addon.h>
@@ -664,6 +665,8 @@ struct Session
     winrt::com_ptr<ID3D11Texture2D> readable, readableDepth;
     uint64_t value = 0;
     std::unique_ptr<Started> dlss5, depthAddon;
+    // Whether the Depth add-on asks to write motion. Unishade gives no motion image to one that does not.
+    bool depthWritesMotion = false;
     // How many frames DLSS5 was given motion in.
     int givenMotion = 0;
 
@@ -707,8 +710,7 @@ struct Session
         if (depthLibrary)
         {
             depthAddon = std::make_unique<Started>(depthLibrary, depthFolder, depthFolder, description.AdapterLuid, DepthLog);
-            if (!(depthAddon->addon->flags & UNISHADE_WRITES_MOTION))
-                throw std::runtime_error("The Depth add-on does not write motion.");
+            depthWritesMotion = depthAddon->addon->flags & UNISHADE_WRITES_MOTION;
         }
         // The add-on's folder holds nvngx_dlssnr.dll, and its name ends in a separator, as Unishade gives it.
         dlss5 = std::make_unique<Started>(library, runtime.parent_path().string() + "\\", std::filesystem::path(data).string(), description.AdapterLuid,
@@ -757,10 +759,11 @@ struct Session
         bool motionWritten = false;
         if (plan.depth && depthAddon)
         {
+            const bool share = plan.share && depthWritesMotion;
             wroteMotion = false;
             call(*depthAddon, {}, { depthWritten.handle.get(), UNISHADE_FORMAT_R32_FLOAT },
-                 plan.share ? UnishadeImage{ motion.handle.get(), UNISHADE_FORMAT_R16G16_FLOAT } : UnishadeImage{});
-            motionWritten = plan.share && wroteMotion;
+                 share ? UnishadeImage{ motion.handle.get(), UNISHADE_FORMAT_R16G16_FLOAT } : UnishadeImage{});
+            motionWritten = share && wroteMotion;
         }
         if (plan.dlss5)
         {
@@ -794,6 +797,7 @@ struct Session
     // used.
     uint64_t Warm(const Image& picture, uint64_t number, bool share)
     {
+        share = share && depthWritesMotion;
         const auto start = std::chrono::steady_clock::now();
         std::optional<std::chrono::steady_clock::time_point> readyAt;
         bool depthArrived = false;
@@ -830,16 +834,19 @@ struct Session
 
 // Runs the add-on as Unishade does, with depth, on a picture, the same picture again, a cut and a small change, then a
 // pan, and says whether it kept its output for the repeat, dropped the history at the cut only and gave the pan motion
-// that follows it. With the Depth add-on, DLSS5 takes the motion Depth writes. Returns how many of those it got wrong.
+// that follows it. With the Depth add-on, DLSS5 takes the motion Depth writes, where it writes any. Returns how many of
+// those it got wrong.
 int CheckAddon(HMODULE library, const Api& api, const std::filesystem::path& runtime, const std::wstring& data, const Image& first,
                const Image& cut, const Image& nudged, const std::vector<Image>& pan, const Image& depthImage, const Dlss5Look& look,
                HMODULE depthLibrary, const std::string& depthFolder)
 {
-    std::printf(depthLibrary ? "\nThe add-on, as Unishade runs it, with the motion the Depth add-on writes:\n"
-                             : "\nThe add-on, as Unishade runs it, estimating motion itself:\n");
     const UINT width = first.width, height = first.height;
     // Unishade's DLSS5 add-on is let go of before the module runs on its own, since only one DLSS5 runs at a time.
     auto session = std::make_unique<Session>(library, runtime, data, look, width, height, depthImage, depthLibrary, depthFolder);
+    const bool depthMotion = session->depthWritesMotion;
+    std::printf(depthMotion    ? "\nThe add-on, as Unishade runs it, with the motion the Depth add-on writes:\n"
+                : depthLibrary ? "\nThe add-on, as Unishade runs it, after the Depth add-on, which writes no motion, so it estimates its own:\n"
+                               : "\nThe add-on, as Unishade runs it, estimating motion itself:\n");
     // Numbers Depth's warming takes come after the ones below.
     if (depthLibrary)
         session->Warm(first, 1000, true);
@@ -857,7 +864,7 @@ int CheckAddon(HMODULE library, const Api& api, const std::filesystem::path& run
     for (size_t frame = 0; frame < pan.size(); ++frame)
         panned.push_back(run(pan[frame], 6 + frame));
     const int frames = 5 + static_cast<int>(pan.size());
-    if (depthLibrary)
+    if (depthMotion)
         std::printf("  DLSS5 was given Depth's motion in %d of %d frames\n", session->givenMotion, frames);
     const int givenMotion = session->givenMotion;
     session.reset();
@@ -878,7 +885,7 @@ int CheckAddon(HMODULE library, const Api& api, const std::filesystem::path& run
     report("A cut, against a new feature", afterCut, freshCut, true, "the history is dropped");
     report("The cut picture moved 4 pixels, against new", afterNudge, freshNudge, false, "not a cut, so the history is kept");
     report("That picture again with another intensity", otherLook, afterNudge, false, "evaluated again");
-    if (depthLibrary && givenMotion != frames)
+    if (depthMotion && givenMotion != frames)
     {
         std::printf("  WRONG: DLSS5 was not given motion in every frame\n");
         ++wrong;
@@ -904,8 +911,8 @@ int CheckAddon(HMODULE library, const Api& api, const std::filesystem::path& run
 }
 
 // Says how long Unishade waits for the add-ons in each frame of a pan that goes back and forth, with DLSS5 alone, Depth
-// alone with and without the copy of its motion it writes, both with each estimating motion itself, as before Depth
-// shared it, and both with DLSS5 taking Depth's.
+// alone and both with DLSS5 estimating motion itself, and where Depth writes motion, Depth alone writing it and both
+// with DLSS5 taking Depth's.
 void CheckCost(HMODULE library, const std::filesystem::path& runtime, const std::wstring& data, const std::vector<Image>& pan, const Image& depthImage,
                const Dlss5Look& look, HMODULE depthLibrary, const std::string& depthFolder)
 {
@@ -925,11 +932,16 @@ void CheckCost(HMODULE library, const std::filesystem::path& runtime, const std:
         { "DLSS5 alone, estimating itself", { false, true, false } },
         { "Depth alone", { true, false, true } },
         { "Depth alone, writing no motion", { true, false, false } },
-        { "Both, each estimating", { true, true, false } },
+        { "Both, DLSS5 estimating itself", { true, true, false } },
         { "Both, DLSS5 taking Depth's", { true, true, true } },
     };
+    // A Depth add-on that writes no motion runs the same with and without an image for it.
+    const auto getDepth = reinterpret_cast<UnishadeGetAddonFunction>(GetProcAddress(depthLibrary, "UnishadeGetAddon"));
+    const bool depthMotion = getDepth && getDepth()->flags & UNISHADE_WRITES_MOTION;
     for (const auto& [name, plan] : cases)
     {
+        if (plan.depth && plan.share && !depthMotion)
+            continue;
         Session session(library, runtime, data, look, width, height, depthImage, plan.depth ? depthLibrary : nullptr, depthFolder);
         uint64_t number = plan.depth ? session.Warm(*frames.front(), 1, plan.share) : 1;
         std::vector<double> times;

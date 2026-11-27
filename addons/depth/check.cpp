@@ -442,8 +442,8 @@ int Main(int argc, wchar_t** argv)
     std::vector<double> frameTimes, frameTime(total);
     int warmFrames = 0;
     const auto start = Clock::now();
-    // The model takes seconds to load and the motion shaders seconds to compile, so the picture stays where it starts
-    // until depth arrives, and five seconds more for it to follow motion.
+    // The model takes seconds to load, so the picture stays where it starts until depth arrives, and five seconds more
+    // for depth to settle.
     const int kWarm = 5 * fps;
     for (int index = 0, tick = 0, warm = 0; index < total; ++tick)
     {
