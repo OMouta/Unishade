@@ -53,7 +53,8 @@ std::string ReleaseList()
     } remove{ folder };
     const fs::path list = fs::path(folder) / "releases.json";
     const std::atomic<bool> cancel = false;
-    DownloadFile("https://api.github.com/repos/OMouta/Unishade/releases?per_page=30", list, cancel, kListLimit, {});
+    // As many as GitHub lists at once: the add-ons' releases are in the list too, between Unishade's own.
+    DownloadFile("https://api.github.com/repos/OMouta/Unishade/releases?per_page=100", list, cancel, kListLimit, {});
     std::ostringstream text;
     text << std::ifstream(list, std::ios::binary).rdbuf();
     return text.str();
@@ -104,6 +105,11 @@ void InstallUpdate() {}
 void CancelUpdate() {}
 
 UpdateInstall InstallingUpdate()
+{
+    return {};
+}
+
+std::string NotFromPublisher(const std::filesystem::path&, bool)
 {
     return {};
 }

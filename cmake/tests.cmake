@@ -18,8 +18,8 @@ endif()
 
 # Windows builds the tests of files that stand alone. The tests that link Unishade's own code are not built there yet.
 if(WIN32)
-    foreach(name frame_limit_tests frame_stats_tests menu_layout_tests ini_text_tests addon_manifest_tests preset_ini_tests
-            names_tests game_scan_tests discord_rpc_tests version_tests releases_tests)
+    foreach(name frame_limit_tests frame_stats_tests menu_layout_tests ini_text_tests addon_manifest_tests addon_releases_tests
+            preset_ini_tests names_tests game_scan_tests discord_rpc_tests version_tests releases_tests)
         unishade_test(${name})
         target_compile_options(${name} PRIVATE /W4 /permissive- /EHsc)
     endforeach()
@@ -43,6 +43,9 @@ set_target_properties(ini_text_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 unishade_test(addon_manifest_tests)
 target_compile_options(addon_manifest_tests PRIVATE -Wall -Wextra)
+
+unishade_test(addon_releases_tests)
+target_compile_options(addon_releases_tests PRIVATE -Wall -Wextra)
 
 unishade_test(preset_ini_tests)
 target_compile_options(preset_ini_tests PRIVATE -Wall -Wextra)
@@ -73,6 +76,13 @@ target_compile_options(addons_tests PRIVATE -Wall -Wextra -Wno-missing-field-ini
 target_compile_definitions(addons_tests PRIVATE EXAMPLE_ADDON="$<TARGET_FILE:example_addon>"
     EXAMPLE_MANIFEST="${CMAKE_SOURCE_DIR}/addons/example/addon.ini")
 add_dependencies(addons_tests example_addon)
+
+# Packs releases of add-ons with cmake/addon_release.cmake and has Unishade find them, without GitHub.
+unishade_test(official_addons_tests)
+target_link_libraries(official_addons_tests PRIVATE unishade_core)
+target_compile_options(official_addons_tests PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+target_compile_definitions(official_addons_tests PRIVATE CMAKE_COMMAND="${CMAKE_COMMAND}"
+    PACK_SCRIPT="${CMAKE_SOURCE_DIR}/cmake/addon_release.cmake" ADDONS_FOLDER="${CMAKE_SOURCE_DIR}/addons")
 
 # Settings, games, shortcuts and the rules for macOS windows.
 unishade_test(host_tests)

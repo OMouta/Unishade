@@ -1,0 +1,48 @@
+name: Import the Mac signing certificate
+# The workflows that release something for the Mac sign it with the Developer ID Application certificate, so a Mac
+# takes it as Unishade's. The certificate goes into a keychain of its own, which only this run has, and which a step
+# after the signing deletes.
+description: Puts the Developer ID Application certificate into a keychain of its own and names it for codesign.
+inputs:
+  certificate:
+    description: The certificate with its key, a .p12 file in base64
+    required: true
+  password:
+    description: The .p12 file's password
+    required: true
+outputs:
+  identity:
+    description: The certificate's SHA-1, which codesign --sign takes
+    value: ${{ steps.import.outputs.identity }}
+runs:
+  using: composite
+  steps:
+    - id: import
+      shell: bash
+      env:
+        CERTIFICATE: ${{ inputs.certificate }}
+        CERTIFICATE_PASSWORD: ${{ inputs.password }}
+      run: |
+        if [ -z "$CERTIFICATE" ]; then
+          echo "::error::Signing for the Mac needs the MACOS_CERTIFICATE and MACOS_CERTIFICATE_PASSWORD secrets."
+          exit 1
+        fi
+        keychain="$RUNNER_TEMP/signing.keychain-db"
+        keychain_password=$(openssl rand -hex 24)
+        security create-keychain -p "$keychain_password" "$keychain"
+        # Without a time after which it locks, since Apple's notary service can take longer than the default.
+        security set-keychain-settings "$keychain"
+        security unlock-keychain -p "$keychain_password" "$keychain"
+        printf '%s' "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+        security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -f pkcs12 -T /usr/bin/codesign
+        rm "$RUNNER_TEMP/certificate.p12"
+        # Lets codesign use the key without a window asking for the keychain's password.
+        security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" > /dev/null
+        # codesign looks for the certificate in the keychains on this list.
+        security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+        identity=$(security find-identity -v -p codesigning "$keychain" | awk '/Developer ID Application/ { print $2; exit }')
+        if [ -z "$identity" ]; then
+          echo "::error::MACOS_CERTIFICATE holds no Developer ID Application certificate with its key that this Mac trusts."
+          exit 1
+        fi
+        echo "identity=$identity" >> "$GITHUB_OUTPUT"

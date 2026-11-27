@@ -9,7 +9,8 @@ set(logo_code
     "extern const unsigned char kLogoPng[];\nextern const unsigned kLogoPngSize;\nconst unsigned char kLogoPng[] = {${logo_bytes}};\nconst unsigned kLogoPngSize = sizeof(kLogoPng);\n")
 # The icon of the program and its windows is the logo too, or in a beta the logo with a BETA label, so a beta is told
 # apart in the taskbar and the Dock. The launcher draws the plain logo either way, with a badge of its own beside it.
-# The icon goes into the program for its windows, which macOS has no icons for.
+# The icon goes into the program for its windows, which macOS has no icons for. The Mac app's icon is made further
+# down.
 set(ICON_PNG "${LOGO_PNG}")
 if(UNISHADE_BETA GREATER 0)
     set(ICON_PNG "${CMAKE_SOURCE_DIR}/assets/UnishadeBeta.png")
@@ -71,10 +72,10 @@ set(CORE_SOURCES
     "${LOGO_SOURCE}"
     "${FONTS_SOURCE}"
     "${FSR_SOURCE}"
-    "${OFFICIAL_ADDONS_SOURCE}"
     "${SRC_DIR}/addons/addon_frames.cpp"
     "${SRC_DIR}/addons/addon_host.cpp"
     "${SRC_DIR}/addons/addons.cpp"
+    "${SRC_DIR}/addons/official_addons.cpp"
     "${SRC_DIR}/app/app.cpp"
     "${SRC_DIR}/app/config.cpp"
     "${SRC_DIR}/app/hotkeys.cpp"
@@ -151,26 +152,31 @@ else()
 endif()
 
 if(APPLE)
-    # Finder and the Dock show the icon from an icon file made of it, which Info.plist names. It holds every size
-    # Finder draws, each scaled down from the 512-pixel picture, so small icons are not shrunk from the largest on the
-    # fly.
+    # Finder and the Dock show the icon from an icon file, which Info.plist names. A Mac icon is the logo on a black
+    # rounded square, which scripts/mac_icon.swift draws, since macOS 26 puts a bare logo on a gray plate of its own.
+    # The file holds every size Finder draws, each scaled down from the 1024-pixel picture, so small icons are not
+    # shrunk from the largest on the fly.
+    set(MAC_ICON_PNG "${CMAKE_SOURCE_DIR}/assets/UnishadeMac.png")
+    if(UNISHADE_BETA GREATER 0)
+        set(MAC_ICON_PNG "${CMAKE_SOURCE_DIR}/assets/UnishadeMacBeta.png")
+    endif()
     set(APP_ICON "${CMAKE_BINARY_DIR}/Unishade.icns")
     set(APP_ICONSET "${CMAKE_BINARY_DIR}/Unishade.iconset")
     set(ICON_COMMANDS COMMAND "${CMAKE_COMMAND}" -E rm -rf "${APP_ICONSET}" COMMAND "${CMAKE_COMMAND}" -E make_directory "${APP_ICONSET}")
     foreach(size 16 32 128 256 512)
-        list(APPEND ICON_COMMANDS COMMAND sips -z ${size} ${size} "${ICON_PNG}" --out "${APP_ICONSET}/icon_${size}x${size}.png")
+        list(APPEND ICON_COMMANDS COMMAND sips -z ${size} ${size} "${MAC_ICON_PNG}" --out "${APP_ICONSET}/icon_${size}x${size}.png")
         math(EXPR double "${size} * 2")
-        if(double LESS_EQUAL 512)
-            list(APPEND ICON_COMMANDS COMMAND sips -z ${double} ${double} "${ICON_PNG}" --out "${APP_ICONSET}/icon_${size}x${size}@2x.png")
-        endif()
+        list(APPEND ICON_COMMANDS COMMAND sips -z ${double} ${double} "${MAC_ICON_PNG}" --out "${APP_ICONSET}/icon_${size}x${size}@2x.png")
     endforeach()
     add_custom_command(OUTPUT "${APP_ICON}"
         ${ICON_COMMANDS}
         COMMAND iconutil -c icns "${APP_ICONSET}" -o "${APP_ICON}"
-        DEPENDS "${ICON_PNG}"
+        DEPENDS "${MAC_ICON_PNG}"
         VERBATIM)
-    add_executable(Unishade MACOSX_BUNDLE "${SRC_DIR}/main.cpp" "${APP_ICON}")
-    set_source_files_properties("${APP_ICON}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    # The license and the credits come inside the app, since the disk image a release is holds nothing but the app.
+    set(APP_NOTICES "${CMAKE_SOURCE_DIR}/LICENSE" "${CMAKE_SOURCE_DIR}/CREDITS.txt")
+    add_executable(Unishade MACOSX_BUNDLE "${SRC_DIR}/main.cpp" "${APP_ICON}" ${APP_NOTICES})
+    set_source_files_properties("${APP_ICON}" ${APP_NOTICES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     set_target_properties(Unishade PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST "${SRC_DIR}/platform/macos/Info.plist.in"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"

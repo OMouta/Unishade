@@ -127,6 +127,8 @@ public:
     void DownloadEffects() override { calls.push_back("download"); }
     void ReloadEffects() override {}
     void OpenAddonsFolder() override {}
+    void ShowingAddons() override { ++addonsShown; }
+    int addonsShown = 0;
 
     void InstallAddon(size_t addon) override { calls.push_back("install " + std::to_string(addon)); }
     void CancelInstall(size_t addon) override { calls.push_back("cancel " + std::to_string(addon)); }
@@ -552,12 +554,15 @@ bool AddonsTests(Host& host)
 {
     bool ok = true;
     launcher::Model model;
+    const int shown = host.addonsShown;
     Frame(host, model);
     ok &= Check(!Find("addons"), "without add-ons there is no Add-ons button");
     model.addons = Addons();
     Frame(host, model);
+    ok &= Check(host.addonsShown == shown, "the host is not asked to look for official add-ons while the Add-ons page is closed");
     ok &= Check(Click(host, model, "addons"), "the window has an Add-ons button");
     Settle(host, model);
+    ok &= Check(host.addonsShown > shown, "and is while the page shows");
     ok &= Check(Click(host, model, "Install"), "an official add-on that is not installed offers Install");
     ok &= Check(Click(host, model, "Load"), "an add-on that is not official asks whether to load it");
     ok &= Check(Click(host, model, "Don't load"), "it can be left unloaded");
@@ -581,7 +586,7 @@ bool AddonsTests(Host& host)
     ok &= Check(host.calls == std::vector<std::string>{ "cancel 1", "install 1", "addon 0 on" }, "turning a failed add-on on tries it again");
 
     host.calls.clear();
-    ok &= Check(!Find("Update"), "an add-on that is this version's offers no update");
+    ok &= Check(!Find("Update"), "an add-on that is the one Unishade offers has no update");
     (*model.addons)[0].state = launcher::AddonState::On;
     (*model.addons)[0].error.clear();
     (*model.addons)[0].update = true;

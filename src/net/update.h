@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <string>
 
 // A newer Unishade on GitHub, which Setup installs.
@@ -42,3 +43,10 @@ void InstallUpdate();
 // Stops a download. Setup, once started, runs to its end.
 void CancelUpdate();
 UpdateInstall InstallingUpdate();
+
+// Why a file downloaded from a release cannot be told to be Unishade's own, as the end of a sentence about the file,
+// or nothing when it can. On Windows a version's file has to have a signature Windows trusts, from the signer of this
+// Unishade's own file when that is signed. A beta's files are not signed, so only a Unishade that is not signed either
+// takes them, with the release on GitHub as all there is to go by. macOS and Linux have no such signatures, so there
+// the release is all there is for every file, and this never finds anything.
+std::string NotFromPublisher(const std::filesystem::path& file, bool beta);

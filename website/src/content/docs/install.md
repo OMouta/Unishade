@@ -45,13 +45,12 @@ Next time, start **Unishade** from the Start menu.
 
 You need a Mac with Apple Silicon (M1 or newer) and macOS 13 or newer.
 
-1. [Download Unishade-macOS.zip](/download/#macos), unzip it and move **Unishade** to Applications.
-2. The app isn't notarized yet, so macOS stops it the first time:
-   - On macOS 15 or newer, open Unishade and click **Done** when macOS says it can't verify it. Open **System Settings > Privacy & Security**, scroll to Security and click **Open Anyway** next to Unishade.
-   - On macOS 13 and 14, right-click Unishade and choose **Open**, then click **Open**.
-3. Click **Allow screen recording** in Unishade and allow it under **System Settings > Privacy & Security > Screen & System Audio Recording**. On macOS 13 and 14 that's **Screen Recording**.
-4. Click **Restart Unishade**. macOS only counts the permission after a restart.
-5. Click **Download effects and presets**.
+1. [Download Unishade-macOS.dmg](/download/#macos) and open it.
+2. Drag **Unishade** to **Applications** in the window that opens. You can eject the Unishade disk and delete the download after that.
+3. Open Unishade from Applications. The first time, macOS says it's an app downloaded from the internet: click **Open**.
+4. Click **Allow screen recording** in Unishade and allow it under **System Settings > Privacy & Security > Screen & System Audio Recording**. On macOS 13 and 14 that's **Screen Recording**.
+5. Click **Restart Unishade**. macOS only counts the permission after a restart.
+6. Click **Download effects and presets**.
 
 ## Linux
 
@@ -86,7 +85,7 @@ On Windows, closing the Unishade window leaves it running by the clock. To quit,
 
 Install the new version over the old one. Your presets, settings and games stay.
 
-On Windows, Unishade tells you when a new version is out, and **Update** on that card installs it: Unishade downloads the new Setup, checks it against the SHA-256 the release lists, and starts again as the new version. A released version's Setup also has to be signed like the Unishade you have. A beta is offered newer betas too, which aren't code-signed. A released version is only offered released versions. On macOS and Linux, Unishade tells you too, and **Download** on the card opens the release's page: download the new version there and put it in place of the one you have. Turn the check off with **Settings > Check for updates**.
+On Windows, Unishade tells you when a new version is out, and **Update** on that card installs it: Unishade downloads the new Setup, checks it against the SHA-256 the release lists, and starts again as the new version. A released version's Setup also has to be signed like the Unishade you have. A beta is offered newer betas too, which aren't code-signed. A released version is only offered released versions. On macOS and Linux, Unishade tells you too, and **Download** on the card opens the release's page: download the new version there and put it in place of the one you have. On a Mac, quit Unishade, drag the new one to Applications and click **Replace**. Turn the check off with **Settings > Check for updates**.
 
 When a beta of the next version is out, the [download page](/download/) has it too. Setup installs it over the Unishade you have.
 

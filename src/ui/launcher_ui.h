@@ -299,7 +299,7 @@ struct Addon
     std::string icon;    // its picture, or empty for the start of its name
     std::string folder;  // as it is named in the Addons folder
     bool official = false;
-    // An official add-on's library that is not this version's, which InstallAddon replaces.
+    // An official add-on's library that is not the one of the release Unishade offers, which InstallAddon replaces.
     bool update = false;
     AddonState state = AddonState::Off;
     // Why it failed, or why the last install did.
@@ -371,6 +371,8 @@ struct Model
     std::optional<Discord> discord;
     // The Add-ons page shows, where the host has add-ons. Official ones first.
     std::optional<std::vector<Addon>> addons;
+    // Above the add-ons: why the official ones are not listed, or empty.
+    std::string addonsNote;
     std::optional<Picker> picker;
     // The games found installed, which the window offers to add until AddFoundGames answers.
     std::vector<FoundGame> found;
@@ -495,6 +497,8 @@ public:
     virtual const std::vector<EffectSetting>* DescribeAddonControls(size_t addon) = 0;
     virtual void UseAddonControl(size_t addon, size_t control, const EffectSetting& value) = 0;
     virtual void OpenAddonsFolder() = 0;
+    // Called for every frame the Add-ons page shows, so the host can look for the official add-ons there are.
+    virtual void ShowingAddons() = 0;
 
 protected:
     ~Host() = default;

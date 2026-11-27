@@ -6,12 +6,12 @@
 #include <unishade_addon.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
 #include <set>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -46,9 +46,10 @@ protected:
 
 // Add-ons, built against addons/unishade_addon.h. Each is a folder in the Addons folder of the data folder, with an
 // addon.ini that says what it is, as src/addons/addon_manifest.h describes, so nothing of an add-on runs before it is wanted.
-// One whose library has the SHA-256 the official list has for its Id, addons/official.ini, loads without asking.
-// Any other waits until the user says once whether to load it, which Unishade.ini keeps for its Id, so a rebuilt
-// library loads without asking again.
+// One whose library has the SHA-256 the official list has for its Id loads without asking. The official list is what
+// the add-ons' own releases on GitHub say, as src/addons/official_addons.h describes. Any other add-on waits until
+// the user says once whether to load it, which Unishade.ini keeps for its Id, so a rebuilt library, or another version
+// of an official add-on, loads without asking again.
 class Addons
 {
 public:
@@ -91,6 +92,8 @@ public:
         // Its Id is an official add-on's, and its library is not the one the official list has: an older or newer
         // one, which the Add-ons page offers to replace.
         bool replaceable = false;
+        // The SHA-256 of its library as it was last read, once the official list has its Id. Empty until then.
+        std::string sha256;
         // Why it cannot be loaded at all, such as an addon.ini that cannot be used. It then failed, with this as error.
         std::string problem;
         State state = State::Pending;
@@ -105,12 +108,15 @@ public:
         std::shared_ptr<Library> library;
     };
 
-    // An add-on on the official list that has a library for this system.
+    // An add-on on the official list: the release of it that this Unishade offers, which has a library for this system.
     struct Official
     {
-        addon::Manifest manifest; // as this build has it
+        std::string tag;          // of the release, such as unishade.depth-v1.2.0
+        bool beta = false;        // the release is a beta, whose files are not signed
+        addon::Manifest manifest; // as the release has it
         std::string manifestText; // the addon.ini installing writes
-        std::span<const unsigned char> icon; // the PNG installing writes as manifest.icon
+        std::string icon;         // the PNG installing writes as manifest.icon, or empty
+        std::string picture;      // the file Unishade keeps that PNG in, for the Add-ons page, or empty
         std::vector<addon::Download> files;
         std::string sha256; // of its library
     };
@@ -190,14 +196,24 @@ public:
     // loop, outside drawing, since stopping one prepares the effects again.
     void Update();
 
-    // The official add-ons for this system.
+    // The official add-ons for this system, as the last look found them. Until the first one of all, there are none.
     const std::vector<Official>& OfficialList() const { return official; }
+    // Asks GitHub which official add-ons there are, on a thread of its own, unless one is asking or one asked a short
+    // while ago. Call it while the Add-ons page shows. The next Update after the answer takes it, and wake is called
+    // from the thread once there is one, so the caller can have that Update run. Tests give their own fetch.
+    void LookForOfficial(const std::function<void()>& wake, const std::function<std::string(const std::string& url)>& fetch = {});
+    bool LookingForOfficial() const { return static_cast<bool>(look); }
+    // Whether the last look could not ask GitHub, so the list is the one from before it.
+    bool OfficialLookFailed() const { return lookFailed; }
+    // Goes up when a look ended, whether the list changed or not.
+    unsigned OfficialGeneration() const { return officialGeneration; }
     // The folder an official add-on is in, or the one installing it makes, named after its Id.
     std::string FolderOf(const Official& addon) const;
     // Downloads an official add-on's files into a folder of the Addons folder and checks each one's SHA-256, replacing
-    // what is there, then writes its addon.ini and icon. Stop the add-on before installing it again. Blocks, so call it
-    // from a thread of its own. Throws std::runtime_error with a message to show, or something else once cancel is
-    // set. progress gets the file's index and its bytes so far.
+    // what is there, then writes its addon.ini and icon. On Windows the library of a version, which is not a beta, also
+    // has to be signed as net/update.h says of a release's files. Stop the add-on before installing it again. Blocks,
+    // so call it from a thread of its own. Throws std::runtime_error with a message to show, or something else once
+    // cancel is set. progress gets the file's index and its bytes so far.
     static void Install(const Official& addon, const std::string& folder, const std::atomic<bool>& cancel,
                         const std::function<void(size_t file, uint64_t received, uint64_t total)>& progress = {});
 
@@ -222,6 +238,10 @@ private:
     void SetAnswer(const Addon& addon, bool load);
     Addon* Find(const std::string& folder);
     const Official* OfficialFor(const std::string& id) const;
+    // Says whether an add-on is the one the official list has for its Id, or another build of it.
+    void Mark(Addon& addon);
+    // Takes the answer of a look that ended.
+    void TakeOfficial();
 
     fx::Runtime* runtime = nullptr;
     AddonHost* host = nullptr;
@@ -230,6 +250,12 @@ private:
     uint64_t effectsGeneration = 0;
     std::vector<Addon> addons;
     std::vector<Official> official;
+    // A look that is asking GitHub, or whose answer the next Update takes.
+    struct Look;
+    std::shared_ptr<Look> look;
+    std::chrono::steady_clock::time_point lookAgain{};
+    bool lookFailed = false;
+    unsigned officialGeneration = 0;
     std::set<std::string> paused;
     // Unishade.ini as it was when the first answer was asked for, and the answers read from it or given since, so
     // asking does not read the file again.

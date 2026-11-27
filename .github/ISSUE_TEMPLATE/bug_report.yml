@@ -32,7 +32,7 @@ body:
       options:
         - Setup on Windows (Unishade-Setup.exe)
         - Unishade.exe on Windows, without Setup
-        - The macOS app (Unishade-macOS.zip)
+        - The macOS app (Unishade-macOS.dmg)
         - The Linux build (Unishade-linux-x64.tar.gz)
         - Built from source
     validations:

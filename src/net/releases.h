@@ -87,12 +87,13 @@ inline std::optional<bool> JsonBool(std::string_view json, std::string_view key,
     return std::nullopt;
 }
 
-// Only releases with Setup can be installed, like on the website. The depth and DLSS5 files are releases too.
-inline bool HasSetup(std::string_view release, std::string_view setup)
+// Whether a release has a file of this name. Only releases with Setup can be installed, like on the website: the
+// add-ons and the files they need are releases too.
+inline bool HasAsset(std::string_view release, std::string_view file)
 {
     const size_t assets = JsonValue(release, "assets", 0);
     for (size_t name = JsonValue(release, "name", assets); assets != kMissing && name != kMissing; name = JsonValue(release, "name", name))
-        if (StringAt(release, name) == setup)
+        if (StringAt(release, name) == file)
             return true;
     return false;
 }
@@ -115,7 +116,7 @@ inline std::string NewestRelease(std::string_view json, const Version& current)
         position = next;
         const std::string_view name = JsonString(release, "tag_name", 0);
         const std::optional<Version> version = name.starts_with('v') ? ParseVersion(name.substr(1)) : std::nullopt;
-        if (!version || !(newest < *version) || JsonBool(release, "draft", 0) == true || !HasSetup(release, SetupName(name)))
+        if (!version || !(newest < *version) || JsonBool(release, "draft", 0) == true || !HasAsset(release, SetupName(name)))
             continue;
         // Only a beta is offered betas. Every build is offered a version itself, unless GitHub has it as a prerelease,
         // and a prerelease flag that is missing or unreadable counts as set.

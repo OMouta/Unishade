@@ -7,6 +7,7 @@ on:
   # Manual runs are signed by SignPath. With release on, they're signed with the release certificate and published as
   # the version in CMakeLists.txt. When UNISHADE_BETA there makes it a beta, release publishes it as a prerelease
   # instead, which is not signed. Without release, they're signed with the test certificate, to try the signing.
+  # The Mac app is signed with the Developer ID certificate and notarized by Apple on every manual run, a beta's too.
   workflow_dispatch:
     inputs:
       release:
@@ -78,36 +79,8 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
-      # Unishade.exe holds the SHA-256 of the add-ons built with it, which its Add-ons page checks the downloads from the
-      # release against, and Setup embeds Unishade.exe. So the add-ons are signed first, then Unishade.exe is built again
-      # with their new SHA-256 and signed, and Setup is built and signed last.
-      - name: Upload the add-ons for signing
-        id: unsigned-addons
-        if: steps.version.outputs.sign == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: unsigned-addons
-          path: |
-            build/Release/Depth.dll
-            build/Release/Unishade_nvngx.dll
-          if-no-files-found: error
-      - name: Sign the add-ons
-        if: steps.version.outputs.sign == 'true'
-        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ env.SIGNPATH_PROJECT }}
-          signing-policy-slug: ${{ inputs.release && 'release-signing' || 'test-signing' }}
-          artifact-configuration-slug: addons
-          github-artifact-id: ${{ steps.unsigned-addons.outputs.artifact-id }}
-          parameters: |
-            version: ${{ toJSON(steps.version.outputs.version) }}
-          wait-for-completion-timeout-in-seconds: 3600
-          output-artifact-directory: build/Release
-      - name: Build the program with the signed add-ons
-        if: steps.version.outputs.sign == 'true'
-        run: cmake --build build --config Release --target Unishade
+      # Setup embeds Unishade.exe, so the program is signed first, and Setup is built and signed after it. The add-ons
+      # are not part of a release of Unishade: addon.yml releases each on its own.
       - name: Upload the program for signing
         id: unsigned-program
         if: steps.version.outputs.sign == 'true'
@@ -133,15 +106,12 @@ jobs:
           output-artifact-directory: build/Release
       - name: Build installer
         run: cmake --build build --config Release --target installer
-      # Building the program and Setup must not have relinked the signed files, or the release would have unsigned
-      # copies.
+      # Building Setup must not have relinked the signed program, or the release would have an unsigned copy.
       - name: Check Setup embedded the signed program
         if: steps.version.outputs.sign == 'true'
         shell: pwsh
         run: |
-          foreach ($file in 'build/Release/Unishade.exe', 'build/Release/Depth.dll', 'build/Release/Unishade_nvngx.dll') {
-            if (-not (Get-AuthenticodeSignature $file).SignerCertificate) { throw "$file isn't signed anymore." }
-          }
+          if (-not (Get-AuthenticodeSignature build/Release/Unishade.exe).SignerCertificate) { throw "Unishade.exe isn't signed anymore." }
       - name: Upload Setup for signing
         id: unsigned-setup
         if: steps.version.outputs.sign == 'true'
@@ -260,7 +230,8 @@ jobs:
 
   build-macos:
     runs-on: macos-26
-    timeout-minutes: 30
+    # A manual run waits for Apple's notary service twice, for the app and for the disk image.
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 120 || 30 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -286,18 +257,74 @@ jobs:
               $1 == "minos" { found = 1; split($2, v, "."); if (v[1] + 0 > 13 || (v[1] + 0 == 13 && v[2] + 0 > 0)) high = 1 }
               END { if (!found || high) { print file " needs a macOS newer than 13.0, or does not say which."; exit 1 } }'
           done
-      - name: Package
+      # A manual run signs the app with the Developer ID Application certificate, so a Mac opens the download without a
+      # warning and keeps the screen recording permission from one version to the next. The certificate is the
+      # MACOS_CERTIFICATE secret, a .p12 file in base64, and MACOS_CERTIFICATE_PASSWORD its password.
+      - name: Import the signing certificate
+        id: certificate
+        if: github.event_name == 'workflow_dispatch'
+        uses: ./.github/actions/mac-certificate
+        with:
+          certificate: ${{ secrets.MACOS_CERTIFICATE }}
+          password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      # The App Store Connect API key Apple's notary service takes, in a file only this user can read.
+      - name: Write the notary key
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
         run: |
-          cp LICENSE CREDITS.txt build/
-          cd build
-          ditto -c -k --keepParent Unishade.app Unishade-macOS.zip
-          zip -j Unishade-macOS.zip LICENSE CREDITS.txt
+          if [ -z "$NOTARY_KEY" ]; then
+            echo "::error::A manual run notarizes the Mac app, which needs the NOTARY_KEY and NOTARY_KEY_ID secrets, and NOTARY_ISSUER_ID for a team's key."
+            exit 1
+          fi
+          (umask 077 && printf '%s\n' "$NOTARY_KEY" > "$RUNNER_TEMP/notary-key.p8")
+      - name: Sign the app
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          IDENTITY: ${{ steps.certificate.outputs.identity }}
+        run: cmake -DAPP=build/Unishade.app "-DIDENTITY=$IDENTITY" -P cmake/sign_macos.cmake
+      # The app is notarized by itself first, so the copy in Applications has its ticket and opens with no network.
+      - name: Notarize the app
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          NOTARY_KEY: ${{ runner.temp }}/notary-key.p8
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: ./scripts/notarize-macos.sh build/Unishade.app
+      # The disk image is what a release has for the Mac. Every run makes it, so a change that breaks it shows up here.
+      - name: Package
+        run: ./scripts/dmg.sh build/Unishade.app build/Unishade-macOS.dmg
+      - name: Sign and notarize the disk image
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          IDENTITY: ${{ steps.certificate.outputs.identity }}
+          NOTARY_KEY: ${{ runner.temp }}/notary-key.p8
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          codesign --force --sign "$IDENTITY" --timestamp build/Unishade-macOS.dmg
+          ./scripts/notarize-macos.sh build/Unishade-macOS.dmg
+      # What a Mac that downloaded the release decides: Gatekeeper has to accept the disk image and the app in it as
+      # notarized, and the app has to start from there.
+      - name: Check the Mac accepts the disk image
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          spctl --assess --type open --context context:primary-signature --verbose=2 build/Unishade-macOS.dmg
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/image" build/Unishade-macOS.dmg
+          codesign --verify --strict --deep --verbose=2 "$RUNNER_TEMP/image/Unishade.app"
+          spctl --assess --type execute --verbose=2 "$RUNNER_TEMP/image/Unishade.app"
+          xcrun stapler validate "$RUNNER_TEMP/image/Unishade.app"
+          "$RUNNER_TEMP/image/Unishade.app/Contents/MacOS/Unishade" --version
+          hdiutil detach "$RUNNER_TEMP/image"
+      - name: Remove the signing certificate
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/notary-key.p8"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Unishade-macOS
-          path: |
-            build/Unishade-macOS.zip
-            build/Depth.dylib
+          path: build/Unishade-macOS.dmg
           if-no-files-found: error
 
   release:
@@ -330,10 +357,9 @@ jobs:
           RELEASE_TAG: v${{ needs.build.outputs.version }}
         run: |
           mkdir upload
-          # Depth.dll, Depth.dylib and Unishade_nvngx.dll are where addons/official.ini points the Add-ons page.
-          cp release/build/Release/Unishade.exe release/build/Release/Depth.dll release/build/Release/Unishade_nvngx.dll \
-            "release/build/installer/Unishade-Setup-${RELEASE_TAG#v}.exe" release/LICENSE release/Unishade-linux-x64.tar.gz release/Unishade-macOS.zip \
-            release/Depth.dylib upload/
+          # The add-ons the builds made stay out: each has releases of its own, which addon.yml publishes.
+          cp release/build/Release/Unishade.exe "release/build/installer/Unishade-Setup-${RELEASE_TAG#v}.exe" release/LICENSE \
+            release/Unishade-linux-x64.tar.gz release/Unishade-macOS.dmg upload/
           # The SHA-256 of every file, in the format sha256sum -c reads.
           (cd upload && sha256sum -- * > ../SHA256SUMS.txt)
           mv SHA256SUMS.txt upload/
@@ -348,11 +374,12 @@ jobs:
             prerelease=(--prerelease)
             version=${RELEASE_TAG#v}
             version=${version%%-beta.*}
-            printf '%s\n\n' "This is a beta of Unishade $version, for testing. Setup installs it over the Unishade you have. On Windows, the beta offers to install newer betas, and $version once it's released. On macOS and Linux it says when one is out. Betas aren't code-signed, so Windows may say **Windows protected your PC** before Setup runs. Click **More info**, then **Run anyway**." > release-notes.md
+            printf '%s\n\n' "This is a beta of Unishade $version, for testing. Setup installs it over the Unishade you have. On Windows, the beta offers to install newer betas, and $version once it's released. On macOS and Linux it says when one is out. A beta's Setup isn't code-signed, so Windows may say **Windows protected your PC** before it runs. Click **More info**, then **Run anyway**. The Mac app is signed and notarized by Apple." > release-notes.md
           else
             exclude=(--exclude 'v*-beta.*')
           fi
-          previous_tag=$(git describe --tags --match 'v*' "${exclude[@]}" --abbrev=0 HEAD 2>/dev/null || true)
+          # The add-ons' releases have tags too, which start with the add-on's Id.
+          previous_tag=$(git describe --tags --match 'v[0-9]*' "${exclude[@]}" --abbrev=0 HEAD 2>/dev/null || true)
           range=HEAD
           since=
           if [ -n "$previous_tag" ]; then
@@ -360,9 +387,11 @@ jobs:
             since=" since $previous_tag"
           fi
           # Only the commits that change what the release's files are made from: not the website, the bot, the
-          # workflows, the tests, the scripts or the Markdown pages. A long list is folded, so the page still starts
+          # workflows, the tests, the scripts, the Markdown pages or the add-ons, whose own releases list theirs. The
+          # add-on interface, addons/unishade_addon.h, is Unishade's. A long list is folded, so the page still starts
           # with what to know before downloading.
-          git log --no-merges --format='- %s (%h)' "$range" -- . ':!website' ':!bot' ':!.github' ':!tests' ':!scripts' ':(exclude,glob)**/*.md' > changes.md
+          git log --no-merges --format='- %s (%h)' "$range" -- . ':!website' ':!bot' ':!.github' ':!tests' ':!scripts' ':(exclude,glob)**/*.md' \
+            ':(exclude,glob)addons/*/**' > changes.md
           count=$(wc -l < changes.md | tr -d ' ')
           if [ "$count" -gt 30 ]; then
             printf '<details>\n<summary>%s changes%s</summary>\n\n' "$count" "$since" >> release-notes.md

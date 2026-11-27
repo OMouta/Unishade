@@ -1,0 +1,246 @@
+name: Release an add-on
+
+# Releases one of the official add-ons in addons/ on its own, apart from Unishade, as src/addons/addon_releases.h
+# describes: under a tag made of the Id and the Version in its addon.ini, such as unishade.depth-v1.2.0. Unishade's
+# Add-ons page finds the release on GitHub, so every Unishade that can run the add-on offers it without a new version
+# of Unishade. A Version ending in -beta.N is a beta: a prerelease that is not signed, which only betas of Unishade are
+# offered. A version's libraries for Windows are signed by SignPath with the release certificate. The library for the
+# Mac is signed with the Developer ID certificate, a beta's too.
+on:
+  workflow_dispatch:
+    inputs:
+      addon:
+        description: The add-on, by its folder in addons
+        type: choice
+        options:
+          - depth
+          - dlss5
+
+permissions:
+  contents: read
+
+env:
+  ADDON: addons/${{ inputs.addon }}
+
+jobs:
+  # Reads what is released, so a mistake fails before anything is built or anyone is asked to approve the signing.
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.read.outputs.tag }}
+      version: ${{ steps.read.outputs.version }}
+      beta: ${{ steps.read.outputs.beta }}
+      windows: ${{ steps.read.outputs.windows }}
+      macos: ${{ steps.read.outputs.macos }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Read the add-on's version
+        id: read
+        run: |
+          tag=$(cmake "-DADDON=$ADDON" -P cmake/addon_release.cmake)
+          version=${tag##*-v}
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          beta=false
+          if [[ "$version" == *-beta.* ]]; then beta=true; fi
+          echo "beta=$beta" >> "$GITHUB_OUTPUT"
+          # A beta can come from the branch its version is made on.
+          if [ "$beta" = false ] && [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::Versions are released from main, not $GITHUB_REF."
+            exit 1
+          fi
+          # A release stays as it is: Unishade keeps what it read of one, and never reads it again.
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "::error::$tag is already released. Raise Version in $ADDON/addon.ini."
+            exit 1
+          fi
+          # The systems the add-on has a library for, which files.ini has a placeholder for each.
+          for system in windows:dll macos:dylib; do
+            built=false
+            if grep -q "^[^;].*=@[^@]*\.${system#*:}@" "$ADDON/files.ini"; then built=true; fi
+            echo "${system%:*}=$built" >> "$GITHUB_OUTPUT"
+          done
+
+  windows:
+    needs: read
+    if: needs.read.outputs.windows == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 90
+    # SignPath reads the run's jobs and downloads the unsigned files with the workflow's token.
+    permissions:
+      actions: read
+      contents: read
+    env:
+      SIGNPATH_ORGANIZATION_ID: 163ddba1-cfa2-4731-ab5b-79be8ba21487
+      SIGNPATH_PROJECT: Unishade
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Configure
+        run: cmake -S . -B build -A x64
+      - name: Build the add-ons
+        run: cmake --build build --config Release --parallel --target official_addons
+      # SignPath's artifact configuration for the add-ons names every add-on's library, so all of them are signed,
+      # and the release takes the ones of its add-on.
+      - name: Upload the add-ons for signing
+        id: unsigned-addons
+        if: needs.read.outputs.beta == 'false'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unsigned-addons
+          path: |
+            build/Release/Depth.dll
+            build/Release/Unishade_nvngx.dll
+          if-no-files-found: error
+      - name: Sign the add-ons
+        if: needs.read.outputs.beta == 'false'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT }}
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: addons
+          github-artifact-id: ${{ steps.unsigned-addons.outputs.artifact-id }}
+          parameters: |
+            version: ${{ toJSON(needs.read.outputs.version) }}
+          # Release signing waits for an approver.
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: build/Release
+      # Unishade for Windows installs a version's library only when it is signed.
+      - name: Check the add-ons are signed
+        if: needs.read.outputs.beta == 'false'
+        shell: pwsh
+        run: |
+          foreach ($file in Get-Item build/Release/Depth.dll, build/Release/Unishade_nvngx.dll) {
+            if (-not (Get-AuthenticodeSignature $file).SignerCertificate) { throw "$file isn't signed." }
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: addons-windows
+          path: |
+            build/Release/Depth.dll
+            build/Release/Unishade_nvngx.dll
+          if-no-files-found: error
+
+  macos:
+    needs: read
+    if: needs.read.outputs.macos == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install dependencies
+        run: brew install molten-vk vulkan-headers
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build the add-ons
+        run: cmake --build build --parallel --target official_addons
+      # Unishade promises macOS 13, which the runner's own version would quietly break.
+      - name: Check the oldest macOS the add-ons run on
+        run: |
+          for binary in build/*.dylib; do
+            vtool -show-build "$binary"
+            vtool -show-build "$binary" | awk -v file="$binary" '
+              $1 == "minos" { found = 1; split($2, v, "."); if (v[1] + 0 > 13 || (v[1] + 0 == 13 && v[2] + 0 > 0)) high = 1 }
+              END { if (!found || high) { print file " needs a macOS newer than 13.0, or does not say which."; exit 1 } }'
+          done
+      # Signed before the release lists the SHA-256 of the file, so the file listed is the file published. The
+      # certificate is the one Unishade for the Mac is signed with, from the same secrets.
+      - name: Import the signing certificate
+        id: certificate
+        uses: ./.github/actions/mac-certificate
+        with:
+          certificate: ${{ secrets.MACOS_CERTIFICATE }}
+          password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      - name: Sign the add-ons
+        env:
+          IDENTITY: ${{ steps.certificate.outputs.identity }}
+        run: |
+          for binary in build/*.dylib; do
+            codesign --force --sign "$IDENTITY" --timestamp "$binary"
+            codesign --verify --strict --verbose=2 "$binary"
+          done
+      - name: Remove the signing certificate
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: addons-macos
+          path: build/*.dylib
+          if-no-files-found: error
+
+  release:
+    needs: [read, windows, macos]
+    # A system the add-on has no library for is skipped, which is no failure.
+    if: ${{ !cancelled() && needs.read.result == 'success' && !contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: addons-*
+          path: built
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.read.outputs.tag }}
+          VERSION: ${{ needs.read.outputs.version }}
+          BETA: ${{ needs.read.outputs.beta }}
+        run: |
+          # The libraries files.ini has a placeholder for, as name=path separated by |.
+          binaries=$(sed -n 's/^[^;].*=@\([^@]*\)@.*/\1/p' "$ADDON/files.ini" | sort -u | sed 's|.*|&=built/&|' | paste -sd '|' -)
+          cmake "-DADDON=$ADDON" "-DBINARIES=$binaries" -DOUTPUT=upload -P cmake/addon_release.cmake
+          cat upload/SHA256SUMS.txt
+
+          id=${RELEASE_TAG%-v*}
+          name=$(sed -n 's/^Name=//p' upload/addon.ini)
+          # The release creates its tag, so the newest tag of this add-on is its previous release's. A beta lists what
+          # changed since the release before it, beta or not. A version lists what changed since the version before it,
+          # which includes what its betas had.
+          prerelease=()
+          exclude=()
+          if [ "$BETA" = true ]; then
+            prerelease=(--prerelease)
+            printf '%s\n\n' "This is a beta of Unishade's $name add-on, for testing. Betas of Unishade offer it on their Add-ons page, which installs it, so there is nothing to download here. Its library for Windows isn't code-signed." > release-notes.md
+          else
+            exclude=(--exclude '*-beta.*')
+            printf '%s\n\n' "This is a version of Unishade's $name add-on. Unishade offers it on its Add-ons page, which installs it, so there is nothing to download here." > release-notes.md
+          fi
+          previous_tag=$(git describe --tags --match "$id-v*" "${exclude[@]}" --abbrev=0 HEAD 2>/dev/null || true)
+          range=HEAD
+          since=
+          if [ -n "$previous_tag" ]; then
+            range="$previous_tag..HEAD"
+            since=" since $previous_tag"
+          fi
+          # Only the commits that change what the add-on is made from: its folder and the add-on interface. A long
+          # list is folded, as an add-on's first release has every commit to it.
+          git log --no-merges --format='- %s (%h)' "$range" -- "$ADDON" addons/unishade_addon.h ':(exclude,glob)**/*.md' > changes.md
+          count=$(wc -l < changes.md | tr -d ' ')
+          if [ "$count" -gt 30 ]; then
+            printf '<details>\n<summary>%s changes%s</summary>\n\n' "$count" "$since" >> release-notes.md
+            cat changes.md >> release-notes.md
+            printf '\n</details>\n' >> release-notes.md
+          else
+            cat changes.md >> release-notes.md
+          fi
+          if [ "$BETA" = false ]; then
+            printf '\n%s\n' 'Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). [Code signing policy](https://unishade.me/code-signing/)' >> release-notes.md
+          fi
+          # Never the latest release, which is Unishade's own.
+          gh release create "$RELEASE_TAG" upload/* --target "$GITHUB_SHA" --title "$name $VERSION" --notes-file release-notes.md --latest=false "${prerelease[@]}"

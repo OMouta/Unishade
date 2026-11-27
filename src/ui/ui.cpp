@@ -90,7 +90,6 @@ constexpr size_t kMaxPictures = 192;
 constexpr uint32_t kDescriptorPoolSize = kMaxPictures + 64;
 constexpr char kLogoPicture[] = "logo";
 // Then an official add-on's Id: its icon as the program has it.
-const std::string kAddonPicture = "addon:";
 
 struct DecodedPicture
 {
@@ -191,13 +190,6 @@ std::vector<uint8_t> ReadPicture(const std::string& key, int& width, int& height
     image::Pixels pixels;
     if (key == kLogoPicture)
         pixels = image::Decode(std::string_view(reinterpret_cast<const char*>(kLogoPng), kLogoPngSize));
-    else if (key.starts_with(kAddonPicture))
-    {
-        // The official list stays as it is once Unishade started, so a thread can read it.
-        for (const Addons::Official& official : app.addons.OfficialList())
-            if (official.manifest.id == key.substr(kAddonPicture.size()))
-                pixels = image::Decode(std::string_view(reinterpret_cast<const char*>(official.icon.data()), official.icon.size()));
-    }
     else
         pixels = image::Read(fs::is_directory(path, error) ? path / "logo.png" : path);
     if (!pixels.data)
@@ -767,6 +759,9 @@ struct LauncherState
     // The folder of each add-on the model lists, the installs under way, why the last install of each official add-on
     // failed, by its Id, and whether each has all its files, which is read with the presets.
     std::vector<std::string> addonFolders;
+    // The Ids of the official add-ons the model lists, which come first, and the look they are from.
+    std::vector<std::string> officialIds;
+    unsigned officialGeneration = 0;
     std::vector<std::unique_ptr<AddonInstall>> installs;
     std::map<std::string, std::string> installErrors;
     std::map<std::string, bool> addonsWhole;
@@ -1864,6 +1859,11 @@ public:
             app.addons.UseControl(launcherState.addonFolders[addon], control, values);
     }
 
+    void ShowingAddons() override
+    {
+        app.addons.LookForOfficial([] { glfwPostEmptyEvent(); });
+    }
+
     void OpenAddonsFolder() override
     {
         const fs::path folder = DataDirectory() / "Addons";
@@ -1873,11 +1873,15 @@ public:
     }
 
 private:
-    // The model lists the official add-ons first, in the official list's order.
+    // The model lists the official add-ons first. The official list can have changed since, so the one the model
+    // showed there is looked up by its Id.
     const Addons::Official* OfficialOf(size_t addon) const
     {
-        const std::vector<Addons::Official>& list = app.addons.OfficialList();
-        return addon < list.size() ? &list[addon] : nullptr;
+        if (addon < launcherState.officialIds.size())
+            for (const Addons::Official& official : app.addons.OfficialList())
+                if (official.manifest.id == launcherState.officialIds[addon])
+                    return &official;
+        return nullptr;
     }
 
     fx::Effect* EffectOf(size_t effect)
@@ -2254,9 +2258,22 @@ void DescribeInstalled(App& app, const Addons::Addon& installed, launcher::Addon
 void DescribeAddons(App& app, launcher::Model& model)
 {
     FollowInstalls(app);
+    // A look for the official add-ons ended, which can change what is installed whole and what has an update.
+    if (launcherState.officialGeneration != app.addons.OfficialGeneration())
+    {
+        launcherState.officialGeneration = app.addons.OfficialGeneration();
+        RefreshLauncher();
+    }
     std::vector<launcher::Addon>& list = model.addons.emplace();
     std::vector<std::string>& folders = launcherState.addonFolders;
     folders.clear();
+    launcherState.officialIds.clear();
+    // Without a list from an earlier look, Unishade's own add-ons show once GitHub has answered.
+    if (app.addons.OfficialList().empty() && app.addons.LookingForOfficial())
+        model.addonsNote = "Looking for Unishade's own add-ons.";
+    else if (app.addons.OfficialList().empty() && app.addons.OfficialLookFailed())
+        model.addonsNote = "Unishade's own add-ons aren't listed, since GitHub couldn't be reached. Check your connection. Unishade asks again in a minute "
+                           "while this page is open.";
     const std::vector<Addons::Addon>& found = app.addons.List();
     std::vector<bool> listed(found.size());
     const auto installing = [](const std::string& folder) {
@@ -2265,13 +2282,13 @@ void DescribeAddons(App& app, launcher::Model& model)
     for (const Addons::Official& official : app.addons.OfficialList())
     {
         const std::string folder = app.addons.FolderOf(official);
-        // Until it is installed, the launcher shows what this Unishade knows of it, with the icon in the program.
+        // Until it is installed, the launcher shows what its release says of it, with the release's icon.
         launcher::Addon addon{ .id = official.manifest.id,
                                .name = official.manifest.name,
                                .description = official.manifest.description,
                                .version = official.manifest.version,
                                .author = official.manifest.author,
-                               .icon = kAddonPicture + official.manifest.id,
+                               .icon = official.picture,
                                .folder = folder,
                                .official = true };
         const auto installed =
@@ -2283,8 +2300,9 @@ void DescribeAddons(App& app, launcher::Model& model)
             addon.state = launcher::AddonState::Installing;
             addon.progress = (*install)->progress;
         }
-        // One with files missing fails to start for that reason, which installing it fixes.
-        else if (installed == found.end() || !Whole(official, folder))
+        // One with files missing fails to start for that reason, which installing it fixes. Another version of it than
+        // the list's has files of its own, and says itself when one is missing.
+        else if (installed == found.end() || (installed->official && !Whole(official, folder)))
         {
             addon.state = launcher::AddonState::Available;
             if (const auto error = launcherState.installErrors.find(official.manifest.id); error != launcherState.installErrors.end())
@@ -2293,6 +2311,7 @@ void DescribeAddons(App& app, launcher::Model& model)
         else
             DescribeInstalled(app, *installed, addon);
         folders.push_back(folder);
+        launcherState.officialIds.push_back(official.manifest.id);
         list.push_back(std::move(addon));
     }
     for (size_t i = 0; i < found.size(); ++i)

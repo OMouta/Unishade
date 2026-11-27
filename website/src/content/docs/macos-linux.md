@@ -17,7 +17,7 @@ Mac keyboards have no Home key, so the [shortcuts](/docs/menu/#shortcuts) differ
 Unishade copies the game's window through screen recording, so macOS shows its recording indicator in the menu bar while a game runs.
 
 - macOS only counts the permission once Unishade starts again. That's what **Restart Unishade** does.
-- A new version of Unishade can lose the permission. In the Screen Recording list, remove Unishade with the minus button and add it again. Or run `tccutil reset ScreenCapture me.unishade.Unishade` in Terminal, then click **Allow screen recording** again.
+- The permission stays from one version to the next. Only the first update from a version before 0.7.0, or from one of its first three betas, loses it. In the Screen Recording list, remove Unishade with the minus button and add it again. Or run `tccutil reset ScreenCapture me.unishade.Unishade` in Terminal, then click **Allow screen recording** again.
 - macOS 15 and newer ask from time to time whether Unishade may keep recording. Allow it to keep effects running.
 - If you stop the recording from the menu bar, effects turn off. Turn them back on in the Unishade window, or with Ctrl+Cmd+O.
 
