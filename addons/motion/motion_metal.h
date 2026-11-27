@@ -322,7 +322,91 @@ kernel void Refine(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [
     if (!cut && all((p & 1) == 0))
         atomic_fetch_add_explicit(&keys[MotionKeyCosts + NoiseBin(contrast, cost)], 1u, memory_order_relaxed);
     float confidence = cut ? 0.0f : MatchConfidence(still ? stillCost : cost, contrast, noise);
-    motionTarget.write(float4(cut || still ? float2(0.0f) : shift, confidence, still ? 1.0f : 0.0f), id);
+    float textured = saturate(contrast / (PlainContrast + noise) - 1.0f);
+    motionTarget.write(float4(cut || still ? float2(0.0f) : shift, confidence, textured), id);
+}
+
+// Each pixel of a level above the finest counts the finest level's windows it covers, as in motion_shared.h.
+kernel void Gather(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [[buffer(0)]], texture2d<float, access::write> motionTarget [[texture(6)]],
+                   texture2d<float, access::read> gathered [[texture(11)]])
+{
+    if (any(id >= sizes.Size))
+        return;
+    uint2 finest = uint2(gathered.get_width(), gathered.get_height());
+    uint span = uint(round(sizes.Scale * float(finest.x) / float(sizes.PictureSize.x)));
+    float3 moving = float3(0.0f);
+    float still = 0.0f;
+    for (uint y = 0; y < span; ++y)
+        for (uint x = 0; x < span; ++x)
+        {
+            uint2 q = id * span + uint2(x, y);
+            if (all(q < finest))
+            {
+                float4 window = gathered.read(q);
+                if (all(window.xy == 0.0f))
+                    still += window.w;
+                else
+                    moving += float3(window.xy, 1.0f) * window.w;
+            }
+        }
+    float textured = moving.z + still;
+    motionTarget.write(float4(moving.z > 0.0f ? moving.xy / moving.z : float2(0.0f), textured > 0.0f ? still / textured : 1.0f, min(textured, 1.0f)), id);
+}
+
+// Takes what a pixel of the fill lacks in texture from more, as in motion_shared.h.
+float4 Complete(float4 own, float4 more)
+{
+    return float4(mix(more.xy, own.xy, saturate(own.w * (1.0f - own.z))), mix(more.z, own.z, own.w), 0.0f);
+}
+
+kernel void Spread(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [[buffer(0)]], texture2d<float, access::read> gathered [[texture(11)]],
+                   texture2d<float, access::write> fillTarget [[texture(13)]])
+{
+    if (any(id >= sizes.Size))
+        return;
+    float3 moving = float3(0.0f);
+    float still = 0.0f;
+    for (int y = -FillReach; y <= FillReach; ++y)
+        for (int x = -FillReach; x <= FillReach; ++x)
+        {
+            int2 q = int2(id) + int2(x, y);
+            if (all(q >= 0) && all(q < int2(sizes.Size)))
+            {
+                float4 cell = gathered.read(uint2(q));
+                float distance = float(1 + x * x + y * y);
+                float weight = cell.w / (distance * distance);
+                moving += float3(cell.xy, 1.0f) * weight * (1.0f - cell.z);
+                still += weight * cell.z;
+            }
+        }
+    float textured = moving.z + still;
+    float4 around = float4(moving.z > 0.0f ? moving.xy / moving.z : float2(0.0f), textured > 0.0f ? still / textured : 1.0f, 1.0f);
+    fillTarget.write(Complete(gathered.read(id), around), id);
+}
+
+// The level above's fill at p of this level.
+float4 Above(texture2d<float> filled, int2 p)
+{
+    float2 size = float2(filled.get_width(), filled.get_height());
+    return filled.sample(Linear, (float2(p) + 0.5f) / 2.0f / size, level(0.0f));
+}
+
+kernel void Fill(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [[buffer(0)]], texture2d<float, access::read> gathered [[texture(11)]],
+                 texture2d<float> filled [[texture(12)]], texture2d<float, access::write> fillTarget [[texture(13)]])
+{
+    if (any(id >= sizes.Size))
+        return;
+    fillTarget.write(Complete(gathered.read(id), Above(filled, int2(id))), id);
+}
+
+kernel void Settle(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [[buffer(0)]], texture2d<float, access::read> gathered [[texture(11)]],
+                   texture2d<float> filled [[texture(12)]], texture2d<float, access::write> fillTarget [[texture(13)]])
+{
+    if (any(id >= sizes.Size))
+        return;
+    float4 own = gathered.read(id);
+    float4 above = Above(filled, int2(id));
+    fillTarget.write(float4(mix(above.z > 0.5f ? float2(0.0f) : above.xy, own.xy, own.w), own.z, 0.0f), id);
 }
 
 // The largest difference in a channel between color and the previous picture's color that shift brings to q.
@@ -354,9 +438,12 @@ kernel void Finish(uint2 id [[thread_position_in_grid]], constant Sizes& sizes [
     float3 color = current.read(id).rgb / white;
     float4 around[4] = { coarser.read(uint2(clamp(cell, int2(0), last))), coarser.read(uint2(clamp(cell + int2(toward.x, 0), int2(0), last))),
                          coarser.read(uint2(clamp(cell + int2(0, toward.y), int2(0), last))), coarser.read(uint2(clamp(cell + toward, int2(0), last))) };
+    // A window is still if it has no motion at all, as a plain one among still ones also has once it is filled.
+    float still = 0.0f;
+    for (uint j = 0; j < 4; ++j)
+        still += all(around[j].xy == 0.0f) ? 1.0f : 0.0f;
     float2 low = min(min(around[0].xy, around[1].xy), min(around[2].xy, around[3].xy));
     float2 high = max(max(around[0].xy, around[1].xy), max(around[2].xy, around[3].xy));
-    float still = around[0].w + around[1].w + around[2].w + around[3].w;
     bool even = all(high - low <= EvenSpread) && (still == 0.0f || still == 4.0f);
     float4 chosen = around[0];
     if (even)
@@ -416,6 +503,10 @@ public:
         kResolve,
         kSearch,
         kRefine,
+        kGather,
+        kSpread,
+        kFill,
+        kSettle,
         kFinish,
         kClearMotion,
         kClearStill,
@@ -437,7 +528,7 @@ public:
             if (!library)
                 throw std::runtime_error(std::string("The motion shaders did not compile: ") +
                                          (error ? error.localizedDescription.UTF8String : "Metal gave no reason."));
-            const char* names[] = { "Reduce", "Downsample", "Resolve", "Search", "Refine", "Finish", "ClearMotion", "ClearStill" };
+            const char* names[] = { "Reduce", "Downsample", "Resolve", "Search", "Refine", "Gather", "Spread", "Fill", "Settle", "Finish", "ClearMotion", "ClearStill" };
             Pipelines pipelines;
             for (size_t i = 0; i < pipelines.size(); ++i)
             {
@@ -448,11 +539,11 @@ public:
                     throw std::runtime_error(std::string("Metal could not prepare ") + names[i] +
                                              (pipelineError ? std::string(": ") + pipelineError.localizedDescription.UTF8String : std::string(".")));
             }
-            // Reduce, Downsample, Finish and the clears run 256 at once, Search and Refine 64.
-            for (Kernel kernel : { kReduce, kDownsample, kFinish, kClearMotion, kClearStill })
+            // Reduce, Downsample, Fill, Settle, Finish and the clears run 256 at once, Search, Refine, Gather and Spread 64.
+            for (Kernel kernel : { kReduce, kDownsample, kFill, kSettle, kFinish, kClearMotion, kClearStill })
                 if (pipelines[kernel].maxTotalThreadsPerThreadgroup < 256)
                     throw std::runtime_error("Metal cannot run the motion shaders on this graphics card.");
-            for (Kernel kernel : { kSearch, kRefine })
+            for (Kernel kernel : { kSearch, kRefine, kGather, kSpread })
                 if (pipelines[kernel].maxTotalThreadsPerThreadgroup < 64)
                     throw std::runtime_error("Metal cannot run the motion shaders on this graphics card.");
             return pipelines;
@@ -477,6 +568,9 @@ public:
             }
             if (found)
                 level.motion = CreateTexture(device, MTLPixelFormatRGBA16Float, levelWidth, levelHeight);
+            // Every matched level has one, unless the finest is the coarsest and there is nothing to fill from.
+            if (found && !(coarsest && levels.size() - 1 == finest))
+                level.filled = CreateTexture(device, MTLPixelFormatRGBA16Float, levelWidth, levelHeight);
             if (coarsest)
                 break;
         }
@@ -533,8 +627,32 @@ public:
             [encoder setTexture:level.motion atIndex:6];
             Dispatch(encoder, i > finest ? kSearch : kRefine, level.sizes.size[0], level.sizes.size[1], 8);
         }
+        // The fill goes up from the finest level to the coarsest and back down.
+        const bool fill = finest + 1 < levels.size();
+        [encoder setTexture:levels[finest].motion atIndex:11];
+        for (size_t i = finest + 1; i < levels.size(); ++i)
+        {
+            [encoder setBytes:&levels[i].sizes length:sizeof(levels[i].sizes) atIndex:0];
+            [encoder setTexture:levels[i].motion atIndex:6];
+            Dispatch(encoder, kGather, levels[i].sizes.size[0], levels[i].sizes.size[1], 8);
+        }
+        if (fill)
+        {
+            [encoder setBytes:&levels.back().sizes length:sizeof(levels.back().sizes) atIndex:0];
+            [encoder setTexture:levels.back().motion atIndex:11];
+            [encoder setTexture:levels.back().filled atIndex:13];
+            Dispatch(encoder, kSpread, levels.back().sizes.size[0], levels.back().sizes.size[1], 8);
+        }
+        for (size_t i = levels.size() - 1; fill && i-- > finest;)
+        {
+            [encoder setBytes:&levels[i].sizes length:sizeof(levels[i].sizes) atIndex:0];
+            [encoder setTexture:levels[i].motion atIndex:11];
+            [encoder setTexture:levels[i + 1].filled atIndex:12];
+            [encoder setTexture:levels[i].filled atIndex:13];
+            Dispatch(encoder, i > finest ? kFill : kSettle, levels[i].sizes.size[0], levels[i].sizes.size[1], 16);
+        }
         [encoder setBytes:&picture.sizes length:sizeof(picture.sizes) atIndex:0];
-        [encoder setTexture:levels[finest].motion atIndex:4];
+        [encoder setTexture:fill ? levels[finest].filled : levels[finest].motion atIndex:4];
         [encoder setTexture:motion atIndex:9];
         [encoder setTexture:confidence atIndex:10];
         Dispatch(encoder, kFinish, picture.sizes.size[0], picture.sizes.size[1], 16);
@@ -554,7 +672,10 @@ private:
     {
         MetalSizes sizes{};
         id<MTLTexture> luma = nil;   // the current luma in x and the previous in y
-        id<MTLTexture> motion = nil; // vector, then the cost, or the confidence and whether it is still at the finest level
+        id<MTLTexture> motion = nil; // vector, then the cost, or at the finest level the confidence and how textured the
+                                     // window is, or above it once Gather is done, the moving windows' vector, the share
+                                     // of still windows and how textured
+        id<MTLTexture> filled = nil; // the motion the fill gives the level, if there is a level above the finest
     };
 
     static id<MTLTexture> CreateTexture(id<MTLDevice> device, MTLPixelFormat format, NSUInteger width, NSUInteger height)

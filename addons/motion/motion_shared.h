@@ -70,6 +70,13 @@ CONSTANT float EvenSpread = 1.0;
 // A vector costs this much more for each pixel of its level it is away from the level above's, so a window with
 // too little texture to tell vectors apart keeps the motion around it.
 CONSTANT float Smoothness = 0.002;
+// A window of the finest level too plain to match anything, such as unlit ground or a dusk sky, kept the motion the
+// level above expected, which was none, and sat still in blocks while the texture around it moved with the camera.
+// Its own vector now counts only as far as its luma varies by more than PlainContrast plus the noise, fully at twice
+// that, and it takes the rest from the textured windows around it. The coarsest level's cells with no texture take
+// it from those within FillReach of them, nearer ones counting more.
+CONSTANT float PlainContrast = 0.004;
+CONSTANT int FillReach = 16;
 // Keeps the sub-pixel step from growing without bound where a window has an edge in only one direction, or none.
 CONSTANT float Damping = 1e-5;
 // Where each count is in the keys, which are unsigned numbers: whether this is a cut, the sections' levels of the
@@ -129,6 +136,7 @@ constexpr unsigned kKeyCount = 2 + 2 * 9 * 16 + 16 * 64;
 // Resolve decides whether it is a cut.
 // Search matches each level from the coarsest down to the one above the finest.
 // Refine matches the finest level, to a fraction of a pixel, and decides which pixels are still.
+// Gather, Spread, Fill and Settle give the finest level's plain windows the motion of the textured ones around them.
 // Finish gives each pixel of the picture its vector and confidence.
 constexpr char kShaders[] = R"(
 cbuffer Sizes : register(b0)
@@ -144,18 +152,24 @@ cbuffer Frame : register(b1)
 };
 Texture2D<float4> Current : register(t0);
 Texture2D<float4> Previous : register(t1);
-Texture2D<float2> Level : register(t2);   // the current luma in x and the previous in y, at the level below or this one
-Texture2D<float4> Coarser : register(t3); // the level above's motion, or the finest level's for Finish
-Texture2D<float2> Last : register(t4);    // the last estimate's motion
-Texture2D<float2> Fine : register(t5);    // the luma at the picture's size
+Texture2D<float2> Level : register(t2);    // the current luma in x and the previous in y, at the level below or this one
+Texture2D<float4> Coarser : register(t3);  // the level above's motion, or the finest level's once filled for Finish
+Texture2D<float2> Last : register(t4);     // the last estimate's motion
+Texture2D<float2> Fine : register(t5);     // the luma at the picture's size
+Texture2D<float4> Gathered : register(t6); // the finest level's motion, or a level's as Gather left it
+Texture2D<float4> Filled : register(t7);   // the level above's fill as Spread or Fill left it
 SamplerState Linear : register(s0);
 RWTexture2D<float2> LevelTarget : register(u0);
-RWTexture2D<float4> MotionTarget : register(u1); // vector in picture pixels, then the cost, or the confidence and
-                                                 // whether it is still at the finest level
+RWTexture2D<float4> MotionTarget : register(u1); // vector in picture pixels, then the cost, or at the finest level
+                                                 // the confidence and how textured the window is, or above it once
+                                                 // Gather is done, the moving windows' vector, the share of still
+                                                 // windows and how textured
 RWByteAddressBuffer Keys : register(u2);
 RWTexture2D<uint> Still : register(u3);          // how many estimates in a row the finest level's window has not changed
 RWTexture2D<float2> Motion : register(u4);
 RWTexture2D<unorm float> Confidence : register(u5);
+RWTexture2D<float4> FillTarget : register(u6); // the moving windows' vector and the share of still ones, or at the
+                                               // finest level the vector and the confidence
 
 static const int Side = 2 * Radius + 3;
 // A match is costed on every other tap of the window, in a checkerboard, which reaches as far for half the samples.
@@ -451,7 +465,101 @@ void Refine(uint3 id : SV_DispatchThreadID)
     if (!cut && all((p & 1) == 0))
         Keys.InterlockedAdd(4 * (MotionKeyCosts + NoiseBin(contrast, cost)), 1);
     float confidence = cut ? 0 : MatchConfidence(still ? stillCost : cost, contrast, noise);
-    MotionTarget[id.xy] = float4(cut || still ? float2(0, 0) : shift, confidence, still);
+    float textured = saturate(contrast / (PlainContrast + noise) - 1);
+    MotionTarget[id.xy] = float4(cut || still ? float2(0, 0) : shift, confidence, textured);
+}
+
+// Each pixel of a level above the finest counts the finest level's windows it covers by how textured they are: how
+// many of them are still, with no motion at all, and the average vector of those that move. It is as textured as one
+// textured window.
+[numthreads(8, 8, 1)]
+void Gather(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= Size))
+        return;
+    uint2 finest;
+    Gathered.GetDimensions(finest.x, finest.y);
+    uint span = uint(round(Scale * float(finest.x) / float(PictureSize.x)));
+    float3 moving = 0;
+    float still = 0;
+    for (uint y = 0; y < span; ++y)
+        for (uint x = 0; x < span; ++x)
+        {
+            uint2 q = id.xy * span + uint2(x, y);
+            if (all(q < finest))
+            {
+                float4 window = Gathered.Load(int3(q, 0));
+                if (all(window.xy == 0))
+                    still += window.w;
+                else
+                    moving += float3(window.xy, 1) * window.w;
+            }
+        }
+    float textured = moving.z + still;
+    MotionTarget[id.xy] = float4(moving.z > 0 ? moving.xy / moving.z : float2(0, 0), textured > 0 ? still / textured : 1, min(textured, 1));
+}
+
+// Takes what a pixel of the fill lacks in texture from more: its share of still windows, and its moving windows'
+// vector as far as it has no moving windows.
+float4 Complete(float4 own, float4 more)
+{
+    return float4(lerp(more.xy, own.xy, saturate(own.w * (1 - own.z))), lerp(more.z, own.z, own.w), 0);
+}
+
+// The coarsest level's pixels take what they lack in texture from the textured pixels within FillReach of them.
+[numthreads(8, 8, 1)]
+void Spread(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= Size))
+        return;
+    float3 moving = 0;
+    float still = 0;
+    for (int y = -FillReach; y <= FillReach; ++y)
+        for (int x = -FillReach; x <= FillReach; ++x)
+        {
+            int2 q = int2(id.xy) + int2(x, y);
+            if (all(q >= 0) && all(q < int2(Size)))
+            {
+                float4 cell = Gathered.Load(int3(q, 0));
+                float distance = 1 + x * x + y * y;
+                float weight = cell.w / (distance * distance);
+                moving += float3(cell.xy, 1) * weight * (1 - cell.z);
+                still += weight * cell.z;
+            }
+        }
+    float textured = moving.z + still;
+    float4 around = float4(moving.z > 0 ? moving.xy / moving.z : float2(0, 0), textured > 0 ? still / textured : 1, 1);
+    FillTarget[id.xy] = Complete(Gathered.Load(int3(id.xy, 0)), around);
+}
+
+// The level above's fill at p of this level.
+float4 Above(int2 p)
+{
+    uint2 size;
+    Filled.GetDimensions(size.x, size.y);
+    return Filled.SampleLevel(Linear, (float2(p) + 0.5) / 2 / float2(size), 0);
+}
+
+// The levels between the coarsest and the finest take what each pixel lacks in texture from the level above.
+[numthreads(16, 16, 1)]
+void Fill(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= Size))
+        return;
+    FillTarget[id.xy] = Complete(Gathered.Load(int3(id.xy, 0)), Above(int2(id.xy)));
+}
+
+// Each window of the finest level takes what it lacks in texture from the level above: no motion where most of the
+// texture around it is still, so a still picture's plain windows stay exactly still, and otherwise the vector of what
+// moves.
+[numthreads(16, 16, 1)]
+void Settle(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= Size))
+        return;
+    float4 own = Gathered.Load(int3(id.xy, 0));
+    float4 above = Above(int2(id.xy));
+    FillTarget[id.xy] = float4(lerp(above.z > 0.5 ? float2(0, 0) : above.xy, own.xy, own.w), own.z, 0);
 }
 
 // The largest difference in a channel between color and the previous picture's color that shift brings to q.
@@ -483,9 +591,12 @@ void Finish(uint3 id : SV_DispatchThreadID)
     float3 color = Current.Load(int3(id.xy, 0)).rgb / White;
     float4 around[4] = { Coarser.Load(int3(cell, 0)), Coarser.Load(int3(clamp(cell + int2(toward.x, 0), 0, last), 0)),
                          Coarser.Load(int3(clamp(cell + int2(0, toward.y), 0, last), 0)), Coarser.Load(int3(clamp(cell + toward, 0, last), 0)) };
+    // A window is still if it has no motion at all, as a plain one among still ones also has once it is filled.
+    float still = 0;
+    for (uint j = 0; j < 4; ++j)
+        still += all(around[j].xy == 0);
     float2 low = min(min(around[0].xy, around[1].xy), min(around[2].xy, around[3].xy));
     float2 high = max(max(around[0].xy, around[1].xy), max(around[2].xy, around[3].xy));
-    float still = around[0].w + around[1].w + around[2].w + around[3].w;
     bool even = all(high - low <= EvenSpread) && (still == 0 || still == 4);
     float4 chosen = around[0];
     if (even)

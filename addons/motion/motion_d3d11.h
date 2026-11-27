@@ -54,6 +54,10 @@ private:
         kResolve,
         kSearch,
         kRefine,
+        kGather,
+        kSpread,
+        kFill,
+        kSettle,
         kFinish,
         kShaderCount,
     };
@@ -66,12 +70,15 @@ private:
         winrt::com_ptr<ID3D11UnorderedAccessView> lumaTarget;
         winrt::com_ptr<ID3D11ShaderResourceView> motionView;
         winrt::com_ptr<ID3D11UnorderedAccessView> motionTarget;
+        // The motion the fill gives the level, if there is a level above the finest.
+        winrt::com_ptr<ID3D11ShaderResourceView> filledView;
+        winrt::com_ptr<ID3D11UnorderedAccessView> filledTarget;
     };
 
     static const std::array<std::vector<uint8_t>, kShaderCount>& Code();
-    // Runs a shader with views in t0 to t5 and targets in u0 to u5, and unbinds them after.
-    void Dispatch(ID3D11DeviceContext* context, Shader shader, ID3D11Buffer* constants, std::array<ID3D11ShaderResourceView*, 6> views,
-                  std::array<ID3D11UnorderedAccessView*, 6> targets, UINT x, UINT y);
+    // Runs a shader with views in t0 to t7 and targets in u0 to u6, and unbinds them after.
+    void Dispatch(ID3D11DeviceContext* context, Shader shader, ID3D11Buffer* constants, std::array<ID3D11ShaderResourceView*, 8> views,
+                  std::array<ID3D11UnorderedAccessView*, 7> targets, UINT x, UINT y);
 
     std::array<winrt::com_ptr<ID3D11ComputeShader>, kShaderCount> shaders;
     Level picture;             // the luma at the picture's size, and the constants of Reduce and Finish
@@ -132,7 +139,7 @@ inline const std::array<std::vector<uint8_t>, Estimator::kShaderCount>& Estimato
 {
     static const std::array<std::vector<uint8_t>, kShaderCount> code = [] {
         const std::string source = std::string("#define CONSTANT static const\n") + depth::kShaderShared + kShaderShared + kShaders;
-        const char* entryPoints[] = { "Reduce", "Downsample", "Resolve", "Search", "Refine", "Finish" };
+        const char* entryPoints[] = { "Reduce", "Downsample", "Resolve", "Search", "Refine", "Gather", "Spread", "Fill", "Settle", "Finish" };
         std::array<std::future<std::vector<uint8_t>>, kShaderCount> compiling;
         for (size_t i = 0; i < compiling.size(); ++i)
             compiling[i] = std::async(std::launch::async, [&source, entryPoint = entryPoints[i]] {
@@ -184,6 +191,13 @@ inline Estimator::Estimator(ID3D11Device* device, UINT width, UINT height)
             const auto levelMotion = CreateTexture(device, levelWidth, levelHeight, DXGI_FORMAT_R16G16B16A16_FLOAT);
             winrt::check_hresult(device->CreateShaderResourceView(levelMotion.get(), nullptr, level.motionView.put()));
             winrt::check_hresult(device->CreateUnorderedAccessView(levelMotion.get(), nullptr, level.motionTarget.put()));
+        }
+        // Every matched level has one, unless the finest is the coarsest and there is nothing to fill from.
+        if (found && !(coarsest && levels.size() - 1 == finest))
+        {
+            const auto filled = CreateTexture(device, levelWidth, levelHeight, DXGI_FORMAT_R16G16B16A16_FLOAT);
+            winrt::check_hresult(device->CreateShaderResourceView(filled.get(), nullptr, level.filledView.put()));
+            winrt::check_hresult(device->CreateUnorderedAccessView(filled.get(), nullptr, level.filledTarget.put()));
         }
         if (coarsest)
             break;
@@ -265,13 +279,33 @@ inline void Estimator::Estimate(ID3D11DeviceContext* context, ID3D11ShaderResour
             Dispatch(context, kRefine, level.constants.get(), { nullptr, nullptr, nullptr, coarser, motionView.get(), picture.lumaView.get() },
                      { nullptr, level.motionTarget.get(), keysTarget.get(), stillTarget.get() }, groups(level.width, 8), groups(level.height, 8));
     }
-    Dispatch(context, kFinish, picture.constants.get(), { current, previous, nullptr, levels[finest].motionView.get() },
+    // The fill goes up from the finest level to the coarsest and back down.
+    const bool fill = finest + 1 < levels.size();
+    for (size_t i = finest + 1; i < levels.size(); ++i)
+        Dispatch(context, kGather, levels[i].constants.get(), { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, levels[finest].motionView.get() },
+                 { nullptr, levels[i].motionTarget.get() }, groups(levels[i].width, 8), groups(levels[i].height, 8));
+    if (fill)
+        Dispatch(context, kSpread, levels.back().constants.get(), { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, levels.back().motionView.get() },
+                 { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, levels.back().filledTarget.get() }, groups(levels.back().width, 8),
+                 groups(levels.back().height, 8));
+    for (size_t i = levels.size() - 1; fill && i-- > finest + 1;)
+        Dispatch(context, kFill, levels[i].constants.get(),
+                 { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, levels[i].motionView.get(), levels[i + 1].filledView.get() },
+                 { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, levels[i].filledTarget.get() }, groups(levels[i].width, 16),
+                 groups(levels[i].height, 16));
+    if (fill)
+        Dispatch(context, kSettle, levels[finest].constants.get(),
+                 { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, levels[finest].motionView.get(), levels[finest + 1].filledView.get() },
+                 { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, levels[finest].filledTarget.get() }, groups(levels[finest].width, 16),
+                 groups(levels[finest].height, 16));
+    Dispatch(context, kFinish, picture.constants.get(),
+             { current, previous, nullptr, fill ? levels[finest].filledView.get() : levels[finest].motionView.get() },
              { nullptr, nullptr, keysTarget.get(), nullptr, motionTarget.get(), confidenceTarget.get() }, groups(picture.width, 16),
              groups(picture.height, 16));
 }
 
-inline void Estimator::Dispatch(ID3D11DeviceContext* context, Shader shader, ID3D11Buffer* constants, std::array<ID3D11ShaderResourceView*, 6> views,
-                                std::array<ID3D11UnorderedAccessView*, 6> targets, UINT x, UINT y)
+inline void Estimator::Dispatch(ID3D11DeviceContext* context, Shader shader, ID3D11Buffer* constants, std::array<ID3D11ShaderResourceView*, 8> views,
+                                std::array<ID3D11UnorderedAccessView*, 7> targets, UINT x, UINT y)
 {
     ID3D11Buffer* buffers[] = { constants, frame.get() };
     ID3D11SamplerState* samplers[] = { linear.get() };
