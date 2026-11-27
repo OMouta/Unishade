@@ -3,7 +3,7 @@
 // Motion estimated from color alone, for the add-ons that have no motion vectors from the game: where each pixel of the
 // current picture was in the previous one, how sure that is, and whether the picture cut to another scene. The motion
 // is in picture pixels from current to previous: for a picture whose content moves 3 pixels to the right, a pixel's
-// vector is (-3, 0). motion_d3d11.h runs it on Direct3D 11 and motion_metal.h on Metal.
+// vector is (-3, 0). motion_d3d11.h runs it on Direct3D 11.
 //
 // Luma is matched in a pyramid, coarsest first, each level starting from the vectors of the one above, the last
 // estimate's and none. The finest level has a vector for every 2 by 2 pixels of the picture, or 4 by 4 on a picture
@@ -14,7 +14,7 @@
 
 namespace motion
 {
-// The shader text both Direct3D and Metal take once CONSTANT is defined.
+// The shader text the compute shaders follow once CONSTANT is defined.
 constexpr char kShaderShared[] = R"(
 // A cut to another scene is told from the picture's brightness: each of 3 by 3 sections counts its pixels by
 // brightness, in this many levels, and a cut is when at least CutSections of them have CutShare of their pixels at
