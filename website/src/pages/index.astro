@@ -72,7 +72,10 @@ const platforms = [
 
     <div class="pitch">
       <h1>Universal <span>post-processing</span> without injection.</h1>
-      <a class="button button-primary" href="/download/">Download</a>
+      <a class="button button-primary" href="/download/">
+        Download
+        {release.version && <span class="version">{release.version}</span>}
+      </a>
     </div>
   </header>
 
@@ -534,8 +537,25 @@ const platforms = [
     white-space: nowrap;
   }
 
+  /* Bigger than the site's other buttons, since it sits under the headline. */
   .pitch .button {
     justify-self: start;
+    gap: 14px;
+    min-height: 62px;
+    padding: 0 30px;
+    font-size: 1.25rem;
+    font-weight: 800;
+  }
+
+  /* The newest version, in the ring's colors at the button's end. */
+  .version {
+    margin-right: -19px;
+    padding: 7px 15px;
+    border-radius: 999px;
+    color: #000;
+    background: linear-gradient(90deg, var(--spectrum));
+    font-size: 1rem;
+    line-height: 1.3;
   }
 
   /* Each band stays at the top of the window while the next slides over it. The space under it is scrolling that
