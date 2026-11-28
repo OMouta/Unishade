@@ -218,6 +218,46 @@ const platforms = [
   addEventListener('load', refresh);
 </script>
 
+<script>
+  // The hero's stack follows the mouse. Each frame it goes part of the way to where the pointer is, and the frames
+  // stop once it is there.
+  const hero = document.querySelector<HTMLElement>('.top')!;
+  const tilt = hero.querySelector<HTMLElement>('.tilt')!;
+  let aimX = 0;
+  let aimY = 0;
+  let x = 0;
+  let y = 0;
+  let frame = 0;
+  let previous = 0;
+
+  const follow = (now: number) => {
+    const part = 1 - Math.exp(-Math.min((now - previous) / 1000, 0.05) * 6);
+    previous = now;
+    x += (aimX - x) * part;
+    y += (aimY - y) * part;
+    tilt.style.setProperty('--pointer-x', x.toFixed(3));
+    tilt.style.setProperty('--pointer-y', y.toFixed(3));
+    frame = Math.abs(aimX - x) + Math.abs(aimY - y) > 0.002 ? requestAnimationFrame(follow) : 0;
+  };
+
+  const aim = (toX: number, toY: number) => {
+    aimX = toX;
+    aimY = toY;
+    if (frame) return;
+    previous = performance.now();
+    frame = requestAnimationFrame(follow);
+  };
+
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    hero.addEventListener('pointermove', (event) => {
+      if (event.pointerType !== 'mouse') return;
+      const box = hero.getBoundingClientRect();
+      aim(((event.clientX - box.left) / box.width) * 2 - 1, ((event.clientY - box.top) / box.height) * 2 - 1);
+    });
+    hero.addEventListener('pointerleave', () => aim(0, 0));
+  }
+</script>
+
 <style>
   .top {
     --side: var(--gutter);
@@ -249,9 +289,10 @@ const platforms = [
 
   .tilt {
     position: absolute;
-    top: 53%;
+    top: 55%;
     left: 69%;
-    transform: rotateX(58deg) rotateZ(-31deg);
+    /* The script sets where the pointer is over the hero, from -1 to 1 each way, and the stack turns towards it. */
+    transform: rotateX(calc(58deg - var(--pointer-y, 0) * 7deg)) rotateZ(calc(-31deg + var(--pointer-x, 0) * 10deg));
     transform-style: preserve-3d;
   }
 
@@ -295,8 +336,10 @@ const platforms = [
     object-fit: cover;
   }
 
+  /* The panes also slide towards the pointer, the higher ones further, as a stack of cards would. */
   .pane {
     --z: calc(3.2 + var(--i) * 2);
+    translate: calc(var(--pointer-x, 0) * var(--i) * 0.45em) calc(var(--pointer-y, 0) * var(--i) * 0.45em);
     border: 0.19em solid var(--color);
     background: linear-gradient(155deg, color-mix(in srgb, var(--color) 13%, transparent), color-mix(in srgb, var(--color) 2%, transparent) 55%);
     box-shadow:
