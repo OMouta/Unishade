@@ -55,7 +55,6 @@ const platforms = [
   <header class="top">
     <div class="scene" aria-hidden="true">
       <div class="tilt">
-        <div class="plane floor"></div>
         <div class="plane game">
           <Image src={after} widths={[640, 960, 1440]} sizes="(max-width: 800px) 92vw, 57vw" alt="" priority />
         </div>
@@ -319,19 +318,6 @@ const platforms = [
     transform: translateZ(calc(var(--z, 0) * 1em));
   }
 
-  /* The ring's glow, on the floor under the game. */
-  .floor {
-    --z: -1.2;
-    top: -20em;
-    left: -32.25em;
-    width: 64.5em;
-    height: 40em;
-    border-radius: 5.6em;
-    background: conic-gradient(var(--spectrum), var(--red));
-    opacity: 0.34;
-    filter: blur(4.4em);
-  }
-
   .game {
     overflow: hidden;
     background: var(--night-raised);
@@ -353,11 +339,7 @@ const platforms = [
     --z: calc(3.2 + var(--i) * 1.7);
     translate: calc(var(--pointer-x, 0) * var(--i) * 0.45em) calc(var(--pointer-y, 0) * var(--i) * 0.45em);
     border: 0.19em solid var(--color);
-    background: linear-gradient(155deg, color-mix(in srgb, var(--color) 13%, transparent), color-mix(in srgb, var(--color) 2%, transparent) 55%);
-    box-shadow:
-      0 0 2.1em color-mix(in srgb, var(--color) 55%, transparent),
-      inset 0 0 3.7em color-mix(in srgb, var(--color) 20%, transparent),
-      inset 0 0 0 1px rgb(255 255 255 / 0.28);
+    background: linear-gradient(155deg, color-mix(in srgb, var(--color) 10%, transparent), color-mix(in srgb, var(--color) 2%, transparent) 55%);
     transform-style: preserve-3d;
   }
 
