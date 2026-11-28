@@ -4,6 +4,7 @@
 import { Image } from 'astro:assets';
 import Base from '../layouts/Base.astro';
 import DownloadIcon from '../icons/download.svg';
+import GithubIcon from '../icons/github.svg';
 import before from '../assets/shots/game-before.jpg';
 import after from '../assets/shots/game-after.jpg';
 import dusk from '../assets/shots/game-after-1.jpg';
@@ -11,6 +12,7 @@ import found from '../assets/shots/crop-found.png';
 import menu from '../assets/shots/menu.jpg';
 import menuPresets from '../assets/shots/menu-presets.jpg';
 import addons from '../assets/shots/crop-addons.png';
+import { links } from '../links';
 import { inBeta, release } from '../release';
 import { requirements } from '../site';
 
@@ -69,13 +71,22 @@ const platforms = [
 
     <div class="pitch">
       <h1>Universal <span>post-processing</span> without injection.</h1>
-      <a class="button button-primary" href="/download/">
-        <span class="label">
-          <strong>Download</strong>
-          {release.version && <span>Version {release.version}</span>}
-        </span>
-        <span class="arrow"><DownloadIcon aria-hidden="true" /></span>
-      </a>
+      <div class="actions">
+        <a class="button button-primary" href="/download/">
+          <span class="label">
+            <strong>Download</strong>
+            {release.version && <span>Version {release.version}</span>}
+          </span>
+          <span class="arrow"><DownloadIcon aria-hidden="true" /></span>
+        </a>
+        <a class="button button-secondary" href={links.github}>
+          <GithubIcon aria-hidden="true" />
+          <span class="label">
+            <strong>GitHub</strong>
+            <span>Free and open source</span>
+          </span>
+        </a>
+      </div>
     </div>
   </header>
 
@@ -437,11 +448,36 @@ const platforms = [
     white-space: nowrap;
   }
 
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
   /* What the button does and the newest version on its left, and an arrow in a disc on its right. */
-  .pitch .button {
-    justify-self: start;
+  .actions .button-primary {
     gap: 26px;
     padding: 10px 10px 10px 30px;
+  }
+
+  /* The source next to it, as tall, with its mark on the left. */
+  .actions .button-secondary {
+    gap: 14px;
+    padding: 10px 30px 10px 20px;
+  }
+
+  .button-secondary svg {
+    width: 32px;
+    height: 32px;
+  }
+
+  .label span {
+    color: rgb(0 0 0 / 0.62);
+    font-size: 0.95rem;
+  }
+
+  .button-secondary .label span {
+    color: var(--haze);
   }
 
   .label {
@@ -453,11 +489,6 @@ const platforms = [
     font-size: 1.35rem;
     font-weight: 800;
     letter-spacing: -0.02em;
-  }
-
-  .label span {
-    color: rgb(0 0 0 / 0.62);
-    font-size: 0.95rem;
   }
 
   .arrow {
@@ -776,7 +807,7 @@ const platforms = [
     }
 
     .tilt {
-      top: 42%;
+      top: 39%;
       left: 54%;
     }
   }
