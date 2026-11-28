@@ -11,7 +11,6 @@ import found from '../assets/shots/crop-found.png';
 import menu from '../assets/shots/menu.jpg';
 import menuPresets from '../assets/shots/menu-presets.jpg';
 import addons from '../assets/shots/crop-addons.png';
-import logo from '../../../assets/UnishadeSmall.png';
 import { inBeta, release } from '../release';
 import { requirements } from '../site';
 
@@ -24,6 +23,18 @@ const sections = [
   ['cyan', 'Hold to compare'],
   ['blue', 'Add-ons'],
   ['violet', 'Download'],
+];
+
+// The panes over the game in the hero, from the bottom one up. Each has one of the ring's colors, and the name of an
+// effect from presets/GenericPreset2.ini on a tab like the menu's tiles.
+const panes = [
+  ['red', 'Adaptive Tonemapper'],
+  ['orange', 'NeoBloom'],
+  ['yellow', 'ArcaneBloom'],
+  ['green', 'Curves'],
+  ['cyan', 'HDR'],
+  ['blue', 'AmbientLight'],
+  ['violet', 'Colourfulness'],
 ];
 
 // When the newest release has no file for a system, its button goes to the download page, which says why.
@@ -40,7 +51,25 @@ const platforms = [
   overlay
 >
   <header class="top">
-    <Image src={logo} widths={[480, 960, 1232]} sizes="(max-width: 800px) 90vw, 58vw" alt="" class="logo" priority />
+    <div class="scene" aria-hidden="true">
+      <div class="tilt">
+        <div class="plane floor spectrum"></div>
+        <div class="plane game">
+          <Image src={before} widths={[640, 960, 1440]} sizes="(max-width: 800px) 92vw, 57vw" alt="" priority />
+          <Image src={after} widths={[640, 960, 1440]} sizes="(max-width: 800px) 92vw, 57vw" alt="" class="graded" loading="eager" />
+          <div class="sweep"></div>
+        </div>
+        {
+          panes.map(([color, effect]) => (
+            <div class:list={['plane', 'pane', color]}>
+              <span class="tab">{effect}</span>
+            </div>
+          ))
+        }
+        <div class="plane halo glow spectrum"></div>
+        <div class="plane halo spectrum"></div>
+      </div>
+    </div>
 
     <div class="pitch">
       <h1>Universal <span>post-processing</span> without injection.</h1>
@@ -188,6 +217,103 @@ const platforms = [
   addEventListener('load', refresh);
 </script>
 
+<script>
+  // The hero: the panes lift off the game, land on it again one by one, and close into a ring. With less motion asked
+  // for, they stay as the styles leave them, which is down.
+  const hero = document.querySelector<HTMLElement>('.top')!;
+  const tilt = hero.querySelector<HTMLElement>('.tilt')!;
+  const game = hero.querySelector<HTMLElement>('.game')!;
+  const panes = [...hero.querySelectorAll<HTMLElement>('.pane')];
+  const colors = panes.map((pane) => getComputedStyle(pane).getPropertyValue('--color'));
+
+  const clamp = (x: number) => Math.min(1, Math.max(0, x));
+  const smooth = (x: number) => clamp(x) * clamp(x) * (3 - 2 * clamp(x));
+  const mix = (from: number, to: number, x: number) => from + (to - from) * x;
+
+  // Seconds. The first pane starts to fall at firstFall, each next one a gap later, and they all lift at liftOff.
+  // The page opens just before that, with every pane down, which is also how it looks before this script runs.
+  const loop = 13;
+  const firstFall = 0.9;
+  const gap = 0.46;
+  const fallTime = 0.7;
+  const landing = 0.42;
+  const liftOff = 9.3;
+  const opening = 7.4;
+
+  // Where the pointer is over the hero, which turns the stack a little towards it.
+  let pointerX = 0.5;
+  let pointerY = 0.5;
+  let turnX = 0.5;
+  let turnY = 0.5;
+  hero.addEventListener('pointermove', (event) => {
+    if (event.pointerType !== 'mouse') return;
+    const box = hero.getBoundingClientRect();
+    pointerX = (event.clientX - box.left) / box.width;
+    pointerY = (event.clientY - box.top) / box.height;
+  });
+  hero.addEventListener('pointerleave', () => {
+    pointerX = 0.5;
+    pointerY = 0.5;
+  });
+
+  const draw = (time: number, step: number) => {
+    const now = time % loop;
+    let grade = 0;
+    let lifted = 0;
+    let crossing = -1;
+    panes.forEach((pane, index) => {
+      const up = 3.2 + index * 2;
+      const down = 0.5 + index * 0.5;
+      const start = firstFall + index * gap;
+      const x = clamp((now - start) / fallTime);
+      // It speeds up as it falls, and gives a little when it lands.
+      const fall = x < 0.6 ? (x / 0.6) ** 2 : 1 - 0.05 * Math.sin(((x - 0.6) / 0.4) * Math.PI) * (1 - (x - 0.6) / 0.4);
+      // The top pane lifts first.
+      const lift = smooth((now - liftOff - (panes.length - 1 - index) * 0.13) / 1.2);
+      const landed = now - start - landing;
+      lifted = Math.max(lifted, lift);
+      pane.style.setProperty('--z', mix(mix(up, down, fall), up, lift).toFixed(3));
+      pane.style.setProperty('--flash', (landed > 0 ? Math.exp(-landed * 5) * (1 - lift) : 0).toFixed(3));
+      // Each pane takes the picture one step from the game as it is to the game with effects.
+      grade += smooth(landed / 0.5) * (1 - lift);
+      if (landed > 0 && landed < 0.6) crossing = index;
+    });
+    game.style.setProperty('--grade', (grade / panes.length).toFixed(3));
+    if (crossing < 0) {
+      game.style.setProperty('--light', '0');
+    } else {
+      const x = (now - firstFall - crossing * gap - landing) / 0.6;
+      game.style.setProperty('--landed', colors[crossing]);
+      game.style.setProperty('--across', `${mix(-75, 75, x).toFixed(1)}%`);
+      game.style.setProperty('--light', (Math.sin(x * Math.PI) * 0.5).toFixed(3));
+    }
+    // The ring closes once the last pane is down, and opens as the panes lift.
+    const closed = smooth((now - firstFall - (panes.length - 1) * gap - 0.5) / fallTime) * (1 - smooth(lifted * 3));
+    tilt.style.setProperty('--ring', closed.toFixed(3));
+    tilt.style.setProperty('--turn', `${((time * 50) % 360).toFixed(1)}deg`);
+    turnX += (pointerX - turnX) * Math.min(1, step * 3);
+    turnY += (pointerY - turnY) * Math.min(1, step * 3);
+    tilt.style.setProperty('--rx', `${(58 - (turnY - 0.5) * 10 + Math.sin(time * 0.4) * 1.2).toFixed(2)}deg`);
+    tilt.style.setProperty('--rz', `${(-31 + (turnX - 0.5) * 16 + Math.sin(time * 0.27) * 2).toFixed(2)}deg`);
+  };
+
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const started = performance.now();
+    let previous = started;
+    let frame = 0;
+    const tick = (at: number) => {
+      draw((at - started) / 1000 + opening, Math.min((at - previous) / 1000, 0.05));
+      previous = at;
+      frame = requestAnimationFrame(tick);
+    };
+    // Nothing moves while the hero is scrolled out of the window.
+    new IntersectionObserver(([entry]) => {
+      cancelAnimationFrame(frame);
+      if (entry.isIntersecting) frame = requestAnimationFrame(tick);
+    }).observe(hero);
+  }
+</script>
+
 <style>
   .top {
     --side: var(--gutter);
@@ -198,22 +324,198 @@ const platforms = [
     overflow: hidden;
   }
 
-  /* The cube and its ring, bigger than the corner it sits in. */
-  .logo {
+  /* The game lying flat, with a pane over it for each effect. Its sizes are in em, so one font size scales all of it.
+     It fades out to the left, where the headline is. */
+  .scene {
     position: absolute;
-    top: 4%;
-    right: -9%;
-    width: min(58vw, 880px);
-    rotate: 6deg;
+    inset: 0;
+    font-size: min(1vw, 19px);
+    perspective: 200em;
+    perspective-origin: 70% 40%;
+    mask-image: linear-gradient(72deg, transparent 22%, #000 56%);
     animation: arrive 1.4s var(--ease-out) backwards;
   }
 
   @keyframes arrive {
     from {
       opacity: 0;
-      rotate: -14deg;
-      scale: 0.86;
+      scale: 0.94;
     }
+  }
+
+  .tilt {
+    position: absolute;
+    top: 53%;
+    left: 69%;
+    transform: rotateX(var(--rx, 58deg)) rotateZ(var(--rz, -31deg));
+    transform-style: preserve-3d;
+  }
+
+  /* Without the script, and for those who asked for less motion, the panes lie on the game and the ring is closed.
+     The script moves them by setting how high each is, in em. */
+  .plane {
+    position: absolute;
+    top: -16em;
+    left: -28.5em;
+    width: 57em;
+    height: 32em;
+    border-radius: 1.9em;
+    transform: translateZ(calc(var(--z, 0) * 1em));
+  }
+
+  .spectrum {
+    background: conic-gradient(from var(--turn, 0deg), var(--spectrum), var(--red));
+  }
+
+  /* The ring's glow, on the floor under the game. */
+  .floor {
+    --z: -1.2;
+    top: -20em;
+    left: -32.25em;
+    width: 64.5em;
+    height: 40em;
+    border-radius: 5.6em;
+    opacity: calc(0.16 + var(--ring, 1) * 0.5);
+    filter: blur(4.4em);
+  }
+
+  .game {
+    overflow: hidden;
+    background: var(--night-raised);
+  }
+
+  /* A little bigger than the plane, which leaves the game's own buttons outside it. */
+  .game img {
+    position: absolute;
+    top: -12%;
+    left: -6%;
+    width: 112%;
+    max-width: none;
+    height: 112%;
+    object-fit: cover;
+  }
+
+  .game .graded {
+    opacity: var(--grade, 1);
+  }
+
+  /* Light that crosses the game as a pane lands, in the pane's color. */
+  .sweep {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--landed, #fff) 65%, #fff) 50%, transparent 70%);
+    opacity: var(--light, 0);
+    translate: var(--across, -100%) 0;
+    mix-blend-mode: screen;
+  }
+
+  .pane {
+    --z: calc(0.5 + var(--i) * 0.5);
+    border: 0.19em solid var(--color);
+    background: linear-gradient(155deg, color-mix(in srgb, var(--color) 13%, transparent), color-mix(in srgb, var(--color) 2%, transparent) 55%);
+    box-shadow:
+      0 0 2.1em color-mix(in srgb, var(--color) 55%, transparent),
+      inset 0 0 3.7em color-mix(in srgb, var(--color) 20%, transparent),
+      inset 0 0 0 1px rgb(255 255 255 / 0.28);
+    transform-style: preserve-3d;
+  }
+
+  .pane.red {
+    --i: 0;
+  }
+
+  .pane.orange {
+    --i: 1;
+  }
+
+  .pane.yellow {
+    --i: 2;
+  }
+
+  .pane.green {
+    --i: 3;
+  }
+
+  .pane.cyan {
+    --i: 4;
+  }
+
+  .pane.blue {
+    --i: 5;
+  }
+
+  .pane.violet {
+    --i: 6;
+  }
+
+  /* The underside of the pane, which gives it its thickness. */
+  .pane::before {
+    content: '';
+    position: absolute;
+    inset: -0.19em;
+    border: 0.19em solid color-mix(in srgb, var(--color) 50%, #000);
+    border-radius: inherit;
+    transform: translateZ(-0.43em);
+  }
+
+  /* The flash as it lands. */
+  .pane::after {
+    content: '';
+    position: absolute;
+    inset: -0.19em;
+    border: 0.25em solid #fff;
+    border-radius: inherit;
+    box-shadow:
+      0 0 5em 0.75em var(--color),
+      inset 0 0 5em var(--color);
+    opacity: var(--flash, 0);
+  }
+
+  /* The effect's name, on a tab like its tile in the menu. Each pane's tab is further along its top edge than the
+     one below, so all seven show when the panes are down. */
+  .tab {
+    position: absolute;
+    bottom: 100%;
+    left: calc(1.75em + var(--i) * 7.7em);
+    display: flex;
+    align-items: flex-end;
+    width: 7.3em;
+    height: 5em;
+    margin-bottom: 0.12em;
+    padding: 0.55em 0.5em;
+    border-radius: 1.1em 1.1em 0 0;
+    color: #000;
+    background: var(--color);
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+
+  /* The switch a tile has in its corner. */
+  .tab::after {
+    content: '';
+    position: absolute;
+    top: 0.56em;
+    right: 0.62em;
+    width: 1em;
+    height: 1em;
+    border: 0.28em solid #000;
+    border-radius: 50%;
+  }
+
+  /* When every pane is down they close into one ring, as the logo's is. The mask leaves only the border. */
+  .halo {
+    --z: 4.25;
+    padding: 0.37em;
+    opacity: var(--ring, 1);
+    mask:
+      linear-gradient(#000 0 0) content-box exclude,
+      linear-gradient(#000 0 0);
+  }
+
+  .halo.glow {
+    padding: 1em;
+    filter: blur(1em);
   }
 
   .pitch {
@@ -225,8 +527,6 @@ const platforms = [
 
   .pitch h1 {
     max-width: 9.5em;
-    /* Over the cube the letters turn black, and over the ring they take its opposite colors. */
-    mix-blend-mode: difference;
     font-size: clamp(2.3rem, 10.4vw, 10rem);
     line-height: 0.86;
     letter-spacing: -0.045em;
@@ -499,11 +799,15 @@ const platforms = [
       display: none;
     }
 
-    .logo {
-      top: 70px;
-      right: -22%;
-      width: 96vw;
-      opacity: 0.55;
+    /* The scene sits above the headline here, so it has nothing to fade out for. */
+    .scene {
+      font-size: 1.55vw;
+      mask-image: none;
+    }
+
+    .tilt {
+      top: 31%;
+      left: 56%;
     }
 
     /* Too little room to stack: the bands follow each other. */
@@ -546,7 +850,7 @@ const platforms = [
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .logo {
+    .scene {
       animation: none;
     }
 
