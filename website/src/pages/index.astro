@@ -398,8 +398,8 @@ const platforms = [
 
   /* The effect's name, on a tab like its tile in the menu. The tabs stand on the top edge. A nearer pane looks
      shifted up and to the left from here, so a tab further back is taller and further right. That puts the names in
-     one row above the nearest pane, where no pane's edge crosses them. The violet band styles the spans in it, so
-     the rule names the pane as well. */
+     one row above the nearest pane, where no pane's edge crosses them, and the nearer panes cross the tab below its
+     name. The violet band styles the spans in it, so the rule names the pane as well. */
   .pane .tab {
     position: absolute;
     bottom: 100%;
@@ -410,8 +410,7 @@ const platforms = [
     padding: 1.6em 0.5em 0;
     border-radius: 1em 1em 0 0;
     color: #000;
-    /* Solid behind the name, and faint below it, where the nearer panes cross. */
-    background: linear-gradient(var(--color) 4.4em, color-mix(in srgb, var(--color) 26%, transparent) 4.4em);
+    background: var(--color);
     font-weight: 600;
     line-height: 1.1;
     letter-spacing: -0.02em;
