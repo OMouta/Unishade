@@ -285,7 +285,7 @@ const platforms = [
     inset: 0;
     font-size: min(0.85vw, 16px);
     perspective: 260em;
-    perspective-origin: 62.5% 40%;
+    perspective-origin: 72% 47%;
     animation: arrive 1.4s var(--ease-out) backwards;
   }
 
@@ -298,8 +298,8 @@ const platforms = [
 
   .tilt {
     position: absolute;
-    top: calc(var(--nav-height) + 23.5em);
-    left: 62.5%;
+    top: calc(var(--nav-height) + 29.5em);
+    left: 72%;
     /* It stands to the right of the headline, which covers its near corner, and faces a little to the left and up,
        so the panes in front of it step out that way. The script sets where the pointer is over the hero, from -1 to
        1 each way, and the screen turns towards it. */
@@ -337,9 +337,9 @@ const platforms = [
   /* The panes slide towards the pointer, the nearer ones further, as a stack of cards would. They also float: each
      drifts a little nearer and further, out of step with the ones next to it. */
   .pane {
-    --z: calc(3.2 + var(--i) * 2.3);
+    --z: calc(3.2 + var(--i) * 3.1);
     --slide-x: calc(var(--pointer-x, 0) * var(--i) * 0.3em);
-    --slide-y: calc(var(--pointer-y, 0) * var(--i) * 0.3em);
+    --slide-y: calc(var(--pointer-y, 0) * var(--i) * 0.15em);
     translate: var(--slide-x) var(--slide-y);
     animation: float 4.6s ease-in-out infinite alternate;
     animation-delay: calc(var(--i) * -1.3s);
@@ -396,34 +396,37 @@ const platforms = [
     transform: translateZ(-0.43em);
   }
 
-  /* The effect's name, on a tab like its tile in the menu. A nearer pane looks shifted to the left from here, so the
-     tabs are on the right edge, where no nearer pane reaches them, one under another. */
-  .tab {
+  /* The effect's name, on a tab like its tile in the menu. The tabs stand on the top edge. A nearer pane looks
+     shifted up and to the left from here, so a tab further back is taller and further right. That puts the names in
+     one row above the nearest pane, where no pane's edge crosses them. The violet band styles the spans in it, so
+     the rule names the pane as well. */
+  .pane .tab {
     position: absolute;
-    top: calc(2.2em + (6 - var(--i)) * 4.1em);
-    left: 100%;
-    margin-left: 0.12em;
-    padding: 0.35em 2em 0.35em 0.8em;
-    border-radius: 0 1em 1em 0;
+    bottom: 100%;
+    left: calc(1.6em + (6 - var(--i)) * 6.5em);
+    width: 7.3em;
+    height: calc(4.4em + (6 - var(--i)) * 1.4em);
+    margin-bottom: 0.12em;
+    padding: 1.6em 0.5em 0;
+    border-radius: 1em 1em 0 0;
     color: #000;
-    background: var(--color);
+    /* Solid behind the name, and faint below it, where the nearer panes cross. */
+    background: linear-gradient(var(--color) 4.4em, color-mix(in srgb, var(--color) 26%, transparent) 4.4em);
     font-weight: 600;
-    line-height: 1.2;
+    line-height: 1.1;
     letter-spacing: -0.02em;
-    white-space: nowrap;
   }
 
   /* The switch a tile has in its corner. */
   .tab::after {
     content: '';
     position: absolute;
-    top: 50%;
-    right: 0.6em;
+    top: 0.4em;
+    right: 0.5em;
     width: 0.9em;
     height: 0.9em;
     border: 0.26em solid #000;
     border-radius: 50%;
-    translate: 0 -50%;
   }
 
   .pitch {
