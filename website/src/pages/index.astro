@@ -786,16 +786,6 @@ const platforms = [
       display: none;
     }
 
-    /* The scene sits above the headline here, so it has nothing to fade out for. */
-    .scene {
-      font-size: 1.55vw;
-      mask-image: none;
-    }
-
-    .tilt {
-      top: 31%;
-      left: 56%;
-    }
 
     /* Too little room to stack: the bands follow each other. */
     .band {
@@ -833,6 +823,19 @@ const platforms = [
       max-height: none;
       margin: 16px 12px;
       border-radius: 20px;
+    }
+  }
+
+  /* On a narrow screen the scene is above the headline, so it has nothing to fade out for. */
+  @media (max-width: 800px) {
+    .scene {
+      font-size: 1.75vw;
+      mask-image: none;
+    }
+
+    .tilt {
+      top: 42%;
+      left: 54%;
     }
   }
 
