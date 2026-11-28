@@ -283,9 +283,9 @@ const platforms = [
   .scene {
     position: absolute;
     inset: 0;
-    font-size: min(0.95vw, 18px);
-    perspective: 200em;
-    perspective-origin: 62% 41%;
+    font-size: min(0.96vw, 18px);
+    perspective: 600em;
+    perspective-origin: 68.5% 42%;
     animation: arrive 1.4s var(--ease-out) backwards;
   }
 
@@ -298,12 +298,11 @@ const platforms = [
 
   .tilt {
     position: absolute;
-    top: 43%;
-    left: 62%;
-    /* Turned so its near edge runs down to the right, as the ends of the headline's lines do, which leaves most of
-       it clear of them. The script sets where the pointer is over the hero, from -1 to 1 each way, and the stack
-       turns towards it. */
-    transform: rotateX(calc(58deg - var(--pointer-y, 0) * 7deg)) rotateZ(calc(31deg + var(--pointer-x, 0) * 10deg));
+    top: 42%;
+    left: 68.5%;
+    /* Straight, and leaning back, in the corner the headline leaves free. The script sets where the pointer is over
+       the hero, from -1 to 1 each way, and the stack turns towards it. */
+    transform: rotateX(calc(50deg - var(--pointer-y, 0) * 4deg)) rotateZ(calc(var(--pointer-x, 0) * 8deg));
     transform-style: preserve-3d;
   }
 
@@ -381,36 +380,35 @@ const platforms = [
     transform: translateZ(-0.43em);
   }
 
-  /* The effect's name, on a tab like its tile in the menu. A higher pane looks shifted to the left from here, so its
-     tab is further left along its edge than the one below, and none covers another. */
+  /* The effect's name, on a tab like its tile in the menu. The tabs are on the left edge, where no pane's edge
+     crosses them. Each is nearer than the one below by about as much as its pane is higher, so from here they read
+     as one list. */
   .tab {
     position: absolute;
-    bottom: 100%;
-    left: calc(1.75em + (6 - var(--i)) * 7.7em);
-    display: flex;
-    align-items: flex-end;
-    width: 7.3em;
-    height: 5em;
-    margin-bottom: 0.12em;
-    padding: 0.55em 0.5em;
-    border-radius: 1.1em 1.1em 0 0;
+    top: calc(2.2em + var(--i) * 4.3em);
+    right: 100%;
+    margin-right: 0.12em;
+    padding: 0.35em 0.8em 0.35em 2em;
+    border-radius: 1em 0 0 1em;
     color: #000;
     background: var(--color);
     font-weight: 600;
-    line-height: 1.1;
+    line-height: 1.2;
     letter-spacing: -0.02em;
+    white-space: nowrap;
   }
 
   /* The switch a tile has in its corner. */
   .tab::after {
     content: '';
     position: absolute;
-    top: 0.56em;
-    right: 0.62em;
-    width: 1em;
-    height: 1em;
-    border: 0.28em solid #000;
+    top: 50%;
+    left: 0.6em;
+    width: 0.9em;
+    height: 0.9em;
+    border: 0.26em solid #000;
     border-radius: 50%;
+    translate: 0 -50%;
   }
 
   .pitch {
@@ -782,14 +780,19 @@ const platforms = [
     }
   }
 
-  /* On a narrow screen the scene is above the headline. */
+  /* On a narrow screen the scene is above the headline, and as wide as the screen, which leaves no room for the
+     tabs at its side. */
   @media (max-width: 800px) {
     .scene {
-      font-size: 1.5vw;
+      font-size: 1.6vw;
+    }
+
+    .tab {
+      display: none;
     }
 
     .tilt {
-      top: 41%;
+      top: 40%;
       left: 50%;
     }
   }
