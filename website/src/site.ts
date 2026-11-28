@@ -1,4 +1,4 @@
-// Text the pages and components share, so the home page, the download page and the buttons say the same.
+// Text the pages share, so the home page and the download page say the same.
 // The docs in src/content/docs say it in their own words; keep them in line when this changes.
 
 export const requirements = {

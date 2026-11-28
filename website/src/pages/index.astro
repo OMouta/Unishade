@@ -3,7 +3,6 @@
 // type below, and a picture of the game or the app above it.
 import { Image } from 'astro:assets';
 import Base from '../layouts/Base.astro';
-import DownloadButton from '../components/DownloadButton.astro';
 import before from '../assets/shots/game-before.jpg';
 import after from '../assets/shots/game-after.jpg';
 import dusk from '../assets/shots/game-after-1.jpg';
@@ -73,7 +72,7 @@ const platforms = [
 
     <div class="pitch">
       <h1>Universal <span>post-processing</span> without injection.</h1>
-      <DownloadButton detect />
+      <a class="button button-primary" href="/download/">Download</a>
     </div>
   </header>
 
@@ -535,13 +534,8 @@ const platforms = [
     white-space: nowrap;
   }
 
-  .pitch :global(.download) {
-    font-size: 1rem;
-  }
-
-  /* The version and size go on their own line, under the button. */
-  .pitch :global(.download > .dim) {
-    flex-basis: 100%;
+  .pitch .button {
+    justify-self: start;
   }
 
   /* Each band stays at the top of the window while the next slides over it. The space under it is scrolling that
