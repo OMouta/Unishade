@@ -334,13 +334,28 @@ const platforms = [
     object-fit: cover;
   }
 
-  /* The panes also slide towards the pointer, the nearer ones further, as a stack of cards would. */
+  /* The panes slide towards the pointer, the nearer ones further, as a stack of cards would. They also float: each
+     drifts a little nearer and further, out of step with the ones next to it. */
   .pane {
     --z: calc(3.2 + var(--i) * 2.3);
-    translate: calc(var(--pointer-x, 0) * var(--i) * 0.3em) calc(var(--pointer-y, 0) * var(--i) * 0.3em);
+    --slide-x: calc(var(--pointer-x, 0) * var(--i) * 0.3em);
+    --slide-y: calc(var(--pointer-y, 0) * var(--i) * 0.3em);
+    translate: var(--slide-x) var(--slide-y);
+    animation: float 4.6s ease-in-out infinite alternate;
+    animation-delay: calc(var(--i) * -1.3s);
     border: 0.19em solid var(--color);
     background: linear-gradient(155deg, color-mix(in srgb, var(--color) 10%, transparent), color-mix(in srgb, var(--color) 2%, transparent) 55%);
     transform-style: preserve-3d;
+  }
+
+  @keyframes float {
+    from {
+      translate: calc(var(--slide-x) - 0.25em) calc(var(--slide-y) + 0.15em) -0.55em;
+    }
+
+    to {
+      translate: calc(var(--slide-x) + 0.25em) calc(var(--slide-y) - 0.15em) 0.55em;
+    }
   }
 
   .pane.red {
@@ -798,7 +813,8 @@ const platforms = [
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .scene {
+    .scene,
+    .pane {
       animation: none;
     }
 
