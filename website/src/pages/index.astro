@@ -278,14 +278,14 @@ const platforms = [
     overflow: hidden;
   }
 
-  /* The game lying flat, with a pane floating over it for each effect. Its sizes are in em, so one font size scales
-     all of it. */
+  /* The game as a screen, with a pane floating in front of it for each effect. Its sizes are in em, so one font size
+     scales all of it. */
   .scene {
     position: absolute;
     inset: 0;
-    font-size: min(0.96vw, 18px);
-    perspective: 600em;
-    perspective-origin: 68.5% 41%;
+    font-size: min(0.73vw, 14px);
+    perspective: 260em;
+    perspective-origin: 75.5% 33%;
     animation: arrive 1.4s var(--ease-out) backwards;
   }
 
@@ -298,15 +298,16 @@ const platforms = [
 
   .tilt {
     position: absolute;
-    top: 41%;
-    left: 68.5%;
-    /* Leaning back and turned a little to the left, in the corner the headline leaves free. The script sets where
-       the pointer is over the hero, from -1 to 1 each way, and the stack turns towards it. */
-    transform: rotateX(calc(50deg - var(--pointer-y, 0) * 4deg)) rotateZ(calc(-7deg + var(--pointer-x, 0) * 8deg));
+    top: calc(var(--nav-height) + 21.5em);
+    left: 75.5%;
+    /* It stands in the corner the headline leaves free, and faces a little to the left and up, so the panes in front
+       of it step out that way. The script sets where the pointer is over the hero, from -1 to 1 each way, and the
+       screen turns towards it. */
+    transform: rotateX(calc(14deg - var(--pointer-y, 0) * 5deg)) rotateY(calc(-24deg + var(--pointer-x, 0) * 8deg));
     transform-style: preserve-3d;
   }
 
-  /* How high a plane is over the game, in em. */
+  /* How far in front of the game a plane is, in em. */
   .plane {
     position: absolute;
     top: -16em;
@@ -333,10 +334,10 @@ const platforms = [
     object-fit: cover;
   }
 
-  /* The panes also slide towards the pointer, the higher ones further, as a stack of cards would. */
+  /* The panes also slide towards the pointer, the nearer ones further, as a stack of cards would. */
   .pane {
     --z: calc(3.2 + var(--i) * 1.7);
-    translate: calc(var(--pointer-x, 0) * var(--i) * 0.45em) calc(var(--pointer-y, 0) * var(--i) * 0.45em);
+    translate: calc(var(--pointer-x, 0) * var(--i) * 0.3em) calc(var(--pointer-y, 0) * var(--i) * 0.3em);
     border: 0.19em solid var(--color);
     background: linear-gradient(155deg, color-mix(in srgb, var(--color) 10%, transparent), color-mix(in srgb, var(--color) 2%, transparent) 55%);
     transform-style: preserve-3d;
@@ -380,35 +381,37 @@ const platforms = [
     transform: translateZ(-0.43em);
   }
 
-  /* The effect's name, on a tab like its tile in the menu. The tabs are on the left edge, where no pane's edge
-     crosses them. Each is nearer than the one below by about as much as its pane is higher, so from here they read
-     as one list. */
+  /* The effect's name, on a tab like its tile in the menu. The tabs hang from the bottom edge, where no pane's edge
+     crosses them. A nearer pane looks shifted to the left from here, so its tab is further left along its edge than
+     the one behind, and none covers another. */
   .tab {
     position: absolute;
-    top: calc(2.2em + var(--i) * 4.1em);
-    right: 100%;
-    margin-right: 0.12em;
-    padding: 0.35em 0.8em 0.35em 2em;
-    border-radius: 1em 0 0 1em;
+    top: 100%;
+    left: calc(1.6em + (6 - var(--i)) * 7.6em);
+    display: flex;
+    align-items: flex-end;
+    width: 7.3em;
+    height: 3.5em;
+    margin-top: 0.12em;
+    padding: 0.4em 0.5em;
+    border-radius: 0 0 1em 1em;
     color: #000;
     background: var(--color);
     font-weight: 600;
-    line-height: 1.2;
+    line-height: 1.1;
     letter-spacing: -0.02em;
-    white-space: nowrap;
   }
 
   /* The switch a tile has in its corner. */
   .tab::after {
     content: '';
     position: absolute;
-    top: 50%;
-    left: 0.6em;
+    top: 0.4em;
+    right: 0.5em;
     width: 0.9em;
     height: 0.9em;
     border: 0.26em solid #000;
     border-radius: 50%;
-    translate: 0 -50%;
   }
 
   .pitch {
@@ -780,11 +783,11 @@ const platforms = [
     }
   }
 
-  /* On a narrow screen the scene is above the headline, and as wide as the screen, which leaves no room for the
-     tabs at its side. */
+  /* On a narrow screen the scene is above the headline, and so small that the tabs could not be read. */
   @media (max-width: 800px) {
     .scene {
       font-size: 1.6vw;
+      perspective-origin: 54% 35%;
     }
 
     .tab {
@@ -792,8 +795,8 @@ const platforms = [
     }
 
     .tilt {
-      top: 40%;
-      left: 50%;
+      top: calc(var(--nav-height) + 30em);
+      left: 54%;
     }
   }
 
