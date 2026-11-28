@@ -280,14 +280,13 @@ const platforms = [
   }
 
   /* The game lying flat, with a pane floating over it for each effect. Its sizes are in em, so one font size scales
-     all of it. It fades out to the left, where the headline is. */
+     all of it. */
   .scene {
     position: absolute;
     inset: 0;
-    font-size: min(1vw, 19px);
+    font-size: min(0.95vw, 18px);
     perspective: 200em;
-    perspective-origin: 70% 40%;
-    mask-image: linear-gradient(72deg, transparent 22%, #000 56%);
+    perspective-origin: 62% 41%;
     animation: arrive 1.4s var(--ease-out) backwards;
   }
 
@@ -300,10 +299,12 @@ const platforms = [
 
   .tilt {
     position: absolute;
-    top: 55%;
-    left: 69%;
-    /* The script sets where the pointer is over the hero, from -1 to 1 each way, and the stack turns towards it. */
-    transform: rotateX(calc(58deg - var(--pointer-y, 0) * 7deg)) rotateZ(calc(-31deg + var(--pointer-x, 0) * 10deg));
+    top: 43%;
+    left: 62%;
+    /* Turned so its near edge runs down to the right, as the ends of the headline's lines do, which leaves most of
+       it clear of them. The script sets where the pointer is over the hero, from -1 to 1 each way, and the stack
+       turns towards it. */
+    transform: rotateX(calc(58deg - var(--pointer-y, 0) * 7deg)) rotateZ(calc(31deg + var(--pointer-x, 0) * 10deg));
     transform-style: preserve-3d;
   }
 
@@ -349,7 +350,7 @@ const platforms = [
 
   /* The panes also slide towards the pointer, the higher ones further, as a stack of cards would. */
   .pane {
-    --z: calc(3.2 + var(--i) * 2);
+    --z: calc(3.2 + var(--i) * 1.7);
     translate: calc(var(--pointer-x, 0) * var(--i) * 0.45em) calc(var(--pointer-y, 0) * var(--i) * 0.45em);
     border: 0.19em solid var(--color);
     background: linear-gradient(155deg, color-mix(in srgb, var(--color) 13%, transparent), color-mix(in srgb, var(--color) 2%, transparent) 55%);
@@ -398,12 +399,12 @@ const platforms = [
     transform: translateZ(-0.43em);
   }
 
-  /* The effect's name, on a tab like its tile in the menu. Each pane's tab is further along its top edge than the
-     one below, so none covers another. */
+  /* The effect's name, on a tab like its tile in the menu. A higher pane looks shifted to the left from here, so its
+     tab is further left along its edge than the one below, and none covers another. */
   .tab {
     position: absolute;
     bottom: 100%;
-    left: calc(1.75em + var(--i) * 7.7em);
+    left: calc(1.75em + (6 - var(--i)) * 7.7em);
     display: flex;
     align-items: flex-end;
     width: 7.3em;
@@ -799,16 +800,15 @@ const platforms = [
     }
   }
 
-  /* On a narrow screen the scene is above the headline, so it has nothing to fade out for. */
+  /* On a narrow screen the scene is above the headline. */
   @media (max-width: 800px) {
     .scene {
-      font-size: 1.75vw;
-      mask-image: none;
+      font-size: 1.5vw;
     }
 
     .tilt {
-      top: 39%;
-      left: 54%;
+      top: 41%;
+      left: 50%;
     }
   }
 
