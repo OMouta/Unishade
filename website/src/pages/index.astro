@@ -285,7 +285,7 @@ const platforms = [
     inset: 0;
     font-size: min(0.96vw, 18px);
     perspective: 600em;
-    perspective-origin: 68.5% 42%;
+    perspective-origin: 68.5% 41%;
     animation: arrive 1.4s var(--ease-out) backwards;
   }
 
@@ -298,11 +298,11 @@ const platforms = [
 
   .tilt {
     position: absolute;
-    top: 42%;
+    top: 41%;
     left: 68.5%;
-    /* Straight, and leaning back, in the corner the headline leaves free. The script sets where the pointer is over
-       the hero, from -1 to 1 each way, and the stack turns towards it. */
-    transform: rotateX(calc(50deg - var(--pointer-y, 0) * 4deg)) rotateZ(calc(var(--pointer-x, 0) * 8deg));
+    /* Leaning back and turned a little to the left, in the corner the headline leaves free. The script sets where
+       the pointer is over the hero, from -1 to 1 each way, and the stack turns towards it. */
+    transform: rotateX(calc(50deg - var(--pointer-y, 0) * 4deg)) rotateZ(calc(-7deg + var(--pointer-x, 0) * 8deg));
     transform-style: preserve-3d;
   }
 
@@ -385,7 +385,7 @@ const platforms = [
      as one list. */
   .tab {
     position: absolute;
-    top: calc(2.2em + var(--i) * 4.3em);
+    top: calc(2.2em + var(--i) * 4.1em);
     right: 100%;
     margin-right: 0.12em;
     padding: 0.35em 0.8em 0.35em 2em;
